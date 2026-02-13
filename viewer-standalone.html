@@ -1,0 +1,1076 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Terrain Viewer</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Share+Tech+Mono&display=swap');
+  * { margin:0; padding:0; box-sizing:border-box; }
+  :root {
+    --bg:#080C12; --panel:rgba(8,14,22,0.88); --panel-solid:#0A1018;
+    --border:rgba(60,80,110,0.35); --text:#B8C4D4; --bright:#E2E8F0;
+    --dim:#4A5568; --accent:#4FC3F7; --green:#66BB6A; --amber:#FFB74D;
+    --red:#EF5350; --purple:#AB47BC;
+    --head:'Chakra Petch','Segoe UI',sans-serif;
+    --mono:'Share Tech Mono','Consolas',monospace;
+  }
+  html,body { width:100%; height:100%; overflow:hidden; background:var(--bg); color:var(--text); font-family:var(--head); }
+  button { font-family:var(--head); cursor:pointer; border:none; background:none; color:var(--text); }
+
+  /* ── FULL VIEWPORT MAP ── */
+  #mapViewport {
+    position:absolute; inset:0; overflow:hidden; cursor:grab;
+    background:radial-gradient(ellipse at center, #0E1620 0%, #060A10 100%);
+  }
+  #mapViewport.dragging { cursor:grabbing; }
+  #mapCanvas { position:absolute; transform-origin:0 0; image-rendering:pixelated; }
+
+  /* ── OVERLAY PANELS ── */
+  .overlay-panel {
+    position:absolute; z-index:20;
+    background:var(--panel); backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
+    border:1px solid var(--border); border-radius:8px;
+    box-shadow:0 8px 32px rgba(0,0,0,0.5);
+    transition:opacity 0.2s, transform 0.2s;
+    pointer-events:auto;
+  }
+  .overlay-panel.collapsed { opacity:0.6; }
+
+  .panel-header {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:8px 12px; border-bottom:1px solid var(--border);
+    font-size:11px; font-weight:700; letter-spacing:0.5px; color:var(--bright);
+    cursor:pointer; user-select:none;
+  }
+  .panel-header .toggle { font-size:10px; color:var(--dim); transition:transform 0.2s; }
+  .panel-body { padding:10px 12px; max-height:500px; overflow-y:auto; }
+  .panel-body.hidden { display:none; }
+
+  /* ── INFO PANEL (top-left) ── */
+  #infoPanel { top:12px; left:12px; width:240px; }
+  .info-section { margin-bottom:8px; }
+  .info-label { font-size:8px; text-transform:uppercase; letter-spacing:1px; color:var(--dim); margin-bottom:2px; font-family:var(--mono); }
+  .info-value { font-size:14px; font-weight:700; display:flex; align-items:center; gap:6px; }
+  .info-swatch { width:16px; height:16px; border-radius:3px; border:1px solid rgba(255,255,255,0.12); flex-shrink:0; }
+  .info-coord { font-family:var(--mono); font-size:18px; font-weight:700; color:var(--accent); letter-spacing:1px; }
+  .info-elev { font-family:var(--mono); font-size:12px; color:var(--dim); }
+  .info-feats { display:flex; flex-wrap:wrap; gap:3px; margin-top:4px; }
+  .feat-pill { font-size:8px; padding:2px 6px; border-radius:3px; font-family:var(--mono); font-weight:500; }
+
+  /* ── FILTER PANEL (right) ── */
+  #filterPanel { top:12px; right:12px; width:220px; }
+  .filter-quick { display:flex; flex-wrap:wrap; gap:3px; margin-bottom:8px; }
+  .filter-chip {
+    padding:2px 8px; border-radius:3px; font-size:8px; font-weight:600;
+    border:1px solid var(--border); background:rgba(255,255,255,0.03);
+    cursor:pointer; user-select:none; transition:all 0.15s;
+    font-family:var(--mono);
+  }
+  .filter-chip:hover { border-color:var(--accent); color:var(--accent); }
+  .filter-group { margin-bottom:6px; }
+  .filter-group-label {
+    font-size:8px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px;
+    color:var(--dim); margin-bottom:3px; cursor:pointer; user-select:none;
+    font-family:var(--mono);
+  }
+  .filter-row {
+    display:flex; align-items:center; gap:5px; padding:2px 4px; cursor:pointer;
+    font-size:10px; border-radius:3px; user-select:none; transition:all 0.1s;
+  }
+  .filter-row:hover { background:rgba(255,255,255,0.04); }
+  .filter-row.off { opacity:0.25; }
+  .filter-dot { width:9px; height:9px; border-radius:2px; flex-shrink:0; border:1px solid rgba(255,255,255,0.1); }
+  .filter-count { margin-left:auto; font-family:var(--mono); font-size:8px; color:var(--dim); }
+
+  /* ── TERRAIN LEGEND (bottom) ── */
+  #legendBar {
+    position:absolute; bottom:0; left:0; right:0; z-index:15;
+    background:linear-gradient(transparent, rgba(8,12,18,0.95) 30%);
+    padding:24px 16px 10px; display:flex; align-items:flex-end; gap:6px;
+    pointer-events:none;
+  }
+  #legendBar > * { pointer-events:auto; }
+  .legend-items { display:flex; flex-wrap:wrap; gap:2px 8px; flex:1; }
+  .legend-item { display:flex; align-items:center; gap:3px; font-size:9px; color:var(--dim); white-space:nowrap; }
+  .legend-swatch { width:10px; height:10px; border-radius:2px; border:1px solid rgba(255,255,255,0.08); flex-shrink:0; }
+  .legend-item .ct { font-family:var(--mono); font-size:8px; }
+
+  /* ── ZOOM CONTROLS ── */
+  #zoomControls {
+    position:absolute; bottom:48px; right:16px; z-index:20;
+    display:flex; flex-direction:column; gap:3px;
+  }
+  .z-btn {
+    width:32px; height:32px; border-radius:6px;
+    background:var(--panel); backdrop-filter:blur(8px);
+    border:1px solid var(--border); color:var(--bright);
+    font-size:16px; display:flex; align-items:center; justify-content:center;
+    transition:background 0.15s;
+  }
+  .z-btn:hover { background:rgba(20,30,50,0.9); }
+  #zoomPct {
+    position:absolute; bottom:48px; left:16px; z-index:20;
+    font-family:var(--mono); font-size:10px; color:var(--dim);
+    background:var(--panel); padding:3px 8px; border-radius:4px;
+    border:1px solid var(--border);
+  }
+
+  /* ── MINIMAP ── */
+  #minimap {
+    position:absolute; bottom:48px; right:60px; z-index:20;
+    border:1px solid var(--border); border-radius:4px;
+    background:var(--panel-solid); overflow:hidden;
+    box-shadow:0 4px 16px rgba(0,0,0,0.4); cursor:pointer;
+  }
+  #minimapCanvas { image-rendering:pixelated; display:block; }
+  #minimapRect {
+    position:absolute; border:1.5px solid var(--accent);
+    pointer-events:none; box-shadow:0 0 8px rgba(79,195,247,0.3);
+  }
+
+  /* ── MAP TITLE ── */
+  #mapTitle {
+    position:absolute; top:12px; left:50%; transform:translateX(-50%); z-index:20;
+    font-size:13px; font-weight:700; letter-spacing:1px; color:rgba(255,255,255,0.5);
+    text-shadow:0 2px 8px rgba(0,0,0,0.5);
+    font-family:var(--mono); pointer-events:none;
+  }
+
+  /* ── UPLOAD SCREEN ── */
+  .upload-screen {
+    position:absolute; inset:0; z-index:100; display:flex; align-items:center;
+    justify-content:center; flex-direction:column; gap:12px;
+    background:radial-gradient(ellipse at center, #101820 0%, #060A10 100%);
+  }
+  .upload-title { font-size:32px; font-weight:700; color:#FFF; letter-spacing:-1px; }
+  .upload-sub { font-size:11px; color:var(--dim); margin-bottom:20px; text-align:center; line-height:1.6; }
+  .upload-btn {
+    display:inline-block; padding:16px 48px; border-radius:8px;
+    background:linear-gradient(135deg, #1a5276 0%, #2980b9 100%);
+    color:#FFF; font-weight:700; font-size:14px; cursor:pointer;
+    box-shadow:0 4px 24px rgba(41,128,185,0.3);
+    transition:transform 0.15s, box-shadow 0.15s;
+    border:1px solid rgba(79,195,247,0.3);
+  }
+  .upload-btn:hover { transform:scale(1.03); box-shadow:0 6px 32px rgba(41,128,185,0.4); }
+  .upload-btn input { display:none; }
+
+  /* ── EXPORT TOOLBAR ── */
+  #exportBar {
+    position:absolute; top:12px; right:248px; z-index:20;
+    display:flex; gap:4px;
+  }
+  .export-btn {
+    padding:6px 12px; border-radius:6px; font-size:10px; font-weight:600;
+    font-family:var(--mono); letter-spacing:0.3px;
+    background:var(--panel); backdrop-filter:blur(8px);
+    border:1px solid var(--border); color:var(--bright);
+    transition:all 0.15s; cursor:pointer;
+  }
+  .export-btn:hover { background:rgba(20,30,50,0.95); border-color:var(--accent); color:var(--accent); }
+  .export-btn svg { vertical-align:-2px; margin-right:4px; }
+</style>
+</head>
+<body>
+
+<!-- UPLOAD SCREEN -->
+<div class="upload-screen" id="uploadScreen">
+  <div class="upload-title">TERRAIN VIEWER</div>
+  <div class="upload-sub">Load a terrain JSON export to begin.<br>Full-viewport map with feature overlays.</div>
+  <label class="upload-btn">
+    Load JSON
+    <input type="file" accept=".json" id="fileInput">
+  </label>
+</div>
+
+<!-- MAP -->
+<div id="mapViewport" style="display:none;">
+  <canvas id="mapCanvas"></canvas>
+</div>
+
+<!-- MAP TITLE -->
+<div id="mapTitle" style="display:none;"></div>
+
+<!-- INFO PANEL -->
+<div class="overlay-panel" id="infoPanel" style="display:none;">
+  <div class="panel-header" onclick="togglePanel('infoPanel')">
+    <span>CELL INFO</span>
+    <span class="toggle" id="infoPanelToggle">▼</span>
+  </div>
+  <div class="panel-body" id="infoPanelBody">
+    <div id="infoContent">
+      <div style="color:var(--dim);font-size:10px;">Hover over a cell</div>
+    </div>
+  </div>
+</div>
+
+<!-- EXPORT BAR -->
+<div id="exportBar" style="display:none;">
+  <button class="export-btn" onclick="exportPNG()">
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 12l-4-4h2.5V2h3v6H12L8 12zm-6 2h12v1.5H2V14z"/></svg>PNG
+  </button>
+  <button class="export-btn" onclick="exportLLM()">
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2h8l4 4v8H2V2zm8.5 1H3.5v10h9V6.5L10.5 3zM5 8h6v1H5V8zm0 2h6v1H5v-1z"/></svg>LLM TEXT
+  </button>
+</div>
+
+<!-- FILTER PANEL -->
+<div class="overlay-panel" id="filterPanel" style="display:none;">
+  <div class="panel-header" onclick="togglePanel('filterPanel')">
+    <span>FEATURES</span>
+    <span class="toggle" id="filterPanelToggle">▼</span>
+  </div>
+  <div class="panel-body" id="filterPanelBody">
+    <div id="filterContent"></div>
+  </div>
+</div>
+
+<!-- LEGEND BAR -->
+<div id="legendBar" style="display:none;">
+  <div class="legend-items" id="legendItems"></div>
+</div>
+
+<!-- ZOOM -->
+<div id="zoomControls" style="display:none;">
+  <button class="z-btn" onclick="zoomBtn(1.4)">+</button>
+  <button class="z-btn" onclick="zoomBtn(1/1.4)">−</button>
+  <button class="z-btn" onclick="zoomFit()" style="font-size:9px;">FIT</button>
+</div>
+<div id="zoomPct" style="display:none;">100%</div>
+
+<!-- MINIMAP -->
+<div id="minimap" style="display:none;">
+  <canvas id="minimapCanvas"></canvas>
+  <div id="minimapRect"></div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// CONSTANTS
+// ═══════════════════════════════════════════════════════════════
+const CELL_BASE = 48; // px per cell at 1x zoom
+
+const TC = {
+  deep_water:"#14304D", coastal_water:"#2872A4", lake:"#3B8EBF", river:"#4A9ACF",
+  wetland:"#5A8B5E", open_ground:"#C8C4A0", light_veg:"#A8BF6B", farmland:"#D4C86A",
+  forest:"#2D6B1E", dense_forest:"#1A4D10", highland:"#A89570", mountain_forest:"#3D6B30",
+  mountain:"#8B7355", peak:"#C8C0B0", desert:"#C9A84C", ice:"#D4E5F7",
+  light_urban:"#B0A890", dense_urban:"#7A7D80",
+};
+const TL = {
+  deep_water:"Deep Water", coastal_water:"Coastal", lake:"Lake", river:"River",
+  wetland:"Wetland", open_ground:"Open Ground", light_veg:"Light Veg", farmland:"Farmland",
+  forest:"Forest", dense_forest:"Dense Forest", highland:"Highland", mountain_forest:"Mtn Forest",
+  mountain:"Mountain", peak:"Peak/Alpine", desert:"Desert", ice:"Ice/Glacier",
+  light_urban:"Light Urban", dense_urban:"Dense Urban",
+};
+const FC = {
+  highway:"#E6A817", major_road:"#D4D4D4", road:"#B0B0B0", minor_road:"#9A9A8A", footpath:"#6A6A5A", trail:"#8A8A6A",
+  railway:"#E05050", light_rail:"#D07070",
+  dam:"#5A8ABF", navigable_waterway:"#3AC4E0", tunnel:"#7070A0",
+  port:"#4ABFBF", airfield:"#9090D0", helipad:"#70A070", pipeline:"#A070D0",
+  power_plant:"#E0D040",
+  military_base:"#BF5050",
+  chokepoint:"#FF4040", landing_zone:"#40E080", beach:"#E0D0A0", town:"#E8A040",
+  building:"#A08060", parking:"#6A6A7A", tower:"#C07050", wall:"#8A6A5A", fence:"#7A6050",
+  cliffs:"#C48060", ridgeline:"#D4A860", treeline:"#88C060",
+  slope_steep:"#D49040", slope_extreme:"#D45040",
+  building_dense:"#C0A080", building_sparse:"#B0A090",
+  hedgerow:"#6AA050", walled:"#8A6A5A", elevation_advantage:"#E0C060",
+  // Backwards compat for old exports
+  bridge:"#C4956E", river_crossing:"#4A9ACF", stream_crossing:"#6ABADF", shoreline:"#6BB8D4",
+};
+const FL = {};
+Object.keys(FC).forEach(k => { FL[k] = k.replace(/_/g," ").replace(/\b\w/g,c=>c.toUpperCase()); });
+FL.navigable_waterway = "Nav. Waterway";
+
+const FG = {
+  "Roads":["highway","major_road","road","minor_road","footpath","trail"],
+  "Rail":["railway","light_rail"],
+  "Water":["dam","navigable_waterway","tunnel"],
+  "Transport":["port","airfield","helipad","pipeline"],
+  "Energy":["power_plant"],
+  "Military":["military_base"],
+  "Strategic":["chokepoint","landing_zone","beach","town"],
+  "Structures":["building","parking","tower","wall","fence"],
+  "Terrain":["cliffs","ridgeline","treeline","slope_steep","slope_extreme","building_dense","building_sparse","hedgerow","walled","elevation_advantage"],
+};
+
+function hexRgb(h){return[parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)];}
+function colLbl(c){let s="",n=c;do{s=String.fromCharCode(65+(n%26))+s;n=Math.floor(n/26)-1;}while(n>=0);return s;}
+function cellCoord(c,r){return colLbl(c)+(r+1);}
+
+// ═══════════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════════
+let D = null; // loaded data
+let TF = {x:0, y:0, s:1};
+let DRAG = false, DS = {x:0,y:0};
+let HOV = null, SEL = null;
+let AF = new Set(); // active features
+let FCTS = {}; // feature counts
+
+function getFeats(cell) {
+  if (!cell) return [];
+  if (cell.features && cell.features.length > 0) return cell.features;
+  const f = [];
+  if (cell.infrastructure && cell.infrastructure !== "none") f.push(cell.infrastructure);
+  if (cell.attributes) cell.attributes.forEach(a => { if(!f.includes(a)) f.push(a); });
+  return f;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DRAW
+// ═══════════════════════════════════════════════════════════════
+function draw(){
+  const cv = document.getElementById("mapCanvas");
+  if(!cv || !D) return;
+  const W = D.cols * CELL_BASE, H = D.rows * CELL_BASE;
+  cv.width = W; cv.height = H;
+  cv.style.transform = `translate(${TF.x}px,${TF.y}px) scale(${TF.s})`;
+  const ctx = cv.getContext("2d");
+
+  // Terrain fill
+  for(let r=0; r<D.rows; r++){
+    for(let c=0; c<D.cols; c++){
+      const cell = D.cells[`${c},${r}`];
+      if(!cell) continue;
+      const hex = TC[cell.terrain] || "#222";
+      ctx.fillStyle = hex;
+      ctx.fillRect(c*CELL_BASE, r*CELL_BASE, CELL_BASE, CELL_BASE);
+
+      // Subtle cell shading — slight darken on right+bottom edge for depth
+      ctx.fillStyle = "rgba(0,0,0,0.08)";
+      ctx.fillRect((c+1)*CELL_BASE-1, r*CELL_BASE, 1, CELL_BASE);
+      ctx.fillRect(c*CELL_BASE, (r+1)*CELL_BASE-1, CELL_BASE, 1);
+    }
+  }
+
+  // Feature overlays
+  if(AF.size > 0){
+    for(let r=0; r<D.rows; r++){
+      for(let c=0; c<D.cols; c++){
+        const cell = D.cells[`${c},${r}`];
+        if(!cell) continue;
+        const feats = getFeats(cell).filter(f => AF.has(f));
+        if(feats.length === 0) continue;
+
+        const x = c*CELL_BASE, y = r*CELL_BASE;
+        const margin = Math.max(2, CELL_BASE * 0.15);
+        const inner = CELL_BASE - margin*2;
+
+        if(feats.length === 1){
+          ctx.fillStyle = FC[feats[0]] || "#999";
+          ctx.globalAlpha = 0.7;
+          ctx.beginPath();
+          ctx.roundRect(x+margin, y+margin, inner, inner, 3);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        } else {
+          const segH = inner / feats.length;
+          feats.forEach((f, i) => {
+            ctx.fillStyle = FC[f] || "#999";
+            ctx.globalAlpha = 0.7;
+            ctx.fillRect(x+margin, y+margin+i*segH, inner, segH);
+            ctx.globalAlpha = 1;
+          });
+        }
+      }
+    }
+  }
+
+  // Grid lines — always visible at this scale
+  ctx.strokeStyle = "rgba(0,0,0,0.18)";
+  ctx.lineWidth = 0.5;
+  for(let c=0; c<=D.cols; c++){
+    ctx.beginPath(); ctx.moveTo(c*CELL_BASE, 0); ctx.lineTo(c*CELL_BASE, H); ctx.stroke();
+  }
+  for(let r=0; r<=D.rows; r++){
+    ctx.beginPath(); ctx.moveTo(0, r*CELL_BASE); ctx.lineTo(W, r*CELL_BASE); ctx.stroke();
+  }
+
+  // Major grid lines every 10
+  ctx.strokeStyle = "rgba(0,0,0,0.35)";
+  ctx.lineWidth = 1;
+  for(let c=0; c<=D.cols; c+=10){
+    ctx.beginPath(); ctx.moveTo(c*CELL_BASE, 0); ctx.lineTo(c*CELL_BASE, H); ctx.stroke();
+  }
+  for(let r=0; r<=D.rows; r+=10){
+    ctx.beginPath(); ctx.moveTo(0, r*CELL_BASE); ctx.lineTo(W, r*CELL_BASE); ctx.stroke();
+  }
+
+  // Coordinate labels if zoomed in enough
+  if(TF.s >= 0.4){
+    ctx.font = `${Math.max(8, CELL_BASE*0.22)}px 'Share Tech Mono', monospace`;
+    ctx.fillStyle = "rgba(255,255,255,0.15)";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    const step = TF.s < 0.7 ? 10 : TF.s < 1.2 ? 5 : 1;
+    for(let r=0; r<D.rows; r+=step){
+      for(let c=0; c<D.cols; c+=step){
+        ctx.fillText(cellCoord(c,r), c*CELL_BASE+2, r*CELL_BASE+2);
+      }
+    }
+  }
+
+  // ── Name labels ──
+  if(TF.s >= 0.25){
+    // Collect named features, group by name+type for deduplication
+    const nameGroups = {}; // "type:name" → { name, type, cells: [{c,r}] }
+    for(let r=0; r<D.rows; r++){
+      for(let c=0; c<D.cols; c++){
+        const cell = D.cells[`${c},${r}`];
+        if(!cell || !cell.feature_names) continue;
+        for(const [type, name] of Object.entries(cell.feature_names)){
+          const key = `${type}:${name}`;
+          if(!nameGroups[key]) nameGroups[key] = { name, type, cells: [] };
+          nameGroups[key].cells.push({c, r});
+        }
+      }
+    }
+
+    // Compute centroid and rendering properties per group
+    const labels = [];
+    for(const g of Object.values(nameGroups)){
+      const cx = g.cells.reduce((s,p) => s+p.c, 0) / g.cells.length;
+      const cy = g.cells.reduce((s,p) => s+p.r, 0) / g.cells.length;
+      let fontSize, minZoom, color, priority;
+      if(g.type === "dense_urban"){
+        fontSize = Math.max(12, CELL_BASE*0.55); minZoom = 0.25; color = "#FFFFFF"; priority = 10;
+      } else if(g.type === "light_urban"){
+        fontSize = Math.max(10, CELL_BASE*0.4); minZoom = 0.4; color = "#E0E0E0"; priority = 8;
+      } else if(g.type === "town"){
+        fontSize = Math.max(9, CELL_BASE*0.35); minZoom = 0.5; color = "#E8A040"; priority = 6;
+      } else if(g.type === "settlement"){
+        fontSize = Math.max(9, CELL_BASE*0.35); minZoom = 0.5; color = "#D0D0D0"; priority = 5;
+      } else if(g.type === "navigable_waterway"){
+        fontSize = Math.max(9, CELL_BASE*0.30); minZoom = 0.35; color = "#60C8E8"; priority = 4;
+      } else {
+        fontSize = Math.max(8, CELL_BASE*0.25); minZoom = 0.6; color = "#AAA"; priority = 2;
+      }
+      if(TF.s >= minZoom){
+        labels.push({ name: g.name, x: (cx+0.5)*CELL_BASE, y: (cy+0.5)*CELL_BASE, fontSize, color, priority, type: g.type, spanCells: g.cells.length });
+      }
+    }
+
+    // Sort by priority descending (cities first)
+    labels.sort((a,b) => b.priority - a.priority || b.spanCells - a.spanCells);
+
+    // Simple collision avoidance: track placed label bounding boxes
+    const placed = [];
+    const PAD = 4;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    for(const lb of labels){
+      ctx.font = `600 ${lb.fontSize}px 'Inter', 'Share Tech Mono', sans-serif`;
+      const tw = ctx.measureText(lb.name.toUpperCase()).width;
+      const th = lb.fontSize;
+      const box = { x: lb.x - tw/2 - PAD, y: lb.y - th/2 - PAD, w: tw + PAD*2, h: th + PAD*2 };
+
+      // Check collisions
+      let collides = false;
+      for(const p of placed){
+        if(box.x < p.x+p.w && box.x+box.w > p.x && box.y < p.y+p.h && box.y+box.h > p.y){
+          collides = true; break;
+        }
+      }
+      if(collides) continue;
+
+      placed.push(box);
+
+      // River names: italic
+      if(lb.type === "navigable_waterway"){
+        ctx.font = `italic 600 ${lb.fontSize}px 'Inter', 'Share Tech Mono', sans-serif`;
+      }
+
+      // Text shadow/halo for readability
+      ctx.strokeStyle = "rgba(0,0,0,0.85)";
+      ctx.lineWidth = 3;
+      ctx.lineJoin = "round";
+      ctx.strokeText(lb.name.toUpperCase(), lb.x, lb.y);
+      ctx.fillStyle = lb.color;
+      ctx.fillText(lb.name.toUpperCase(), lb.x, lb.y);
+    }
+  }
+
+  // Hover highlight
+  if(HOV){
+    const [hc,hr] = HOV.split(",").map(Number);
+    ctx.strokeStyle = "rgba(79,195,247,0.8)";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(hc*CELL_BASE+1, hr*CELL_BASE+1, CELL_BASE-2, CELL_BASE-2);
+  }
+
+  // Selection highlight
+  if(SEL){
+    const [sc,sr] = SEL.split(",").map(Number);
+    ctx.strokeStyle = "#FFF";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4,3]);
+    ctx.strokeRect(sc*CELL_BASE+1, sr*CELL_BASE+1, CELL_BASE-2, CELL_BASE-2);
+    ctx.setLineDash([]);
+  }
+
+  updateZoomPct();
+  drawMinimap();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MINIMAP
+// ═══════════════════════════════════════════════════════════════
+function drawMinimap(){
+  const mc = document.getElementById("minimapCanvas");
+  if(!mc || !D) return;
+  const maxDim = 150;
+  const ratio = D.rows / D.cols;
+  const mw = ratio > 1 ? Math.round(maxDim/ratio) : maxDim;
+  const mh = ratio > 1 ? maxDim : Math.round(maxDim*ratio);
+  mc.width = mw; mc.height = mh;
+  const ctx = mc.getContext("2d");
+  const cpw = mw/D.cols, cph = mh/D.rows;
+  for(let r=0; r<D.rows; r++){
+    for(let c=0; c<D.cols; c++){
+      const cell = D.cells[`${c},${r}`];
+      ctx.fillStyle = cell ? (TC[cell.terrain]||"#222") : "#111";
+      ctx.fillRect(Math.floor(c*cpw), Math.floor(r*cph), Math.ceil(cpw), Math.ceil(cph));
+    }
+  }
+
+  // Viewport rectangle
+  const vp = document.getElementById("mapViewport");
+  const fullW = D.cols*CELL_BASE*TF.s, fullH = D.rows*CELL_BASE*TF.s;
+  const vw = vp.clientWidth, vh = vp.clientHeight;
+  const rx = (-TF.x / fullW) * mw;
+  const ry = (-TF.y / fullH) * mh;
+  const rw = (vw / fullW) * mw;
+  const rh = (vh / fullH) * mh;
+  const rect = document.getElementById("minimapRect");
+  rect.style.left = Math.max(0,rx)+"px";
+  rect.style.top = Math.max(0,ry)+"px";
+  rect.style.width = Math.min(mw, rw)+"px";
+  rect.style.height = Math.min(mh, rh)+"px";
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PAN / ZOOM
+// ═══════════════════════════════════════════════════════════════
+function setupControls(){
+  const vp = document.getElementById("mapViewport");
+  vp.addEventListener("wheel", e => {
+    e.preventDefault();
+    const rect = vp.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    const d = e.deltaY > 0 ? 0.85 : 1.18;
+    const ns = Math.max(0.08, Math.min(8, TF.s * d));
+    const sc = ns / TF.s;
+    TF.x = mx - (mx - TF.x) * sc;
+    TF.y = my - (my - TF.y) * sc;
+    TF.s = ns;
+    draw();
+  }, {passive:false});
+
+  vp.addEventListener("mousedown", e => {
+    DRAG = true;
+    DS = {x:e.clientX-TF.x, y:e.clientY-TF.y};
+    vp.classList.add("dragging");
+  });
+  window.addEventListener("mousemove", e => {
+    if(DRAG){
+      TF.x = e.clientX - DS.x;
+      TF.y = e.clientY - DS.y;
+      draw();
+    } else {
+      updateHover(e);
+    }
+  });
+  window.addEventListener("mouseup", e => {
+    if(DRAG){
+      DRAG = false;
+      document.getElementById("mapViewport").classList.remove("dragging");
+    }
+  });
+  vp.addEventListener("click", e => {
+    if(!D) return;
+    const k = pixelToCell(e);
+    if(k && D.cells[k]){
+      SEL = (SEL === k) ? null : k;
+      updateInfo(SEL || HOV);
+      draw();
+    }
+  });
+}
+
+function pixelToCell(e){
+  const vp = document.getElementById("mapViewport");
+  const rect = vp.getBoundingClientRect();
+  const mx = (e.clientX - rect.left - TF.x) / TF.s;
+  const my = (e.clientY - rect.top - TF.y) / TF.s;
+  const c = Math.floor(mx / CELL_BASE), r = Math.floor(my / CELL_BASE);
+  if(c>=0 && c<D.cols && r>=0 && r<D.rows) return `${c},${r}`;
+  return null;
+}
+
+function updateHover(e){
+  if(!D) return;
+  const k = pixelToCell(e);
+  if(k !== HOV){
+    HOV = k;
+    if(!SEL) updateInfo(k);
+    draw();
+  }
+}
+
+function zoomBtn(factor){
+  const vp = document.getElementById("mapViewport");
+  const cx = vp.clientWidth/2, cy = vp.clientHeight/2;
+  const ns = Math.max(0.08, Math.min(8, TF.s*factor));
+  const sc = ns / TF.s;
+  TF.x = cx - (cx - TF.x)*sc;
+  TF.y = cy - (cy - TF.y)*sc;
+  TF.s = ns;
+  draw();
+}
+
+function zoomFit(){
+  const vp = document.getElementById("mapViewport");
+  const fw = D.cols*CELL_BASE, fh = D.rows*CELL_BASE;
+  const s = Math.min(vp.clientWidth/fw, vp.clientHeight/fh) * 0.95;
+  TF.s = s;
+  TF.x = (vp.clientWidth - fw*s)/2;
+  TF.y = (vp.clientHeight - fh*s)/2;
+  draw();
+}
+
+function updateZoomPct(){
+  const el = document.getElementById("zoomPct");
+  if(el) el.textContent = Math.round(TF.s*100)+"%";
+}
+
+// ═══════════════════════════════════════════════════════════════
+// INFO PANEL
+// ═══════════════════════════════════════════════════════════════
+function updateInfo(k){
+  const el = document.getElementById("infoContent");
+  if(!k || !D || !D.cells[k]){
+    el.innerHTML = `<div style="color:var(--dim);font-size:10px;">Hover over a cell</div>`;
+    return;
+  }
+  const cell = D.cells[k];
+  const [c,r] = k.split(",").map(Number);
+  const feats = getFeats(cell);
+  const tc = TC[cell.terrain]||"#333";
+  const fn = cell.feature_names || {};
+  const terrainName = fn[cell.terrain] || fn.settlement || "";
+
+  let html = `
+    <div class="info-section">
+      <div class="info-coord">${cellCoord(c,r)}</div>
+      <div class="info-elev">${cell.elevation !== undefined ? cell.elevation+"m" : ""} · [${c},${r}]</div>
+    </div>
+    <div class="info-section">
+      <div class="info-label">Terrain</div>
+      <div class="info-value">
+        <div class="info-swatch" style="background:${tc}"></div>
+        ${TL[cell.terrain]||cell.terrain}${terrainName ? ` — <span style="color:#E8A040;font-weight:600">${terrainName}</span>` : ""}
+      </div>
+    </div>`;
+
+  if(feats.length > 0){
+    html += `<div class="info-section"><div class="info-label">Features (${feats.length})</div><div class="info-feats">`;
+    feats.forEach(f => {
+      const col = FC[f]||"#666";
+      const nm = fn[f];
+      html += `<span class="feat-pill" style="background:${col}22;color:${col};border:1px solid ${col}55">${FL[f]||f}${nm ? ` (${nm})` : ""}</span>`;
+    });
+    html += `</div></div>`;
+  }
+  el.innerHTML = html;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FILTER PANEL
+// ═══════════════════════════════════════════════════════════════
+function buildFilters(){
+  const el = document.getElementById("filterContent");
+  let html = `<div class="filter-quick">
+    <div class="filter-chip" onclick="toggleAll(true)">ALL ON</div>
+    <div class="filter-chip" onclick="toggleAll(false)">ALL OFF</div>`;
+  Object.keys(FG).forEach(g => {
+    html += `<div class="filter-chip" onclick="toggleGroup('${g}')">${g}</div>`;
+  });
+  html += `</div>`;
+
+  Object.entries(FG).forEach(([group, items]) => {
+    const present = items.filter(f => FCTS[f]);
+    if(present.length === 0) return;
+    html += `<div class="filter-group">
+      <div class="filter-group-label" onclick="toggleGroup('${group}')">${group}</div>`;
+    present.sort((a,b) => (FCTS[b]||0)-(FCTS[a]||0)).forEach(f => {
+      const on = AF.has(f);
+      const col = FC[f]||"#666";
+      html += `<div class="filter-row ${on?"":"off"}" onclick="toggleFeat('${f}')">
+        <div class="filter-dot ${on?"":"off"}" style="background:${col}"></div>
+        <span>${FL[f]||f}</span>
+        <span class="filter-count">${FCTS[f]}</span>
+      </div>`;
+    });
+    html += `</div>`;
+  });
+  el.innerHTML = html;
+}
+
+function toggleFeat(f){
+  if(AF.has(f)) AF.delete(f); else AF.add(f);
+  buildFilters(); draw();
+}
+function toggleGroup(g){
+  const items = FG[g]; if(!items) return;
+  const allOn = items.every(f => AF.has(f) || !FCTS[f]);
+  items.forEach(f => { if(FCTS[f]){ if(allOn) AF.delete(f); else AF.add(f); }});
+  buildFilters(); draw();
+}
+function toggleAll(on){
+  if(!on){ AF.clear(); } else { Object.keys(FCTS).forEach(f => AF.add(f)); }
+  buildFilters(); draw();
+}
+
+function togglePanel(id){
+  const body = document.getElementById(id+"Body");
+  const toggle = document.getElementById(id+"Toggle");
+  const hidden = body.classList.toggle("hidden");
+  toggle.textContent = hidden ? "▶" : "▼";
+  document.getElementById(id).classList.toggle("collapsed", hidden);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// LEGEND
+// ═══════════════════════════════════════════════════════════════
+function buildLegend(){
+  const el = document.getElementById("legendItems");
+  const ct = {};
+  for(const k in D.cells){
+    const t = D.cells[k].terrain;
+    ct[t] = (ct[t]||0)+1;
+  }
+  const total = Object.values(ct).reduce((s,v)=>s+v,0);
+  const sorted = Object.entries(ct).sort((a,b)=>b[1]-a[1]);
+  el.innerHTML = sorted.map(([t,n]) => {
+    const pct = ((n/total)*100).toFixed(1);
+    return `<div class="legend-item">
+      <div class="legend-swatch" style="background:${TC[t]||'#333'}"></div>
+      ${TL[t]||t} <span class="ct">${pct}%</span>
+    </div>`;
+  }).join("");
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EXPORT
+// ═══════════════════════════════════════════════════════════════
+function exportPNG(){
+  if(!D) return;
+  // Render full-resolution canvas (no zoom transform)
+  const cv = document.createElement("canvas");
+  const W = D.cols * CELL_BASE, H = D.rows * CELL_BASE;
+  cv.width = W; cv.height = H;
+  const ctx = cv.getContext("2d");
+
+  // Terrain
+  for(let r=0; r<D.rows; r++){
+    for(let c=0; c<D.cols; c++){
+      const cell = D.cells[`${c},${r}`];
+      if(!cell) continue;
+      ctx.fillStyle = TC[cell.terrain] || "#222";
+      ctx.fillRect(c*CELL_BASE, r*CELL_BASE, CELL_BASE, CELL_BASE);
+      ctx.fillStyle = "rgba(0,0,0,0.08)";
+      ctx.fillRect((c+1)*CELL_BASE-1, r*CELL_BASE, 1, CELL_BASE);
+      ctx.fillRect(c*CELL_BASE, (r+1)*CELL_BASE-1, CELL_BASE, 1);
+    }
+  }
+  // Features
+  if(AF.size > 0){
+    for(let r=0; r<D.rows; r++){
+      for(let c=0; c<D.cols; c++){
+        const cell = D.cells[`${c},${r}`];
+        if(!cell) continue;
+        const feats = getFeats(cell).filter(f => AF.has(f));
+        if(feats.length === 0) continue;
+        const x = c*CELL_BASE, y = r*CELL_BASE;
+        const margin = Math.max(2, CELL_BASE * 0.15);
+        const inner = CELL_BASE - margin*2;
+        if(feats.length === 1){
+          ctx.fillStyle = FC[feats[0]] || "#999";
+          ctx.globalAlpha = 0.7;
+          ctx.beginPath(); ctx.roundRect(x+margin, y+margin, inner, inner, 3); ctx.fill();
+          ctx.globalAlpha = 1;
+        } else {
+          const segH = inner / feats.length;
+          feats.forEach((f, i) => {
+            ctx.fillStyle = FC[f] || "#999";
+            ctx.globalAlpha = 0.7;
+            ctx.fillRect(x+margin, y+margin+i*segH, inner, segH);
+            ctx.globalAlpha = 1;
+          });
+        }
+      }
+    }
+  }
+  // Grid
+  ctx.strokeStyle = "rgba(0,0,0,0.18)";
+  ctx.lineWidth = 0.5;
+  for(let c=0; c<=D.cols; c++){ ctx.beginPath(); ctx.moveTo(c*CELL_BASE,0); ctx.lineTo(c*CELL_BASE,H); ctx.stroke(); }
+  for(let r=0; r<=D.rows; r++){ ctx.beginPath(); ctx.moveTo(0,r*CELL_BASE); ctx.lineTo(W,r*CELL_BASE); ctx.stroke(); }
+  ctx.strokeStyle = "rgba(0,0,0,0.35)"; ctx.lineWidth = 1;
+  for(let c=0; c<=D.cols; c+=10){ ctx.beginPath(); ctx.moveTo(c*CELL_BASE,0); ctx.lineTo(c*CELL_BASE,H); ctx.stroke(); }
+  for(let r=0; r<=D.rows; r+=10){ ctx.beginPath(); ctx.moveTo(0,r*CELL_BASE); ctx.lineTo(W,r*CELL_BASE); ctx.stroke(); }
+  // Coords
+  ctx.font = `${Math.max(8, CELL_BASE*0.22)}px 'Share Tech Mono', monospace`;
+  ctx.fillStyle = "rgba(255,255,255,0.2)";
+  ctx.textAlign = "left"; ctx.textBaseline = "top";
+  for(let r=0; r<D.rows; r+=5) for(let c=0; c<D.cols; c+=5) ctx.fillText(cellCoord(c,r), c*CELL_BASE+2, r*CELL_BASE+2);
+
+  // Name labels on PNG
+  const nameGroups = {};
+  for(let r=0; r<D.rows; r++){
+    for(let c=0; c<D.cols; c++){
+      const cell = D.cells[`${c},${r}`];
+      if(!cell || !cell.feature_names) continue;
+      for(const [type, name] of Object.entries(cell.feature_names)){
+        const key = `${type}:${name}`;
+        if(!nameGroups[key]) nameGroups[key] = { name, type, cells: [] };
+        nameGroups[key].cells.push({c, r});
+      }
+    }
+  }
+  const labels = [];
+  for(const g of Object.values(nameGroups)){
+    const cx = g.cells.reduce((s,p) => s+p.c, 0) / g.cells.length;
+    const cy = g.cells.reduce((s,p) => s+p.r, 0) / g.cells.length;
+    let fontSize, color, priority;
+    if(g.type === "dense_urban"){ fontSize = Math.max(12, CELL_BASE*0.55); color = "#FFFFFF"; priority = 10; }
+    else if(g.type === "light_urban"){ fontSize = Math.max(10, CELL_BASE*0.4); color = "#E0E0E0"; priority = 8; }
+    else if(g.type === "town"){ fontSize = Math.max(9, CELL_BASE*0.35); color = "#E8A040"; priority = 6; }
+    else if(g.type === "settlement"){ fontSize = Math.max(9, CELL_BASE*0.35); color = "#D0D0D0"; priority = 5; }
+    else if(g.type === "navigable_waterway"){ fontSize = Math.max(9, CELL_BASE*0.30); color = "#60C8E8"; priority = 4; }
+    else { fontSize = Math.max(8, CELL_BASE*0.25); color = "#AAA"; priority = 2; }
+    labels.push({ name: g.name, x: (cx+0.5)*CELL_BASE, y: (cy+0.5)*CELL_BASE, fontSize, color, priority, type: g.type, spanCells: g.cells.length });
+  }
+  labels.sort((a,b) => b.priority - a.priority || b.spanCells - a.spanCells);
+  const placed = [];
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  for(const lb of labels){
+    ctx.font = `600 ${lb.fontSize}px sans-serif`;
+    if(lb.type === "navigable_waterway") ctx.font = `italic 600 ${lb.fontSize}px sans-serif`;
+    const tw = ctx.measureText(lb.name.toUpperCase()).width;
+    const th = lb.fontSize;
+    const box = { x: lb.x-tw/2-4, y: lb.y-th/2-4, w: tw+8, h: th+8 };
+    let collides = false;
+    for(const p of placed){ if(box.x<p.x+p.w && box.x+box.w>p.x && box.y<p.y+p.h && box.y+box.h>p.y){ collides=true; break; } }
+    if(collides) continue;
+    placed.push(box);
+    ctx.strokeStyle = "rgba(0,0,0,0.85)"; ctx.lineWidth = 3; ctx.lineJoin = "round";
+    ctx.strokeText(lb.name.toUpperCase(), lb.x, lb.y);
+    ctx.fillStyle = lb.color;
+    ctx.fillText(lb.name.toUpperCase(), lb.x, lb.y);
+  }
+
+  // Download
+  const a = document.createElement("a");
+  a.download = `terrain-${D.cols}x${D.rows}.png`;
+  a.href = cv.toDataURL("image/png");
+  a.click();
+}
+
+function exportLLM(){
+  if(!D) return;
+  // Compact terrain codes
+  const TK = {
+    deep_water:"DW", coastal_water:"CW", lake:"LK", river:"RV",
+    wetland:"WL", open_ground:"OG", light_veg:"LV", farmland:"FM",
+    forest:"FR", dense_forest:"DF", highland:"HL", mountain_forest:"MF",
+    mountain:"MT", peak:"PK", desert:"DS", ice:"IC",
+    light_urban:"LU", dense_urban:"DU",
+  };
+  const meta = D; // map object
+  const lines = [];
+
+  // Header
+  lines.push("# TERRAIN MAP");
+  lines.push(`# ${meta.cols}×${meta.rows} cells, ${meta.cellSizeKm}km/cell`);
+  if(meta.center) lines.push(`# Center: ${meta.center.lat.toFixed(4)}, ${meta.center.lng.toFixed(4)}`);
+  if(meta.bbox) lines.push(`# Bounds: S${meta.bbox.south.toFixed(4)} N${meta.bbox.north.toFixed(4)} W${meta.bbox.west.toFixed(4)} E${meta.bbox.east.toFixed(4)}`);
+  lines.push(`# Cols: A=0, ${colLbl(meta.cols-1)}=${meta.cols-1} | Rows: 1=0 (top/north) to ${meta.rows} (bottom/south)`);
+  lines.push("");
+
+  // Legend
+  lines.push("## TERRAIN CODES");
+  Object.entries(TK).forEach(([k,v]) => { lines.push(`# ${v} = ${TL[k]||k}`); });
+  lines.push("");
+
+  // Terrain grid — one row per line, space-separated 2-char codes
+  lines.push("## TERRAIN GRID (row 1=north, left=west)");
+  lines.push("# " + Array.from({length:Math.ceil(meta.cols/10)}, (_,i) => {
+    const c = i*10;
+    return colLbl(c).padEnd(20);
+  }).join("").trim());
+
+  for(let r=0; r<meta.rows; r++){
+    const rowCodes = [];
+    for(let c=0; c<meta.cols; c++){
+      const cell = meta.cells[`${c},${r}`];
+      rowCodes.push(cell ? (TK[cell.terrain] || "??") : "..");
+    }
+    lines.push(`${String(r+1).padStart(3)}| ${rowCodes.join(" ")}`);
+  }
+  lines.push("");
+
+  // Elevation — sparse, only interesting cells (>100m or near significant variance)
+  lines.push("## ELEVATION (meters, cells >50m only)");
+  const elevEntries = [];
+  for(let r=0; r<meta.rows; r++){
+    for(let c=0; c<meta.cols; c++){
+      const cell = meta.cells[`${c},${r}`];
+      if(cell && cell.elevation > 50) elevEntries.push(`${cellCoord(c,r)}:${cell.elevation}m`);
+    }
+  }
+  // Group in lines of ~10
+  for(let i=0; i<elevEntries.length; i+=12){
+    lines.push(elevEntries.slice(i, i+12).join("  "));
+  }
+  lines.push("");
+
+  // Features — sparse list with names
+  lines.push("## FEATURES (per cell)");
+  const featLines = [];
+  for(let r=0; r<meta.rows; r++){
+    for(let c=0; c<meta.cols; c++){
+      const cell = meta.cells[`${c},${r}`];
+      if(!cell) continue;
+      const feats = getFeats(cell);
+      if(feats.length === 0 && !cell.feature_names) continue;
+      const fn = cell.feature_names || {};
+      const parts = feats.map(f => {
+        const nm = fn[f];
+        return nm ? `${f}(${nm})` : f;
+      });
+      // Add terrain-level names that aren't already captured
+      if(fn[cell.terrain] && !feats.includes(cell.terrain)) parts.unshift(`[${cell.terrain}:${fn[cell.terrain]}]`);
+      if(fn.settlement && !fn[cell.terrain]) parts.unshift(`[${fn.settlement}]`);
+      if(parts.length > 0) featLines.push(`${cellCoord(c,r)}: ${parts.join(", ")}`);
+    }
+  }
+  featLines.forEach(l => lines.push(l));
+  lines.push("");
+
+  // Summary stats
+  lines.push("## SUMMARY");
+  const terrCt = {};
+  for(const k in meta.cells){ const t = meta.cells[k].terrain; terrCt[t]=(terrCt[t]||0)+1; }
+  const total = Object.values(terrCt).reduce((s,v)=>s+v,0);
+  Object.entries(terrCt).sort((a,b)=>b[1]-a[1]).forEach(([t,n]) => {
+    lines.push(`# ${(TL[t]||t).padEnd(16)} ${n} cells (${((n/total)*100).toFixed(1)}%)`);
+  });
+  lines.push("");
+  lines.push("## FEATURE COUNTS");
+  Object.entries(FCTS).sort((a,b)=>b[1]-a[1]).forEach(([f,n]) => {
+    lines.push(`# ${(FL[f]||f).padEnd(20)} ${n} cells`);
+  });
+
+  // Named features summary
+  const nameIdx = {};
+  for(const k in meta.cells){
+    const fn = meta.cells[k].feature_names;
+    if(!fn) continue;
+    for(const [type, name] of Object.entries(fn)){
+      if(!nameIdx[type]) nameIdx[type] = {};
+      if(!nameIdx[type][name]) nameIdx[type][name] = [];
+      nameIdx[type][name].push(k);
+    }
+  }
+  if(Object.keys(nameIdx).length > 0){
+    lines.push("");
+    lines.push("## NAMED FEATURES");
+    for(const [type, names] of Object.entries(nameIdx)){
+      for(const [name, cells] of Object.entries(names).sort((a,b)=>b[1].length-a[1].length)){
+        const coords = cells.map(k => { const [c,r] = k.split(",").map(Number); return cellCoord(c,r); });
+        lines.push(`# ${type}: ${name} — ${coords.length} cells (${coords.slice(0,8).join(", ")}${coords.length > 8 ? ", ..." : ""})`);
+      }
+    }
+  }
+
+  // Download
+  const blob = new Blob([lines.join("\n")], {type:"text/plain"});
+  const a = document.createElement("a");
+  a.download = `terrain-${meta.cols}x${meta.rows}-llm.txt`;
+  a.href = URL.createObjectURL(blob);
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// LOAD
+// ═══════════════════════════════════════════════════════════════
+function loadData(json){
+  D = json.map;
+  // Count features
+  FCTS = {};
+  for(const k in D.cells){
+    getFeats(D.cells[k]).forEach(f => { FCTS[f]=(FCTS[f]||0)+1; });
+  }
+  // Default active features
+  const defaults = ["highway","major_road","railway","military_base","airfield","port","dam","navigable_waterway","chokepoint","landing_zone","beach","power_plant","pipeline","town","hedgerow"];
+  AF = new Set(defaults.filter(f => FCTS[f]));
+
+  // Show UI
+  document.getElementById("uploadScreen").style.display = "none";
+  document.getElementById("mapViewport").style.display = "block";
+  document.getElementById("infoPanel").style.display = "block";
+  document.getElementById("filterPanel").style.display = "block";
+  document.getElementById("legendBar").style.display = "flex";
+  document.getElementById("zoomControls").style.display = "flex";
+  document.getElementById("zoomPct").style.display = "block";
+  document.getElementById("minimap").style.display = "block";
+  document.getElementById("exportBar").style.display = "flex";
+
+  // Title
+  const meta = json._meta || {};
+  const title = `${D.cols}×${D.rows} · ${D.cellSizeKm}km/cell · ${meta.tier||""} · ${meta.version||""}`;
+  const titleEl = document.getElementById("mapTitle");
+  titleEl.textContent = title;
+  titleEl.style.display = "block";
+
+  buildFilters();
+  buildLegend();
+  setupControls();
+  requestAnimationFrame(() => { zoomFit(); });
+}
+
+document.getElementById("fileInput").addEventListener("change", e => {
+  const f = e.target.files[0]; if(!f) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const json = JSON.parse(ev.target.result);
+      loadData(json);
+    } catch(err) { alert("Failed to parse JSON: "+err.message); }
+  };
+  reader.readAsText(f);
+});
+
+// Minimap click-to-navigate
+document.getElementById("minimap").addEventListener("click", e => {
+  if(!D) return;
+  const mc = document.getElementById("minimapCanvas");
+  const rect = mc.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) / mc.width;
+  const my = (e.clientY - rect.top) / mc.height;
+  const vp = document.getElementById("mapViewport");
+  const fullW = D.cols*CELL_BASE*TF.s, fullH = D.rows*CELL_BASE*TF.s;
+  TF.x = -(mx * fullW) + vp.clientWidth/2;
+  TF.y = -(my * fullH) + vp.clientHeight/2;
+  draw();
+});
+</script>
+</body>
+</html>
