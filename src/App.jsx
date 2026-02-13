@@ -110,11 +110,11 @@ export default function App() {
       alignItems: "center",
       justifyContent: "center",
       position: "relative",
-      overflow: "hidden",
+      overflow: "auto",
     }}>
       {/* Subtle grid background */}
       <div style={{
-        position: "absolute", inset: 0, opacity: 0.03,
+        position: "absolute", inset: 0, opacity: 0.03, pointerEvents: "none",
         backgroundImage: `linear-gradient(${colors.text.muted} 1px, transparent 1px), linear-gradient(90deg, ${colors.text.muted} 1px, transparent 1px)`,
         backgroundSize: "60px 60px",
       }} />
@@ -164,7 +164,7 @@ export default function App() {
           </div>
           <div style={{ display: "flex", gap: space[2] }}>
             {recentMaps.map(m => (
-              <div key={m.file} onClick={() => { setViewerData(null); setMode("viewer"); }}
+              <div key={m.name} onClick={() => { setViewerData(null); setMode("viewer"); }}
                 style={{
                   padding: "6px 14px", borderRadius: radius.md,
                   background: colors.bg.raised, border: `1px solid ${colors.border.subtle}`,
@@ -175,7 +175,7 @@ export default function App() {
                 onMouseEnter={e => { e.currentTarget.style.borderColor = colors.accent.blue + "60"; e.currentTarget.style.color = colors.text.primary; }}
                 onMouseLeave={e => { e.currentTarget.style.borderColor = colors.border.subtle; e.currentTarget.style.color = colors.text.secondary; }}
               >
-                {m.file.replace(/\.json$/, "").replace(/_/g, " ")}
+                {(m.name || "").replace(/\.json$/, "").replace(/_/g, " ")}
               </div>
             ))}
           </div>
