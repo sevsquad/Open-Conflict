@@ -63,6 +63,7 @@ export default class MapRenderer {
       units = null,      // array of unit objects
       actorColorMap = {},
       skipLabels = false, // true during zoom animation
+      setupOptions = null, // { ghostUnit, isSetupMode, draggedUnitId } for setup mode
     } = options;
 
     const cols = mapData.cols;
@@ -140,8 +141,8 @@ export default class MapRenderer {
     }
 
     // Units (SimMap only)
-    if (units) {
-      drawUnits(ctx, units, actorColorMap, viewport, canvasWidth, canvasHeight, cols, rows);
+    if (units || setupOptions?.ghostUnit) {
+      drawUnits(ctx, units, actorColorMap, viewport, canvasWidth, canvasHeight, cols, rows, setupOptions);
     }
 
     // Selection / hover highlights
