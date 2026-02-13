@@ -110,11 +110,11 @@ export default function App() {
       alignItems: "center",
       justifyContent: "center",
       position: "relative",
-      overflow: "hidden",
+      overflow: "auto",
     }}>
       {/* Subtle grid background */}
       <div style={{
-        position: "absolute", inset: 0, opacity: 0.03,
+        position: "absolute", inset: 0, opacity: 0.03, pointerEvents: "none",
         backgroundImage: `linear-gradient(${colors.text.muted} 1px, transparent 1px), linear-gradient(90deg, ${colors.text.muted} 1px, transparent 1px)`,
         backgroundSize: "60px 60px",
       }} />
