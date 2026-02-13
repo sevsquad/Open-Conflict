@@ -1,28 +1,48 @@
 import { useRef, useEffect, useCallback, useState } from "react";
 import { TC, TL, ACTOR_COLORS } from "../terrainColors.js";
+import MapRenderer from "../mapRenderer/MapRenderer.js";
+import { buildLinearNetworks } from "../mapRenderer/RoadNetwork.js";
+import { buildNameGroups } from "../mapRenderer/overlays/LabelOverlay.js";
+import {
+  createViewport, screenToCell, zoomAtPoint, panViewport,
+  clampCellPixels, ZOOM_FACTOR, getTier,
+} from "../mapRenderer/ViewportState.js";
 
 // ═══════════════════════════════════════════════════════════════
-// SIM MAP — Simplified terrain renderer with unit overlay
+// SIM MAP — Multi-scale terrain renderer with unit overlay
 // ═══════════════════════════════════════════════════════════════
 
-const CELL_BASE = 10;
+const TIER_NAMES = ["Strategic", "Operational", "Tactical", "Close-up"];
 
 export default function SimMap({ terrainData, units, actors, style }) {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
-  const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
-  const [hovCell, setHovCell] = useState(null);
-  const [containerSize, setContainerSize] = useState({ w: 600, h: 400 });
+  const viewportRef = useRef({ centerCol: 0, centerRow: 0, cellPixels: 10 });
   const dragRef = useRef(null);
+  const rendererRef = useRef(new MapRenderer());
+  const preprocessedRef = useRef({ roadNetworks: null, nameGroups: null });
+  const containerSizeRef = useRef({ w: 600, h: 400 });
+  const [hovCell, setHovCell] = useState(null);
+  const [redrawTick, setRedrawTick] = useState(0);
 
   const D = terrainData;
   const cols = D?.cols || 0;
   const rows = D?.rows || 0;
-  const cellSize = CELL_BASE;
 
   // Build actor color index
   const actorColorMap = {};
   (actors || []).forEach((a, i) => { actorColorMap[a.id] = ACTOR_COLORS[i % ACTOR_COLORS.length]; });
+
+  // Preprocess on data change
+  useEffect(() => {
+    if (!D || !D.cells) return;
+    preprocessedRef.current = {
+      roadNetworks: buildLinearNetworks(D.cells, cols, rows),
+      nameGroups: buildNameGroups(D.cells, cols, rows),
+    };
+    rendererRef.current.invalidateAll();
+    setRedrawTick(t => t + 1);
+  }, [D, cols, rows]);
 
   // Observe container size
   useEffect(() => {
@@ -30,7 +50,8 @@ export default function SimMap({ terrainData, units, actors, style }) {
     if (!el) return;
     const ro = new ResizeObserver(entries => {
       for (const entry of entries) {
-        setContainerSize({ w: entry.contentRect.width, h: entry.contentRect.height });
+        containerSizeRef.current = { w: entry.contentRect.width, h: entry.contentRect.height };
+        setRedrawTick(t => t + 1);
       }
     });
     ro.observe(el);
@@ -39,132 +60,57 @@ export default function SimMap({ terrainData, units, actors, style }) {
 
   // Auto-fit on load
   useEffect(() => {
-    if (!cols || !rows || !containerSize.w) return;
-    const mapW = cols * cellSize;
-    const mapH = rows * cellSize;
-    const scale = Math.min(containerSize.w / mapW, containerSize.h / mapH, 3) * 0.95;
-    setTransform({
-      x: (containerSize.w - mapW * scale) / 2,
-      y: (containerSize.h - mapH * scale) / 2,
-      scale
-    });
-  }, [cols, rows, containerSize.w, containerSize.h, cellSize]);
+    if (!cols || !rows || !containerSizeRef.current.w) return;
+    const { w, h } = containerSizeRef.current;
+    viewportRef.current = createViewport(cols, rows, w, h);
+    setRedrawTick(t => t + 1);
+  }, [cols, rows]);
+
+  // Set up re-render callback for progressive tile loading
+  useEffect(() => {
+    rendererRef.current.onNeedsRerender = () => setRedrawTick(t => t + 1);
+    return () => { rendererRef.current.onNeedsRerender = null; };
+  }, []);
 
   // Draw
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !D) return;
-    canvas.width = containerSize.w;
-    canvas.height = containerSize.h;
+    const { w, h } = containerSizeRef.current;
+    if (w <= 0 || h <= 0) return;
+
+    if (canvas.width !== Math.round(w) || canvas.height !== Math.round(h)) {
+      canvas.width = Math.round(w);
+      canvas.height = Math.round(h);
+    }
     const ctx = canvas.getContext("2d");
+    const viewport = viewportRef.current;
 
-    ctx.fillStyle = "#0A0F1A";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    ctx.save();
-    ctx.translate(transform.x, transform.y);
-    ctx.scale(transform.scale, transform.scale);
-
-    // Draw terrain
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const cell = D.cells[`${c},${r}`];
-        ctx.fillStyle = cell ? (TC[cell.terrain] || "#333") : "#111";
-        ctx.fillRect(c * cellSize, r * cellSize, cellSize, cellSize);
-      }
-    }
-
-    // Draw grid lines (only if zoomed in enough)
-    if (transform.scale > 1.5) {
-      ctx.strokeStyle = "rgba(255,255,255,0.08)";
-      ctx.lineWidth = 0.5 / transform.scale;
-      for (let r = 0; r <= rows; r++) {
-        ctx.beginPath(); ctx.moveTo(0, r * cellSize); ctx.lineTo(cols * cellSize, r * cellSize); ctx.stroke();
-      }
-      for (let c = 0; c <= cols; c++) {
-        ctx.beginPath(); ctx.moveTo(c * cellSize, 0); ctx.lineTo(c * cellSize, rows * cellSize); ctx.stroke();
-      }
-    }
-
-    // Draw unit markers
-    if (units && units.length > 0) {
-      for (const unit of units) {
-        if (!unit.position) continue;
-        // Parse position like "C5" → col=2, row=4 or "12,15" → col=12, row=15
-        let uc, ur;
-        const commaMatch = unit.position.match(/^(\d+),(\d+)$/);
-        const letterMatch = unit.position.match(/^([A-Z]+)(\d+)$/i);
-        if (commaMatch) {
-          uc = parseInt(commaMatch[1]);
-          ur = parseInt(commaMatch[2]);
-        } else if (letterMatch) {
-          uc = letterMatch[1].toUpperCase().split("").reduce((s, c) => s * 26 + c.charCodeAt(0) - 64, 0) - 1;
-          ur = parseInt(letterMatch[2]) - 1;
-        } else continue;
-
-        if (uc < 0 || uc >= cols || ur < 0 || ur >= rows) continue;
-
-        const cx = (uc + 0.5) * cellSize;
-        const cy = (ur + 0.5) * cellSize;
-        const radius = cellSize * 0.4;
-        const color = actorColorMap[unit.actor] || "#FFF";
-
-        // Circle marker
-        ctx.beginPath();
-        ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-        ctx.fillStyle = color + "CC";
-        ctx.fill();
-        ctx.strokeStyle = "#FFF";
-        ctx.lineWidth = 1 / transform.scale;
-        ctx.stroke();
-
-        // Strength indicator (border arc)
-        if (unit.strength < 100) {
-          ctx.beginPath();
-          ctx.arc(cx, cy, radius + 1.5 / transform.scale, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * unit.strength / 100));
-          ctx.strokeStyle = unit.strength > 50 ? "#22C55E" : unit.strength > 25 ? "#F59E0B" : "#EF4444";
-          ctx.lineWidth = 2 / transform.scale;
-          ctx.stroke();
-        }
-
-        // Label (when zoomed in)
-        if (transform.scale > 1.2) {
-          ctx.font = `${Math.max(3, 7 / transform.scale)}px Arial`;
-          ctx.textAlign = "center";
-          ctx.fillStyle = "#FFF";
-          ctx.fillText(unit.name.slice(0, 10), cx, cy + radius + 6 / transform.scale);
-        }
-      }
-    }
-
-    // Highlight hovered cell
-    if (hovCell) {
-      ctx.strokeStyle = "#F59E0B";
-      ctx.lineWidth = 2 / transform.scale;
-      ctx.strokeRect(hovCell.c * cellSize, hovCell.r * cellSize, cellSize, cellSize);
-    }
-
-    ctx.restore();
-  }, [D, transform, units, hovCell, containerSize, cols, rows, cellSize, actorColorMap]);
+    rendererRef.current.render(ctx, canvas.width, canvas.height, viewport, D, {
+      roadNetworks: preprocessedRef.current.roadNetworks,
+      nameGroups: preprocessedRef.current.nameGroups,
+      hovCell: hovCell,
+      units: units,
+      actorColorMap: actorColorMap,
+    });
+  }, [D, units, hovCell, redrawTick, cols, rows, actorColorMap]);
 
   // Mouse handlers
   const getCellFromEvent = useCallback((e) => {
-    const rect = canvasRef.current.getBoundingClientRect();
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return null;
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
-    const c = Math.floor((mx - transform.x) / (cellSize * transform.scale));
-    const r = Math.floor((my - transform.y) / (cellSize * transform.scale));
-    if (c >= 0 && c < cols && r >= 0 && r < rows) return { c, r };
-    return null;
-  }, [transform, cellSize, cols, rows]);
+    const { w, h } = containerSizeRef.current;
+    return screenToCell(mx, my, viewportRef.current, w, h, cols, rows);
+  }, [cols, rows]);
 
   const handleMouseMove = useCallback((e) => {
     if (dragRef.current) {
-      setTransform(prev => ({
-        ...prev,
-        x: prev.x + e.movementX,
-        y: prev.y + e.movementY
-      }));
+      const dx = e.movementX;
+      const dy = e.movementY;
+      viewportRef.current = panViewport(viewportRef.current, dx, dy);
+      setRedrawTick(t => t + 1);
     } else {
       setHovCell(getCellFromEvent(e));
     }
@@ -172,33 +118,38 @@ export default function SimMap({ terrainData, units, actors, style }) {
 
   const handleWheel = useCallback((e) => {
     e.preventDefault();
-    const rect = canvasRef.current.getBoundingClientRect();
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
-    const factor = e.deltaY < 0 ? 1.15 : 0.87;
-    setTransform(prev => {
-      const newScale = Math.max(0.2, Math.min(20, prev.scale * factor));
-      return {
-        x: mx - (mx - prev.x) * (newScale / prev.scale),
-        y: my - (my - prev.y) * (newScale / prev.scale),
-        scale: newScale
-      };
-    });
+    const { w, h } = containerSizeRef.current;
+    const factor = e.deltaY < 0 ? ZOOM_FACTOR : 1 / ZOOM_FACTOR;
+    viewportRef.current = zoomAtPoint(viewportRef.current, mx, my, w, h, factor);
+    setRedrawTick(t => t + 1);
   }, []);
+
+  // Wheel event listener (passive: false for preventDefault)
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const handler = (e) => { e.preventDefault(); handleWheel(e); };
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+  }, [handleWheel]);
 
   // Cell info
   const cellData = hovCell && D ? D.cells[`${hovCell.c},${hovCell.r}`] : null;
+  const currentTier = getTier(viewportRef.current.cellPixels);
 
   return (
     <div ref={containerRef} style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden", ...style }}>
       <canvas
         ref={canvasRef}
-        style={{ cursor: dragRef.current ? "grabbing" : "crosshair" }}
+        style={{ display: "block", width: "100%", height: "100%", cursor: dragRef.current ? "grabbing" : "crosshair" }}
         onMouseDown={() => { dragRef.current = true; }}
         onMouseUp={() => { dragRef.current = false; }}
         onMouseLeave={() => { dragRef.current = false; setHovCell(null); }}
         onMouseMove={handleMouseMove}
-        onWheel={handleWheel}
       />
       {/* Cell tooltip */}
       {cellData && (
@@ -232,6 +183,13 @@ export default function SimMap({ terrainData, units, actors, style }) {
           ))}
         </div>
       )}
+      {/* Zoom/tier indicator */}
+      <div style={{
+        position: "absolute", top: 4, right: 4, fontSize: 9, color: "#9CA3AF",
+        fontFamily: "monospace", background: "rgba(0,0,0,0.5)", padding: "1px 4px", borderRadius: 3,
+      }}>
+        {TIER_NAMES[currentTier]} · {viewportRef.current.cellPixels.toFixed(1)}px/cell
+      </div>
     </div>
   );
 }

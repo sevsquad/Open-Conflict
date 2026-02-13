@@ -2,12 +2,17 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { colors, typography, radius, shadows, animation, space } from "./theme.js";
 import { Button, Badge, Panel } from "./components/ui.jsx";
 import { TC, TL, FC, FL, FG, DEFAULT_FEATURES } from "./terrainColors.js";
+import MapRenderer from "./mapRenderer/MapRenderer.js";
+import { buildLinearNetworks } from "./mapRenderer/RoadNetwork.js";
+import { buildNameGroups } from "./mapRenderer/overlays/LabelOverlay.js";
+import {
+  createViewport, screenToCell, zoomAtPoint, panViewport,
+  clampCellPixels, ZOOM_FACTOR, MIN_CELL_PIXELS, MAX_CELL_PIXELS, getTier,
+} from "./mapRenderer/ViewportState.js";
 
 // ═══════════════════════════════════════════════════════════════
 // CONSTANTS
 // ═══════════════════════════════════════════════════════════════
-
-const CELL_BASE = 28;
 
 function colLbl(c){let s="",n=c;do{s=String.fromCharCode(65+(n%26))+s;n=Math.floor(n/26)-1;}while(n>=0);return s;}
 function cellCoord(c,r){return colLbl(c)+(r+1);}
@@ -18,14 +23,16 @@ function getFeats(cell){
   return [];
 }
 
+const TIER_NAMES = ["Strategic", "Operational", "Tactical", "Close-up"];
+
 // ═══════════════════════════════════════════════════════════════
 // VIEWER COMPONENT
 // ═══════════════════════════════════════════════════════════════
 
 export default function Viewer({ onBack, initialData }) {
   const [D, setD] = useState(null); // map data
-  const [sel, setSel] = useState(null);
-  const [hov, setHov] = useState(null);
+  const [sel, setSel] = useState(null); // "c,r"
+  const [hov, setHov] = useState(null); // "c,r"
   const [af, setAf] = useState(new Set()); // active features
   const [fcts, setFcts] = useState({}); // feature counts
   const [redrawTick, setRedrawTick] = useState(0);
@@ -33,9 +40,15 @@ export default function Viewer({ onBack, initialData }) {
 
   const canvasRef = useRef(null);
   const mmRef = useRef(null);
-  const vpRef = useRef(null);
-  const tfRef = useRef({ x: 0, y: 0, s: 1 });
-  const dragRef = useRef({ active: false, sx: 0, sy: 0 });
+  const vpRef = useRef(null); // viewport DOM container
+  const viewportRef = useRef({ centerCol: 0, centerRow: 0, cellPixels: 16 }); // viewport state
+  const dragRef = useRef({ active: false, lastX: 0, lastY: 0 });
+  const rendererRef = useRef(new MapRenderer());
+  const preprocessedRef = useRef({ roadNetworks: null, nameGroups: null });
+  const containerSizeRef = useRef({ w: 800, h: 600 });
+
+  // Zoom animation state
+  const animRef = useRef({ active: false, from: 0, to: 0, pivotCol: 0, pivotRow: 0, startTime: 0, duration: 150 });
 
   // ── Load data ──
   const loadMapData = useCallback((mapData) => {
@@ -49,13 +62,22 @@ export default function Viewer({ onBack, initialData }) {
     setSel(null);
     setHov(null);
 
-    // Auto-fit
+    // Preprocess road networks and name groups
+    preprocessedRef.current = {
+      roadNetworks: buildLinearNetworks(mapData.cells, mapData.cols, mapData.rows),
+      nameGroups: buildNameGroups(mapData.cells, mapData.cols, mapData.rows),
+    };
+
+    // Invalidate tile cache
+    rendererRef.current.invalidateAll();
+
+    // Auto-fit viewport
     const vp = vpRef.current;
     if (vp) {
-      const W = mapData.cols * CELL_BASE, H = mapData.rows * CELL_BASE;
-      const vw = vp.clientWidth, vh = vp.clientHeight;
-      const s = Math.min(vw / W, vh / H) * 0.95;
-      tfRef.current = { x: (vw - W * s) / 2, y: (vh - H * s) / 2, s };
+      const w = vp.clientWidth || 800;
+      const h = vp.clientHeight || 600;
+      containerSizeRef.current = { w, h };
+      viewportRef.current = createViewport(mapData.cols, mapData.rows, w, h);
     }
     setRedrawTick(t => t + 1);
   }, []);
@@ -68,7 +90,7 @@ export default function Viewer({ onBack, initialData }) {
   // Fetch saved files list
   useEffect(() => {
     fetch("/api/saves").then(r => r.json()).then(setSavedFiles).catch(() => {});
-  }, [D]); // Re-fetch when D changes (null = upload screen visible)
+  }, [D]);
 
   const loadSaved = useCallback((filename) => {
     fetch(`/api/load?file=${encodeURIComponent(filename)}`)
@@ -96,134 +118,53 @@ export default function Viewer({ onBack, initialData }) {
     reader.readAsText(file);
   }, [loadMapData]);
 
+  // ── Observe container resize ──
+  useEffect(() => {
+    const el = vpRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        containerSizeRef.current = { w: entry.contentRect.width, h: entry.contentRect.height };
+        setRedrawTick(t => t + 1);
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // ── Invalidate tiles when feature filters change ──
+  useEffect(() => {
+    rendererRef.current.invalidateAll();
+  }, [af]);
+
   // ── Drawing ──
   const draw = useCallback(() => {
     const cv = canvasRef.current;
     if (!cv || !D) return;
-    const TF = tfRef.current;
-    const W = D.cols * CELL_BASE, H = D.rows * CELL_BASE;
-    cv.width = W; cv.height = H;
-    cv.style.transform = `translate(${TF.x}px,${TF.y}px) scale(${TF.s})`;
+    const { w, h } = containerSizeRef.current;
+    if (w <= 0 || h <= 0) return;
+
+    // Size canvas to container
+    if (cv.width !== Math.round(w) || cv.height !== Math.round(h)) {
+      cv.width = Math.round(w);
+      cv.height = Math.round(h);
+    }
     const ctx = cv.getContext("2d");
+    const viewport = viewportRef.current;
 
-    // Terrain fill
-    for (let r = 0; r < D.rows; r++) {
-      for (let c = 0; c < D.cols; c++) {
-        const cell = D.cells[`${c},${r}`];
-        if (!cell) continue;
-        ctx.fillStyle = TC[cell.terrain] || "#222";
-        ctx.fillRect(c * CELL_BASE, r * CELL_BASE, CELL_BASE, CELL_BASE);
-        ctx.fillStyle = "rgba(0,0,0,0.08)";
-        ctx.fillRect((c + 1) * CELL_BASE - 1, r * CELL_BASE, 1, CELL_BASE);
-        ctx.fillRect(c * CELL_BASE, (r + 1) * CELL_BASE - 1, CELL_BASE, 1);
-      }
-    }
+    // Parse hover/selection to {c,r} objects
+    const hovCell = hov ? (() => { const [c, r] = hov.split(",").map(Number); return { c, r }; })() : null;
+    const selCell = sel ? (() => { const [c, r] = sel.split(",").map(Number); return { c, r }; })() : null;
 
-    // Feature overlays
-    if (af.size > 0) {
-      for (let r = 0; r < D.rows; r++) {
-        for (let c = 0; c < D.cols; c++) {
-          const cell = D.cells[`${c},${r}`];
-          if (!cell) continue;
-          const feats = getFeats(cell).filter(f => af.has(f));
-          if (feats.length === 0) continue;
-          const x = c * CELL_BASE, y = r * CELL_BASE;
-          const margin = Math.max(2, CELL_BASE * 0.15);
-          const inner = CELL_BASE - margin * 2;
-          if (feats.length === 1) {
-            ctx.fillStyle = FC[feats[0]] || "#999";
-            ctx.globalAlpha = 0.7;
-            ctx.beginPath(); ctx.roundRect(x + margin, y + margin, inner, inner, 3); ctx.fill();
-            ctx.globalAlpha = 1;
-          } else {
-            const segH = inner / feats.length;
-            feats.forEach((f, i) => {
-              ctx.fillStyle = FC[f] || "#999"; ctx.globalAlpha = 0.7;
-              ctx.fillRect(x + margin, y + margin + i * segH, inner, segH);
-              ctx.globalAlpha = 1;
-            });
-          }
-        }
-      }
-    }
-
-    // Grid lines
-    ctx.strokeStyle = "rgba(0,0,0,0.18)"; ctx.lineWidth = 0.5;
-    for (let c = 0; c <= D.cols; c++) { ctx.beginPath(); ctx.moveTo(c * CELL_BASE, 0); ctx.lineTo(c * CELL_BASE, H); ctx.stroke(); }
-    for (let r = 0; r <= D.rows; r++) { ctx.beginPath(); ctx.moveTo(0, r * CELL_BASE); ctx.lineTo(W, r * CELL_BASE); ctx.stroke(); }
-    ctx.strokeStyle = "rgba(0,0,0,0.35)"; ctx.lineWidth = 1;
-    for (let c = 0; c <= D.cols; c += 10) { ctx.beginPath(); ctx.moveTo(c * CELL_BASE, 0); ctx.lineTo(c * CELL_BASE, H); ctx.stroke(); }
-    for (let r = 0; r <= D.rows; r += 10) { ctx.beginPath(); ctx.moveTo(0, r * CELL_BASE); ctx.lineTo(W, r * CELL_BASE); ctx.stroke(); }
-
-    // Coordinate labels
-    if (TF.s >= 0.4) {
-      ctx.font = `${Math.max(8, CELL_BASE * 0.22)}px monospace`;
-      ctx.fillStyle = "rgba(255,255,255,0.15)"; ctx.textAlign = "left"; ctx.textBaseline = "top";
-      const step = TF.s < 0.7 ? 10 : TF.s < 1.2 ? 5 : 1;
-      for (let r = 0; r < D.rows; r += step) for (let c = 0; c < D.cols; c += step) ctx.fillText(cellCoord(c, r), c * CELL_BASE + 2, r * CELL_BASE + 2);
-    }
-
-    // Name labels
-    if (TF.s >= 0.25) {
-      const nameGroups = {};
-      for (let r = 0; r < D.rows; r++) {
-        for (let c = 0; c < D.cols; c++) {
-          const cell = D.cells[`${c},${r}`];
-          if (!cell || !cell.feature_names) continue;
-          for (const [type, name] of Object.entries(cell.feature_names)) {
-            const key = `${type}:${name}`;
-            if (!nameGroups[key]) nameGroups[key] = { name, type, cells: [] };
-            nameGroups[key].cells.push({ c, r });
-          }
-        }
-      }
-      const labels = [];
-      for (const g of Object.values(nameGroups)) {
-        const cx = g.cells.reduce((s, p) => s + p.c, 0) / g.cells.length;
-        const cy = g.cells.reduce((s, p) => s + p.r, 0) / g.cells.length;
-        let fontSize, minZoom, color, priority;
-        if (g.type === "dense_urban") { fontSize = Math.max(12, CELL_BASE * 0.55); minZoom = 0.25; color = "#FFFFFF"; priority = 10; }
-        else if (g.type === "light_urban") { fontSize = Math.max(10, CELL_BASE * 0.4); minZoom = 0.4; color = "#E0E0E0"; priority = 8; }
-        else if (g.type === "town") { fontSize = Math.max(9, CELL_BASE * 0.35); minZoom = 0.5; color = "#E8A040"; priority = 6; }
-        else if (g.type === "settlement") { fontSize = Math.max(9, CELL_BASE * 0.35); minZoom = 0.5; color = "#D0D0D0"; priority = 5; }
-        else if (g.type === "navigable_waterway") { fontSize = Math.max(9, CELL_BASE * 0.30); minZoom = 0.35; color = "#60C8E8"; priority = 4; }
-        else { fontSize = Math.max(8, CELL_BASE * 0.25); minZoom = 0.6; color = "#AAA"; priority = 2; }
-        if (TF.s >= minZoom) labels.push({ name: g.name, x: (cx + 0.5) * CELL_BASE, y: (cy + 0.5) * CELL_BASE, fontSize, color, priority, type: g.type, spanCells: g.cells.length });
-      }
-      labels.sort((a, b) => b.priority - a.priority || b.spanCells - a.spanCells);
-      const placed = [];
-      ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      for (const lb of labels) {
-        ctx.font = lb.type === "navigable_waterway" ? `italic 600 ${lb.fontSize}px sans-serif` : `600 ${lb.fontSize}px sans-serif`;
-        const tw = ctx.measureText(lb.name.toUpperCase()).width;
-        const th = lb.fontSize;
-        const box = { x: lb.x - tw / 2 - 4, y: lb.y - th / 2 - 4, w: tw + 8, h: th + 8 };
-        let collides = false;
-        for (const p of placed) { if (box.x < p.x + p.w && box.x + box.w > p.x && box.y < p.y + p.h && box.y + box.h > p.y) { collides = true; break; } }
-        if (collides) continue;
-        placed.push(box);
-        ctx.strokeStyle = "rgba(0,0,0,0.85)"; ctx.lineWidth = 3; ctx.lineJoin = "round";
-        ctx.strokeText(lb.name.toUpperCase(), lb.x, lb.y);
-        ctx.fillStyle = lb.color;
-        ctx.fillText(lb.name.toUpperCase(), lb.x, lb.y);
-      }
-    }
-
-    // Hover highlight
-    if (hov) {
-      const [hc, hr] = hov.split(",").map(Number);
-      ctx.strokeStyle = "rgba(79,195,247,0.8)"; ctx.lineWidth = 2;
-      ctx.strokeRect(hc * CELL_BASE + 1, hr * CELL_BASE + 1, CELL_BASE - 2, CELL_BASE - 2);
-    }
-
-    // Selection highlight
-    if (sel) {
-      const [sc, sr] = sel.split(",").map(Number);
-      ctx.strokeStyle = "#FFF"; ctx.lineWidth = 2;
-      ctx.setLineDash([4, 3]);
-      ctx.strokeRect(sc * CELL_BASE + 1, sr * CELL_BASE + 1, CELL_BASE - 2, CELL_BASE - 2);
-      ctx.setLineDash([]);
-    }
+    // Render via MapRenderer
+    rendererRef.current.render(ctx, cv.width, cv.height, viewport, D, {
+      activeFeatures: af,
+      roadNetworks: preprocessedRef.current.roadNetworks,
+      nameGroups: preprocessedRef.current.nameGroups,
+      hovCell,
+      selCell,
+      skipLabels: animRef.current.active,
+    });
 
     // Minimap
     drawMinimap();
@@ -236,80 +177,143 @@ export default function Viewer({ onBack, initialData }) {
     const ratio = D.rows / D.cols;
     const mw = ratio > 1 ? Math.round(maxDim / ratio) : maxDim;
     const mh = ratio > 1 ? maxDim : Math.round(maxDim * ratio);
-    mc.width = mw; mc.height = mh;
+    if (mc.width !== mw || mc.height !== mh) {
+      mc.width = mw; mc.height = mh;
+    }
     const ctx = mc.getContext("2d");
-    const cpw = mw / D.cols, cph = mh / D.rows;
-    for (let r = 0; r < D.rows; r++) {
-      for (let c = 0; c < D.cols; c++) {
-        const cell = D.cells[`${c},${r}`];
-        ctx.fillStyle = cell ? (TC[cell.terrain] || "#222") : "#111";
-        ctx.fillRect(Math.floor(c * cpw), Math.floor(r * cph), Math.ceil(cpw), Math.ceil(cph));
-      }
-    }
-    // Viewport rect
-    const vp = vpRef.current;
-    if (vp) {
-      const TF = tfRef.current;
-      const fullW = D.cols * CELL_BASE * TF.s, fullH = D.rows * CELL_BASE * TF.s;
-      const vw = vp.clientWidth, vh = vp.clientHeight;
-      const rx = (-TF.x / fullW) * mw, ry = (-TF.y / fullH) * mh;
-      const rw = (vw / fullW) * mw, rh = (vh / fullH) * mh;
-      ctx.strokeStyle = "rgba(79,195,247,0.8)"; ctx.lineWidth = 1.5;
-      ctx.strokeRect(Math.max(0, rx), Math.max(0, ry), Math.min(rw, mw), Math.min(rh, mh));
-    }
+    const { w, h } = containerSizeRef.current;
+    rendererRef.current.renderMinimap(ctx, mw, mh, viewportRef.current, D, w, h);
   }, [D]);
+
+  // Set up re-render callback for progressive tile loading
+  useEffect(() => {
+    rendererRef.current.onNeedsRerender = () => setRedrawTick(t => t + 1);
+    return () => { rendererRef.current.onNeedsRerender = null; };
+  }, []);
 
   useEffect(() => { draw(); }, [draw]);
 
-  // ── Event handlers ──
-  const pixelToCell = useCallback((e) => {
-    const vp = vpRef.current;
-    if (!vp || !D) return null;
-    const rect = vp.getBoundingClientRect();
-    const TF = tfRef.current;
-    const mx = (e.clientX - rect.left - TF.x) / TF.s;
-    const my = (e.clientY - rect.top - TF.y) / TF.s;
-    const c = Math.floor(mx / CELL_BASE), r = Math.floor(my / CELL_BASE);
-    if (c >= 0 && c < D.cols && r >= 0 && r < D.rows) return `${c},${r}`;
-    return null;
-  }, [D]);
+  // ── Zoom animation loop ──
+  const animateZoom = useCallback(() => {
+    const a = animRef.current;
+    if (!a.active) return;
+    const now = performance.now();
+    const t = Math.min(1, (now - a.startTime) / a.duration);
+    const eased = t * (2 - t); // ease-out quadratic
 
+    const newCellPixels = clampCellPixels(a.from + (a.to - a.from) * eased);
+    const vp = viewportRef.current;
+    const { w, h } = containerSizeRef.current;
+
+    // Keep the pivot point at the same screen position
+    const pivotScreenX = (a.pivotCol - vp.centerCol) * vp.cellPixels + w / 2;
+    const pivotScreenY = (a.pivotRow - vp.centerRow) * vp.cellPixels + h / 2;
+
+    viewportRef.current = {
+      centerCol: a.pivotCol - (pivotScreenX - w / 2) / newCellPixels,
+      centerRow: a.pivotRow - (pivotScreenY - h / 2) / newCellPixels,
+      cellPixels: newCellPixels,
+    };
+
+    setRedrawTick(tick => tick + 1);
+
+    if (t < 1) {
+      requestAnimationFrame(animateZoom);
+    } else {
+      a.active = false;
+      setRedrawTick(tick => tick + 1); // final render with labels
+    }
+  }, []);
+
+  // ── Event handlers ──
   const handleWheel = useCallback((e) => {
     e.preventDefault();
+    if (!D) return;
     const vp = vpRef.current;
-    if (!vp || !D) return;
-    const TF = tfRef.current;
+    if (!vp) return;
     const rect = vp.getBoundingClientRect();
-    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-    const ns = Math.max(0.05, Math.min(10, TF.s * factor));
-    tfRef.current = { x: mx - (mx - TF.x) * (ns / TF.s), y: my - (my - TF.y) * (ns / TF.s), s: ns };
-    setRedrawTick(t => t + 1);
-  }, [D]);
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const { w, h } = containerSizeRef.current;
+    const factor = e.deltaY < 0 ? ZOOM_FACTOR : 1 / ZOOM_FACTOR;
+
+    const viewport = viewportRef.current;
+    const targetCellPixels = clampCellPixels(viewport.cellPixels * factor);
+
+    // Compute grid point under cursor for pivot
+    const pivotCol = viewport.centerCol + (mx - w / 2) / viewport.cellPixels;
+    const pivotRow = viewport.centerRow + (my - h / 2) / viewport.cellPixels;
+
+    // Start or update zoom animation
+    const a = animRef.current;
+    a.from = viewport.cellPixels;
+    a.to = targetCellPixels;
+    a.pivotCol = pivotCol;
+    a.pivotRow = pivotRow;
+    a.startTime = performance.now();
+    a.duration = 120;
+    if (!a.active) {
+      a.active = true;
+      requestAnimationFrame(animateZoom);
+    }
+  }, [D, animateZoom]);
 
   const handleMouseDown = useCallback((e) => {
-    dragRef.current = { active: true, sx: e.clientX - tfRef.current.x, sy: e.clientY - tfRef.current.y };
+    dragRef.current = { active: true, lastX: e.clientX, lastY: e.clientY };
   }, []);
 
   const handleMouseMove = useCallback((e) => {
+    if (!D) return;
     if (dragRef.current.active) {
-      tfRef.current = { ...tfRef.current, x: e.clientX - dragRef.current.sx, y: e.clientY - dragRef.current.sy };
+      const dx = e.clientX - dragRef.current.lastX;
+      const dy = e.clientY - dragRef.current.lastY;
+      dragRef.current.lastX = e.clientX;
+      dragRef.current.lastY = e.clientY;
+      viewportRef.current = panViewport(viewportRef.current, dx, dy);
       setRedrawTick(t => t + 1);
     } else {
-      const k = pixelToCell(e);
+      const rect = vpRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const { w, h } = containerSizeRef.current;
+      const cell = screenToCell(mx, my, viewportRef.current, w, h, D.cols, D.rows);
+      const k = cell ? `${cell.c},${cell.r}` : null;
       if (k !== hov) setHov(k);
     }
-  }, [pixelToCell, hov]);
+  }, [D, hov]);
 
   const handleMouseUp = useCallback(() => { dragRef.current.active = false; }, []);
 
   const handleClick = useCallback((e) => {
     if (!D) return;
-    const k = pixelToCell(e);
-    if (k && D.cells[k]) setSel(prev => prev === k ? null : k);
-  }, [D, pixelToCell]);
+    const rect = vpRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const { w, h } = containerSizeRef.current;
+    const cell = screenToCell(mx, my, viewportRef.current, w, h, D.cols, D.rows);
+    if (cell) {
+      const k = `${cell.c},${cell.r}`;
+      if (D.cells[k]) setSel(prev => prev === k ? null : k);
+    }
+  }, [D]);
 
-  // Zoom to viewport ref
+  // Minimap click-to-navigate
+  const handleMinimapClick = useCallback((e) => {
+    if (!D) return;
+    const mc = mmRef.current;
+    if (!mc) return;
+    const rect = mc.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const col = (mx / mc.width) * D.cols;
+    const row = (my / mc.height) * D.rows;
+    viewportRef.current = { ...viewportRef.current, centerCol: col, centerRow: row };
+    setRedrawTick(t => t + 1);
+  }, [D]);
+
+  // Wheel event listener (passive: false for preventDefault)
   useEffect(() => {
     const vp = vpRef.current;
     if (!vp) return;
@@ -334,63 +338,17 @@ export default function Viewer({ onBack, initialData }) {
   // ── Export PNG ──
   const exportPNG = useCallback(() => {
     if (!D) return;
+    const renderer = rendererRef.current;
+    const offscreen = renderer.renderExport(D, af, preprocessedRef.current.roadNetworks, preprocessedRef.current.nameGroups);
+    // Convert OffscreenCanvas to downloadable PNG
     const cv = document.createElement("canvas");
-    const W = D.cols * CELL_BASE, H = D.rows * CELL_BASE;
-    cv.width = W; cv.height = H;
-    const ctx = cv.getContext("2d");
-    for (let r = 0; r < D.rows; r++) for (let c = 0; c < D.cols; c++) {
-      const cell = D.cells[`${c},${r}`]; if (!cell) continue;
-      ctx.fillStyle = TC[cell.terrain] || "#222"; ctx.fillRect(c * CELL_BASE, r * CELL_BASE, CELL_BASE, CELL_BASE);
-      ctx.fillStyle = "rgba(0,0,0,0.08)"; ctx.fillRect((c + 1) * CELL_BASE - 1, r * CELL_BASE, 1, CELL_BASE); ctx.fillRect(c * CELL_BASE, (r + 1) * CELL_BASE - 1, CELL_BASE, 1);
-    }
-    if (af.size > 0) for (let r = 0; r < D.rows; r++) for (let c = 0; c < D.cols; c++) {
-      const cell = D.cells[`${c},${r}`]; if (!cell) continue;
-      const feats = getFeats(cell).filter(f => af.has(f)); if (feats.length === 0) continue;
-      const x = c * CELL_BASE, y = r * CELL_BASE, margin = Math.max(2, CELL_BASE * 0.15), inner = CELL_BASE - margin * 2;
-      if (feats.length === 1) { ctx.fillStyle = FC[feats[0]] || "#999"; ctx.globalAlpha = 0.7; ctx.beginPath(); ctx.roundRect(x + margin, y + margin, inner, inner, 3); ctx.fill(); ctx.globalAlpha = 1; }
-      else { const segH = inner / feats.length; feats.forEach((f, i) => { ctx.fillStyle = FC[f] || "#999"; ctx.globalAlpha = 0.7; ctx.fillRect(x + margin, y + margin + i * segH, inner, segH); ctx.globalAlpha = 1; }); }
-    }
-    ctx.strokeStyle = "rgba(0,0,0,0.18)"; ctx.lineWidth = 0.5;
-    for (let c = 0; c <= D.cols; c++) { ctx.beginPath(); ctx.moveTo(c * CELL_BASE, 0); ctx.lineTo(c * CELL_BASE, H); ctx.stroke(); }
-    for (let r = 0; r <= D.rows; r++) { ctx.beginPath(); ctx.moveTo(0, r * CELL_BASE); ctx.lineTo(W, r * CELL_BASE); ctx.stroke(); }
-    ctx.strokeStyle = "rgba(0,0,0,0.35)"; ctx.lineWidth = 1;
-    for (let c = 0; c <= D.cols; c += 10) { ctx.beginPath(); ctx.moveTo(c * CELL_BASE, 0); ctx.lineTo(c * CELL_BASE, H); ctx.stroke(); }
-    for (let r = 0; r <= D.rows; r += 10) { ctx.beginPath(); ctx.moveTo(0, r * CELL_BASE); ctx.lineTo(W, r * CELL_BASE); ctx.stroke(); }
-    ctx.font = `${Math.max(8, CELL_BASE * 0.22)}px monospace`; ctx.fillStyle = "rgba(255,255,255,0.2)"; ctx.textAlign = "left"; ctx.textBaseline = "top";
-    for (let r = 0; r < D.rows; r += 5) for (let c = 0; c < D.cols; c += 5) ctx.fillText(cellCoord(c, r), c * CELL_BASE + 2, r * CELL_BASE + 2);
-    // Name labels
-    const nameGroups = {};
-    for (let r = 0; r < D.rows; r++) for (let c = 0; c < D.cols; c++) {
-      const cell = D.cells[`${c},${r}`]; if (!cell || !cell.feature_names) continue;
-      for (const [type, name] of Object.entries(cell.feature_names)) { const key = `${type}:${name}`; if (!nameGroups[key]) nameGroups[key] = { name, type, cells: [] }; nameGroups[key].cells.push({ c, r }); }
-    }
-    const labels = [];
-    for (const g of Object.values(nameGroups)) {
-      const cx = g.cells.reduce((s, p) => s + p.c, 0) / g.cells.length, cy = g.cells.reduce((s, p) => s + p.r, 0) / g.cells.length;
-      let fontSize, color, priority;
-      if (g.type === "dense_urban") { fontSize = Math.max(12, CELL_BASE * 0.55); color = "#FFFFFF"; priority = 10; }
-      else if (g.type === "light_urban") { fontSize = Math.max(10, CELL_BASE * 0.4); color = "#E0E0E0"; priority = 8; }
-      else if (g.type === "town") { fontSize = Math.max(9, CELL_BASE * 0.35); color = "#E8A040"; priority = 6; }
-      else if (g.type === "settlement") { fontSize = Math.max(9, CELL_BASE * 0.35); color = "#D0D0D0"; priority = 5; }
-      else if (g.type === "navigable_waterway") { fontSize = Math.max(9, CELL_BASE * 0.30); color = "#60C8E8"; priority = 4; }
-      else { fontSize = Math.max(8, CELL_BASE * 0.25); color = "#AAA"; priority = 2; }
-      labels.push({ name: g.name, x: (cx + 0.5) * CELL_BASE, y: (cy + 0.5) * CELL_BASE, fontSize, color, priority, type: g.type, spanCells: g.cells.length });
-    }
-    labels.sort((a, b) => b.priority - a.priority || b.spanCells - a.spanCells);
-    const placed = [];
-    ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    for (const lb of labels) {
-      ctx.font = lb.type === "navigable_waterway" ? `italic 600 ${lb.fontSize}px sans-serif` : `600 ${lb.fontSize}px sans-serif`;
-      const tw = ctx.measureText(lb.name.toUpperCase()).width, th = lb.fontSize;
-      const box = { x: lb.x - tw / 2 - 4, y: lb.y - th / 2 - 4, w: tw + 8, h: th + 8 };
-      let collides = false;
-      for (const p of placed) { if (box.x < p.x + p.w && box.x + box.w > p.x && box.y < p.y + p.h && box.y + box.h > p.y) { collides = true; break; } }
-      if (collides) continue;
-      placed.push(box);
-      ctx.strokeStyle = "rgba(0,0,0,0.85)"; ctx.lineWidth = 3; ctx.lineJoin = "round";
-      ctx.strokeText(lb.name.toUpperCase(), lb.x, lb.y); ctx.fillStyle = lb.color; ctx.fillText(lb.name.toUpperCase(), lb.x, lb.y);
-    }
-    const a = document.createElement("a"); a.download = `oc_map_${D.cols}x${D.rows}.png`; a.href = cv.toDataURL("image/png"); a.click();
+    cv.width = offscreen.width;
+    cv.height = offscreen.height;
+    cv.getContext("2d").drawImage(offscreen, 0, 0);
+    const a = document.createElement("a");
+    a.download = `oc_map_${D.cols}x${D.rows}.png`;
+    a.href = cv.toDataURL("image/png");
+    a.click();
   }, [D, af]);
 
   // ── Export LLM text ──
@@ -452,6 +410,10 @@ export default function Viewer({ onBack, initialData }) {
   // ── Cell info ──
   const infoCell = sel || hov;
   const cellData = infoCell && D ? D.cells[infoCell] : null;
+
+  // Current tier name for display
+  const currentTier = D ? getTier(viewportRef.current.cellPixels) : 0;
+  const zoomPercent = D ? Math.round(viewportRef.current.cellPixels / 28 * 100) : 100;
 
   // ═══════════════════════════════════════════════════════════════
   // RENDER
@@ -566,7 +528,7 @@ export default function Viewer({ onBack, initialData }) {
       <div ref={vpRef} style={{ width: "100%", height: "100%", cursor: dragRef.current.active ? "grabbing" : "grab" }}
         onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}
         onClick={handleClick}>
-        <canvas ref={canvasRef} style={{ transformOrigin: "0 0", imageRendering: "pixelated" }} />
+        <canvas ref={canvasRef} style={{ display: "block", width: "100%", height: "100%" }} />
       </div>
 
       {/* Top bar */}
@@ -706,14 +668,14 @@ export default function Viewer({ onBack, initialData }) {
       </Panel>
 
       {/* Minimap */}
-      <Panel style={{ position: "absolute", bottom: space[3], right: space[3], padding: space[1] }}>
+      <Panel style={{ position: "absolute", bottom: space[3], right: space[3], padding: space[1], cursor: "pointer" }}>
         <div style={{ fontSize: 8, color: colors.text.muted, letterSpacing: typography.letterSpacing.wider, textTransform: "uppercase", marginBottom: 2, textAlign: "center" }}>
           Minimap
         </div>
-        <canvas ref={mmRef} style={{ display: "block" }} />
+        <canvas ref={mmRef} style={{ display: "block" }} onClick={handleMinimapClick} />
       </Panel>
 
-      {/* Zoom indicator */}
+      {/* Zoom indicator + tier */}
       <div style={{
         position: "absolute", bottom: space[3], left: space[3],
         fontSize: typography.body.xs, color: colors.text.muted,
@@ -721,8 +683,11 @@ export default function Viewer({ onBack, initialData }) {
         background: colors.bg.overlay,
         padding: "2px 6px", borderRadius: radius.sm,
         backdropFilter: "blur(8px)",
+        display: "flex", alignItems: "center", gap: space[1],
       }}>
-        {Math.round(tfRef.current.s * 100)}%
+        <span>{zoomPercent}%</span>
+        <span style={{ color: colors.accent.blue, fontSize: 9 }}>{TIER_NAMES[currentTier]}</span>
+        <span style={{ color: colors.text.muted, fontSize: 9 }}>{viewportRef.current.cellPixels.toFixed(1)}px/cell</span>
       </div>
     </div>
   );
