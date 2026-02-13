@@ -1,5 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { fromUrl } from "geotiff";
+import { colors, typography, radius, shadows, animation, space } from "./theme.js";
+import { Button, Badge, Panel } from "./components/ui.jsx";
 
 // ════════════════════════════════════════════════════════════════
 // TERRAIN — physical character (movement, cover, LOS)
@@ -2321,36 +2323,36 @@ function CanvasMap({ grid, colorLUT, gC, gR, elevG, features, activeFeatures, op
 
   return (
     <div>
-      <div style={{ fontSize: 11, fontWeight: 700, color: "#D1D5DB", marginBottom: 3 }}>Terrain {"\u2014"} Physical Surface</div>
+      <div style={{ fontSize: typography.body.sm, fontWeight: typography.weight.bold, color: colors.text.primary, marginBottom: space[1] }}>Terrain {"\u2014"} Physical Surface</div>
       <div style={{ position: "relative" }}>
         <div style={{ position: "absolute", top: 4, right: 4, zIndex: 10, display: "flex", flexDirection: "column", gap: 2 }}>
           <button onClick={() => setTf(p => ({ ...p, s: Math.min(20, p.s * 1.5) }))} style={zbtnS}>+</button>
           <button onClick={() => setTf(p => ({ ...p, s: Math.max(0.5, p.s / 1.5) }))} style={zbtnS}>{"\u2013"}</button>
           <button onClick={() => setTf({ x: 0, y: 0, s: 1 })} style={{ ...zbtnS, fontSize: 7 }}>Fit</button>
         </div>
-        <div style={{ position: "absolute", bottom: 4, left: 4, zIndex: 10, fontSize: 8, color: "#6B7280", background: "rgba(15,23,42,0.8)", padding: "1px 4px", borderRadius: 2 }}>{(tf.s * 100).toFixed(0)}%</div>
+        <div style={{ position: "absolute", bottom: 4, left: 4, zIndex: 10, fontSize: typography.body.xs, color: colors.text.muted, background: colors.bg.overlay, padding: "1px 5px", borderRadius: radius.sm, fontFamily: typography.monoFamily, backdropFilter: "blur(8px)" }}>{(tf.s * 100).toFixed(0)}%</div>
         <div ref={wrapRef}
           onMouseDown={e => { if (paintType) { const cell = mouseToCell(e); if (cell) { const [c, r] = cell.split(",").map(Number); onPaint(c, r); } } else { setDrag(true); dsRef.current = { x: e.clientX - tf.x, y: e.clientY - tf.y }; } }}
           onMouseMove={e => { if (drag) { setTf(p => ({ ...p, x: e.clientX - dsRef.current.x, y: e.clientY - dsRef.current.y })); } else { const cell = mouseToCell(e); if (cell !== hov) setHov(cell); } }}
           onMouseUp={() => setDrag(false)} onMouseLeave={() => { setDrag(false); setHov(null); }}
-          style={{ width: CANVAS_W, height: CANVAS_H, overflow: "hidden", borderRadius: 5, border: "1px solid #374151", background: "#0A0F1A", position: "relative", cursor: drag ? "grabbing" : paintType ? "crosshair" : "grab" }}
+          style={{ width: CANVAS_W, height: CANVAS_H, overflow: "hidden", borderRadius: radius.md, border: `1px solid ${colors.border.default}`, background: colors.bg.base, position: "relative", cursor: drag ? "grabbing" : paintType ? "crosshair" : "grab" }}
         >
           <canvas ref={canvasRef} width={CANVAS_W} height={CANVAS_H} style={{ position: "absolute", transform: `translate(${tf.x}px,${tf.y}px) scale(${tf.s})`, transformOrigin: "0 0", imageRendering: "pixelated" }} />
         </div>
       </div>
       {hovData && (
-        <div style={{ marginTop: 3, padding: 4, background: "#111827", borderRadius: 3, fontSize: 9, display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
-          <div style={{ width: 10, height: 10, borderRadius: 2, background: `rgb(${(colorLUT[hovData.val] || [51, 51, 51]).join(",")})`, border: "1px solid rgba(255,255,255,0.2)" }} />
-          <span style={{ fontWeight: 700, color: `rgb(${(colorLUT[hovData.val] || [150, 150, 150]).join(",")})` }}>{(TT[hovData.val] || { label: hovData.val }).label}{hovData.fnames[hovData.val] ? ` — ${hovData.fnames[hovData.val]}` : ""}{hovData.fnames.settlement ? ` — ${hovData.fnames.settlement}` : ""}</span>
-          <span style={{ color: "#6B7280" }}>[{hov}] {hovData.elev !== undefined ? `${hovData.elev}m` : ""}</span>
-          {hovData.feats.map(f => { const fi = getFeatureInfo(f); const nm = hovData.fnames[f]; return (<span key={f} style={{ fontSize: 8, padding: "0 3px", borderRadius: 2, background: `${fi.color}33`, color: fi.color }}>{fi.label}{nm ? ` (${nm})` : ""}</span>); })}
+        <div style={{ marginTop: space[1], padding: space[1] + 2, background: colors.bg.raised, borderRadius: radius.md, fontSize: typography.body.xs, display: "flex", alignItems: "center", gap: space[1] + 1, flexWrap: "wrap", border: `1px solid ${colors.border.subtle}` }}>
+          <div style={{ width: 10, height: 10, borderRadius: radius.sm, background: `rgb(${(colorLUT[hovData.val] || [51, 51, 51]).join(",")})`, border: "1px solid rgba(255,255,255,0.15)" }} />
+          <span style={{ fontWeight: typography.weight.bold, color: `rgb(${(colorLUT[hovData.val] || [150, 150, 150]).join(",")})` }}>{(TT[hovData.val] || { label: hovData.val }).label}{hovData.fnames[hovData.val] ? ` — ${hovData.fnames[hovData.val]}` : ""}{hovData.fnames.settlement ? ` — ${hovData.fnames.settlement}` : ""}</span>
+          <span style={{ color: colors.text.muted, fontFamily: typography.monoFamily }}>[{hov}] {hovData.elev !== undefined ? `${hovData.elev}m` : ""}</span>
+          {hovData.feats.map(f => { const fi = getFeatureInfo(f); const nm = hovData.fnames[f]; return (<span key={f} style={{ fontSize: typography.body.xs, padding: "1px 4px", borderRadius: radius.sm, background: `${fi.color}20`, color: fi.color, border: `1px solid ${fi.color}40` }}>{fi.label}{nm ? ` (${nm})` : ""}</span>); })}
         </div>
       )}
     </div>
   );
 }
 
-const zbtnS = { width: 24, height: 24, borderRadius: 3, border: "1px solid #374151", background: "#1F2937", color: "#D1D5DB", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" };
+const zbtnS = { width: 24, height: 24, borderRadius: radius.sm, border: `1px solid ${colors.border.default}`, background: colors.bg.raised, color: colors.text.primary, cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: typography.fontFamily };
 
 // ════════════════════════════════════════════════════════════════
 // PROGRESS BAR
@@ -2368,18 +2370,18 @@ function ProgressBar({ progress, status, startTime }) {
   const fmtTime = (s) => s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
 
   return (
-    <div style={{ marginTop: 8, padding: 8, background: "#111827", borderRadius: 6, border: "1px solid #1E293B" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-        <span style={{ fontSize: 10, fontWeight: 700, color: "#D1D5DB" }}>{phase}</span>
-        <span style={{ fontSize: 9, color: "#6B7280" }}>
+    <div style={{ marginTop: space[2], padding: space[2], background: colors.bg.raised, borderRadius: radius.lg, border: `1px solid ${colors.border.subtle}` }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: space[1] }}>
+        <span style={{ fontSize: typography.body.xs + 1, fontWeight: typography.weight.bold, color: colors.text.primary, fontFamily: typography.fontFamily }}>{phase}</span>
+        <span style={{ fontSize: typography.body.xs, color: colors.text.muted, fontFamily: typography.monoFamily }}>
           {current}/{total}{skipped ? ` (+${skipped} ocean skipped)` : ""} {"\u2022"} {fmtTime(elapsed)} elapsed
           {remaining > 0 && current < total ? ` \u2022 ~${fmtTime(remaining)} remaining` : ""}
         </span>
       </div>
-      <div style={{ height: 6, borderRadius: 3, background: "#1F2937", overflow: "hidden" }}>
-        <div style={{ height: "100%", borderRadius: 3, background: phase === "Elevation" ? "#818CF8" : phase === "WorldCover" ? "#F59E0B" : "#22C55E", width: `${pct}%`, transition: "width 0.3s ease" }} />
+      <div style={{ height: 6, borderRadius: radius.full, background: colors.bg.input, overflow: "hidden" }}>
+        <div style={{ height: "100%", borderRadius: radius.full, background: phase === "Elevation" ? colors.accent.purple : phase === "WorldCover" ? colors.accent.amber : colors.accent.green, width: `${pct}%`, transition: `width ${animation.normal}`, backgroundSize: "200% 100%", animation: "shimmer 2s linear infinite" }} />
       </div>
-      <div style={{ fontSize: 9, color: "#6B7280", marginTop: 3 }}>{status}</div>
+      <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginTop: space[1], fontFamily: typography.fontFamily }}>{status}</div>
     </div>
   );
 }
@@ -2468,12 +2470,12 @@ function Dist({ grid, types }) {
   const tot = Object.values(ct).reduce((s, c) => s + c, 0);
   return types.filter(t => ct[t.id]).sort((a, b) => (ct[b.id] || 0) - (ct[a.id] || 0)).map(t => {
     const p = ((ct[t.id] / tot) * 100).toFixed(1);
-    return (<div key={t.id} style={{ marginBottom: 2 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#D1D5DB" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 3 }}><div style={{ width: 6, height: 6, borderRadius: 1, background: t.color }} />{t.label}</div>
-        <span>{ct[t.id]} ({p}%)</span>
+    return (<div key={t.id} style={{ marginBottom: 3 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: typography.body.xs + 1, color: colors.text.primary, fontFamily: typography.fontFamily }}>
+        <div style={{ display: "flex", alignItems: "center", gap: space[1] }}><div style={{ width: 7, height: 7, borderRadius: 2, background: t.color, flexShrink: 0 }} />{t.label}</div>
+        <span style={{ fontFamily: typography.monoFamily, color: colors.text.secondary }}>{ct[t.id]} ({p}%)</span>
       </div>
-      <div style={{ height: 2, borderRadius: 1, background: "#1F2937", marginTop: 1 }}><div style={{ height: 2, borderRadius: 1, background: t.color, width: `${p}%`, opacity: 0.7 }} /></div>
+      <div style={{ height: 4, borderRadius: 2, background: colors.bg.input, marginTop: 2 }}><div style={{ height: 4, borderRadius: 2, background: t.color, width: `${p}%`, opacity: 0.8, transition: `width ${animation.normal}` }} /></div>
     </div>);
   });
 }
@@ -2482,7 +2484,7 @@ function FeatureFilterPanel({ features, activeFeatures, onToggle, onToggleGroup,
   // Count features
   const ct = {};
   if (features) Object.values(features).forEach(f => { if (f) f.forEach(x => { ct[x] = (ct[x] || 0) + 1; }); });
-  if (Object.keys(ct).length === 0) return <div style={{ fontSize: 9, color: "#6B7280" }}>No features found</div>;
+  if (Object.keys(ct).length === 0) return <div style={{ fontSize: typography.body.xs, color: colors.text.muted, fontFamily: typography.fontFamily }}>No features found</div>;
 
   // Group by category
   const groups = {};
@@ -2494,23 +2496,26 @@ function FeatureFilterPanel({ features, activeFeatures, onToggle, onToggleGroup,
 
   return (
     <div>
-      <div style={{ display: "flex", gap: 3, marginBottom: 6, flexWrap: "wrap" }}>
-        <div onClick={() => onToggleAll(true)} style={{ padding: "1px 6px", borderRadius: 3, fontSize: 8, cursor: "pointer", background: "#1F2937", color: "#9CA3AF", border: "1px solid #374151" }}>All On</div>
-        <div onClick={() => onToggleAll(false)} style={{ padding: "1px 6px", borderRadius: 3, fontSize: 8, cursor: "pointer", background: "#1F2937", color: "#9CA3AF", border: "1px solid #374151" }}>All Off</div>
+      <div style={{ display: "flex", gap: 3, marginBottom: space[2], flexWrap: "wrap" }}>
+        <div onClick={() => onToggleAll(true)} style={{ padding: "2px 7px", borderRadius: radius.sm, fontSize: typography.body.xs, cursor: "pointer", background: colors.bg.surface, color: colors.text.secondary, border: `1px solid ${colors.border.subtle}`, transition: `all ${animation.fast}` }}>All On</div>
+        <div onClick={() => onToggleAll(false)} style={{ padding: "2px 7px", borderRadius: radius.sm, fontSize: typography.body.xs, cursor: "pointer", background: colors.bg.surface, color: colors.text.secondary, border: `1px solid ${colors.border.subtle}`, transition: `all ${animation.fast}` }}>All Off</div>
         {FEATURE_GROUPS.filter(g => groups[g]).map(g => (
-          <div key={g} onClick={() => onToggleGroup(g, groups[g])} style={{ padding: "1px 6px", borderRadius: 3, fontSize: 8, cursor: "pointer", background: "#1F2937", border: "1px solid #37415155", color: "#9CA3AF" }}>{g}</div>
+          <div key={g} onClick={() => onToggleGroup(g, groups[g])} style={{ padding: "2px 7px", borderRadius: radius.sm, fontSize: typography.body.xs, cursor: "pointer", background: colors.bg.surface, border: `1px solid ${colors.border.subtle}`, color: colors.text.secondary, transition: `all ${animation.fast}` }}>{g}</div>
         ))}
       </div>
       {FEATURE_GROUPS.filter(g => groups[g]).map(g => (
-        <div key={g} style={{ marginBottom: 6 }}>
-          <div onClick={() => onToggleGroup(g, groups[g])} style={{ fontSize: 8, fontWeight: 700, color: "#6B7280", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2, cursor: "pointer", userSelect: "none" }}>{g}</div>
+        <div key={g} style={{ marginBottom: space[2] }}>
+          <div onClick={() => onToggleGroup(g, groups[g])} style={{ fontSize: typography.body.xs, fontWeight: typography.weight.bold, color: colors.text.muted, textTransform: "uppercase", letterSpacing: typography.letterSpacing.wide, marginBottom: space[1], cursor: "pointer", userSelect: "none", display: "flex", alignItems: "center", gap: space[1] }}>
+            <div style={{ width: 2, height: 10, borderRadius: 1, background: colors.accent.amber, flexShrink: 0 }} />
+            {g}
+          </div>
           {groups[g].sort((a, b) => b.count - a.count).map(f => {
             const isOn = activeFeatures.has(f.id);
             return (
-              <div key={f.id} onClick={() => onToggle(f.id)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "1px 0", cursor: "pointer", fontSize: 9, opacity: isOn ? 1 : 0.4 }}>
-                <div style={{ width: 8, height: 8, borderRadius: 2, background: f.color, border: "1px solid rgba(255,255,255,0.1)", flexShrink: 0 }} />
-                <span>{f.label}</span>
-                <span style={{ marginLeft: "auto", color: "#6B7280", fontSize: 8 }}>{f.count} ({((f.count / total) * 100).toFixed(1)}%)</span>
+              <div key={f.id} onClick={() => onToggle(f.id)} style={{ display: "flex", alignItems: "center", gap: space[1], padding: "2px 0", cursor: "pointer", fontSize: typography.body.xs, opacity: isOn ? 1 : 0.25, transition: `opacity ${animation.fast}` }}>
+                <div style={{ width: 9, height: 9, borderRadius: radius.sm, background: f.color, border: "1px solid rgba(255,255,255,0.1)", flexShrink: 0, boxShadow: isOn ? `0 0 6px ${f.color}40` : "none" }} />
+                <span style={{ fontFamily: typography.fontFamily }}>{f.label}</span>
+                <span style={{ marginLeft: "auto", color: colors.text.muted, fontSize: typography.body.xs, fontFamily: typography.monoFamily }}>{f.count} ({((f.count / total) * 100).toFixed(1)}%)</span>
               </div>
             );
           })}
@@ -2805,7 +2810,7 @@ export default function Parser({ onBack, onViewMap }) {
 
   const [showLog, setShowLog] = useState(false);
 
-  const iS = { width: "100%", padding: "5px 8px", borderRadius: 4, border: "1px solid #374151", background: "#1F2937", color: "#E5E7EB", fontSize: 13 };
+  const iS = { width: "100%", padding: "5px 8px", borderRadius: radius.md, border: `1px solid ${colors.border.default}`, background: colors.bg.raised, color: colors.text.primary, fontSize: typography.body.md, fontFamily: typography.fontFamily, outline: "none", transition: `border-color ${animation.fast}`, boxSizing: "border-box" };
 
   const totalCells = gC * gR;
   const toggleFeature = useCallback(id => {
@@ -2831,101 +2836,106 @@ export default function Parser({ onBack, onViewMap }) {
   const isLarge = est.chunks > 4;
 
   return (
-    <div style={{ background: "#0F172A", minHeight: "100vh", color: "#E5E7EB", fontFamily: "Arial, sans-serif" }}>
-      <div style={{ padding: "8px 16px", borderBottom: "1px solid #1E293B", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          {onBack && <div onClick={onBack} style={{ cursor: "pointer", padding: "3px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600, background: "#1F2937", color: "#9CA3AF", border: "1px solid #374151" }}>{"\u2190"} Menu</div>}
-          <div><div style={{ fontSize: 14, fontWeight: 700 }}>Open Conflict — Terrain Parser</div><div style={{ fontSize: 9, color: "#64748B" }}>6-tier WorldCover + OSM {"\u2022"} Close to Theater {"\u2022"} Named features {"\u2022"} Satellite-first pipeline</div></div>
+    <div style={{ background: colors.bg.base, height: "100%", color: colors.text.primary, fontFamily: typography.fontFamily, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{ padding: `${space[2]}px ${space[4]}px`, borderBottom: `1px solid ${colors.border.subtle}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: space[3] }}>
+          <div>
+            <div style={{ fontSize: typography.heading.sm, fontWeight: typography.weight.bold }}>Terrain Parser</div>
+            <div style={{ fontSize: typography.body.xs, color: colors.text.muted }}>WorldCover + OSM + SRTM {"\u2022"} Close to Theater {"\u2022"} Named features</div>
+          </div>
         </div>
-        <div style={{ display: "flex", gap: 3 }}>{["input", "result"].map((s, i) => (
-          <div key={s} onClick={() => { if (s === "input" || tG) setStep(s); }} style={{ padding: "2px 10px", borderRadius: 3, fontSize: 10, fontWeight: 600, cursor: "pointer", background: step === s ? "#3B82F6" : "#1F2937", color: step === s ? "white" : "#6B7280" }}>{i + 1}. {s[0].toUpperCase() + s.slice(1)}</div>
+        <div style={{ display: "flex", gap: space[1] }}>{["input", "result"].map((s, i) => (
+          <div key={s} onClick={() => { if (s === "input" || tG) setStep(s); }} style={{ padding: `${space[1]}px ${space[3]}px`, borderRadius: radius.md, fontSize: typography.body.xs + 1, fontWeight: typography.weight.semibold, cursor: s === "result" && !tG ? "default" : "pointer", background: step === s ? colors.accent.blue : colors.bg.raised, color: step === s ? "white" : colors.text.muted, border: `1px solid ${step === s ? colors.accent.blue : colors.border.subtle}`, transition: `all ${animation.fast}`, opacity: s === "result" && !tG ? 0.4 : 1 }}>{i + 1}. {s[0].toUpperCase() + s.slice(1)}</div>
         ))}</div>
       </div>
 
-      <div style={{ padding: "10px 16px 16px" }}>
+      <div style={{ padding: `${space[3]}px ${space[4]}px ${space[4]}px`, flex: 1, overflowY: "auto" }}>
         {step === "input" && (
-          <div style={{ display: "flex", gap: 20 }}>
-            <div style={{ flex: 1, maxWidth: 380 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Scale</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 3, marginBottom: 10 }}>
+          <div style={{ display: "flex", gap: space[5], animation: "fadeIn 0.3s ease-out" }}>
+            <div style={{ flex: 1, maxWidth: 400 }}>
+              <div style={{ fontSize: typography.heading.sm, fontWeight: typography.weight.bold, marginBottom: space[2] }}>Scale</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: space[1], marginBottom: space[3] }}>
                 {SCALE_PRESETS.map(p => {
                   const active = activeScale === p.id;
                   const cells = Math.floor(p.w / p.cell) * Math.floor(p.h / p.cell);
                   return (
                     <div key={p.id} onClick={() => { setActiveScale(p.id); setCellKm(p.cell); setMapW(p.w); setMapH(p.h); const locs = LOCATION_PRESETS[p.id]; if (locs && locs[0]) { setLat(locs[0].lat); setLng(locs[0].lng); } }}
-                      style={{ padding: "6px 8px", borderRadius: 5, cursor: "pointer", background: active ? `${p.color}15` : "#111827", border: `1px solid ${active ? p.color : "#1E293B"}`, transition: "all 0.15s" }}>
+                      style={{ padding: `${space[2]}px ${space[2]}px`, borderRadius: radius.md, cursor: "pointer", background: active ? `${p.color}12` : colors.bg.raised, border: `1px solid ${active ? p.color + "60" : colors.border.subtle}`, transition: `all ${animation.fast}`, borderLeft: active ? `3px solid ${p.color}` : `3px solid transparent` }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <span style={{ fontSize: 12, fontWeight: 700, color: active ? p.color : "#D1D5DB" }}>{p.label}</span>
-                          <span style={{ fontSize: 9, color: "#6B7280", fontFamily: "monospace" }}>{p.cell >= 1 ? p.cell + "km" : (p.cell * 1000) + "m"}</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: space[2] }}>
+                          <span style={{ fontSize: typography.body.sm + 1, fontWeight: typography.weight.bold, color: active ? p.color : colors.text.primary }}>{p.label}</span>
+                          <span style={{ fontSize: typography.body.xs, color: colors.text.muted, fontFamily: typography.monoFamily }}>{p.cell >= 1 ? p.cell + "km" : (p.cell * 1000) + "m"}</span>
                         </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <span style={{ fontSize: 8, color: "#6B7280" }}>{p.units}</span>
-                          <span style={{ fontSize: 8, color: "#4B5563", fontFamily: "monospace" }}>{p.w}×{p.h}km · {cells.toLocaleString()}</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: space[2] }}>
+                          <Badge color={p.color} style={{ fontSize: 8 }}>{p.units}</Badge>
+                          <span style={{ fontSize: typography.body.xs, color: colors.text.muted, fontFamily: typography.monoFamily }}>{p.w}&times;{p.h}km · {cells.toLocaleString()}</span>
                         </div>
                       </div>
-                      {active && <div style={{ fontSize: 9, color: "#9CA3AF", marginTop: 3, lineHeight: 1.4 }}>{p.desc}</div>}
+                      {active && <div style={{ fontSize: typography.body.xs, color: colors.text.secondary, marginTop: space[1], lineHeight: 1.5, animation: "fadeIn 0.2s ease-out" }}>{p.desc}</div>}
                     </div>
                   );
                 })}
                 <div onClick={() => setActiveScale("custom")}
-                  style={{ padding: "6px 8px", borderRadius: 5, cursor: "pointer", background: activeScale === "custom" ? "#1E293B" : "#111827", border: `1px solid ${activeScale === "custom" ? "#6B7280" : "#1E293B"}` }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: activeScale === "custom" ? "#D1D5DB" : "#6B7280" }}>Custom</span>
-                  <span style={{ fontSize: 9, color: "#4B5563", marginLeft: 8 }}>Set your own cell size & dimensions</span>
+                  style={{ padding: `${space[2]}px ${space[2]}px`, borderRadius: radius.md, cursor: "pointer", background: activeScale === "custom" ? colors.bg.surface : colors.bg.raised, border: `1px solid ${activeScale === "custom" ? colors.border.focus : colors.border.subtle}`, transition: `all ${animation.fast}` }}>
+                  <span style={{ fontSize: typography.body.sm + 1, fontWeight: typography.weight.bold, color: activeScale === "custom" ? colors.text.primary : colors.text.muted }}>Custom</span>
+                  <span style={{ fontSize: typography.body.xs, color: colors.text.muted, marginLeft: space[2] }}>Set your own cell size & dimensions</span>
                 </div>
               </div>
 
-              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Location</div>
-              <div style={{ marginBottom: 8 }}>
-                <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginBottom: 6 }}>
-                  {(LOCATION_PRESETS[activeScale] || LOCATION_PRESETS.custom).map(p => (
-                    <div key={p.label} onClick={() => { setLat(p.lat); setLng(p.lng); }}
-                      title={p.note || ""}
-                      style={{ padding: "2px 7px", borderRadius: 3, fontSize: 9, cursor: "pointer", background: (Math.abs(lat - p.lat) < 0.1 && Math.abs(lng - p.lng) < 0.1) ? "#1E3A5F" : "#1F2937", border: `1px solid ${(Math.abs(lat - p.lat) < 0.1 && Math.abs(lng - p.lng) < 0.1) ? "#3B82F6" : "#374151"}`, color: "#D1D5DB" }}>
-                      {p.label}
-                    </div>
-                  ))}
+              <div style={{ fontSize: typography.heading.sm, fontWeight: typography.weight.bold, marginBottom: space[2] }}>Location</div>
+              <div style={{ marginBottom: space[2] }}>
+                <div style={{ display: "flex", gap: space[1], flexWrap: "wrap", marginBottom: space[2] }}>
+                  {(LOCATION_PRESETS[activeScale] || LOCATION_PRESETS.custom).map(p => {
+                    const isActive = Math.abs(lat - p.lat) < 0.1 && Math.abs(lng - p.lng) < 0.1;
+                    return (
+                      <div key={p.label} onClick={() => { setLat(p.lat); setLng(p.lng); }}
+                        title={p.note || ""}
+                        style={{ padding: "3px 8px", borderRadius: radius.sm, fontSize: typography.body.xs, cursor: "pointer", background: isActive ? `${colors.accent.blue}18` : colors.bg.raised, border: `1px solid ${isActive ? colors.accent.blue + "60" : colors.border.subtle}`, color: isActive ? colors.accent.blue : colors.text.primary, transition: `all ${animation.fast}`, fontFamily: typography.fontFamily }}>
+                        {p.label}
+                      </div>
+                    );
+                  })}
                 </div>
                 {(() => {
                   const locs = LOCATION_PRESETS[activeScale] || LOCATION_PRESETS.custom;
                   const active = locs.find(p => Math.abs(lat - p.lat) < 0.1 && Math.abs(lng - p.lng) < 0.1);
-                  return active && active.note ? <div style={{ fontSize: 9, color: "#6B7280", marginBottom: 4, fontStyle: "italic" }}>{active.note}</div> : null;
+                  return active && active.note ? <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: space[1], fontStyle: "italic", paddingLeft: space[1], borderLeft: `2px solid ${colors.accent.blue}30` }}>{active.note}</div> : null;
                 })()}
               </div>
-              <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-                <label style={{ flex: 1 }}><div style={{ fontSize: 10, color: "#9CA3AF", marginBottom: 2 }}>Latitude</div><input type="number" step="0.01" value={lat} onChange={e => setLat(Number(e.target.value))} style={iS} /></label>
-                <label style={{ flex: 1 }}><div style={{ fontSize: 10, color: "#9CA3AF", marginBottom: 2 }}>Longitude</div><input type="number" step="0.01" value={lng} onChange={e => setLng(Number(e.target.value))} style={iS} /></label>
+              <div style={{ display: "flex", gap: space[2], marginBottom: space[2] }}>
+                <label style={{ flex: 1 }}><div style={{ fontSize: typography.body.xs, color: colors.text.secondary, marginBottom: 2 }}>Latitude</div><input type="number" step="0.01" value={lat} onChange={e => setLat(Number(e.target.value))} style={iS} /></label>
+                <label style={{ flex: 1 }}><div style={{ fontSize: typography.body.xs, color: colors.text.secondary, marginBottom: 2 }}>Longitude</div><input type="number" step="0.01" value={lng} onChange={e => setLng(Number(e.target.value))} style={iS} /></label>
               </div>
 
               {activeScale === "custom" && (
                 <>
-                  <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-                    <label style={{ flex: 1 }}><div style={{ fontSize: 10, color: "#9CA3AF", marginBottom: 2 }}>Width (km)</div><input type="number" value={mapW} onChange={e => setMapW(Number(e.target.value))} style={iS} /></label>
-                    <label style={{ flex: 1 }}><div style={{ fontSize: 10, color: "#9CA3AF", marginBottom: 2 }}>Height (km)</div><input type="number" value={mapH} onChange={e => setMapH(Number(e.target.value))} style={iS} /></label>
+                  <div style={{ display: "flex", gap: space[2], marginBottom: space[2] }}>
+                    <label style={{ flex: 1 }}><div style={{ fontSize: typography.body.xs, color: colors.text.secondary, marginBottom: 2 }}>Width (km)</div><input type="number" value={mapW} onChange={e => setMapW(Number(e.target.value))} style={iS} /></label>
+                    <label style={{ flex: 1 }}><div style={{ fontSize: typography.body.xs, color: colors.text.secondary, marginBottom: 2 }}>Height (km)</div><input type="number" value={mapH} onChange={e => setMapH(Number(e.target.value))} style={iS} /></label>
                   </div>
-                  <label style={{ display: "block", marginBottom: 10 }}><div style={{ fontSize: 10, color: "#9CA3AF", marginBottom: 2 }}>Cell size (km)</div><input type="number" step="0.01" value={cellKm} onChange={e => setCellKm(Math.max(0.01, Number(e.target.value)))} style={iS} /></label>
+                  <label style={{ display: "block", marginBottom: space[3] }}><div style={{ fontSize: typography.body.xs, color: colors.text.secondary, marginBottom: 2 }}>Cell size (km)</div><input type="number" step="0.01" value={cellKm} onChange={e => setCellKm(Math.max(0.01, Number(e.target.value)))} style={iS} /></label>
                 </>
               )}
 
               {activeScale !== "custom" && (
-                <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-                  <label style={{ flex: 1 }}><div style={{ fontSize: 10, color: "#9CA3AF", marginBottom: 2 }}>Width (km)</div><input type="number" value={mapW} onChange={e => { setMapW(Number(e.target.value)); setActiveScale("custom"); }} style={iS} /></label>
-                  <label style={{ flex: 1 }}><div style={{ fontSize: 10, color: "#9CA3AF", marginBottom: 2 }}>Height (km)</div><input type="number" value={mapH} onChange={e => { setMapH(Number(e.target.value)); setActiveScale("custom"); }} style={iS} /></label>
+                <div style={{ display: "flex", gap: space[2], marginBottom: space[2] }}>
+                  <label style={{ flex: 1 }}><div style={{ fontSize: typography.body.xs, color: colors.text.secondary, marginBottom: 2 }}>Width (km)</div><input type="number" value={mapW} onChange={e => { setMapW(Number(e.target.value)); setActiveScale("custom"); }} style={iS} /></label>
+                  <label style={{ flex: 1 }}><div style={{ fontSize: typography.body.xs, color: colors.text.secondary, marginBottom: 2 }}>Height (km)</div><input type="number" value={mapH} onChange={e => { setMapH(Number(e.target.value)); setActiveScale("custom"); }} style={iS} /></label>
                 </div>
               )}
-              <div style={{ padding: 6, background: "#111827", borderRadius: 5, fontSize: 11, marginBottom: 6, display: "flex", justifyContent: "space-between" }}>
-                <span style={{ fontWeight: 700 }}>{est.cols} {"\u00D7"} {est.rows}</span>
-                <span style={{ color: "#6B7280", fontSize: 10 }}>{(est.cols * est.rows).toLocaleString()} cells</span>
+              <div style={{ padding: space[2], background: colors.bg.raised, borderRadius: radius.md, fontSize: typography.body.sm, marginBottom: space[2], display: "flex", justifyContent: "space-between", border: `1px solid ${colors.border.subtle}` }}>
+                <span style={{ fontWeight: typography.weight.bold }}>{est.cols} {"\u00D7"} {est.rows}</span>
+                <span style={{ color: colors.text.muted, fontSize: typography.body.xs, fontFamily: typography.monoFamily }}>{(est.cols * est.rows).toLocaleString()} cells</span>
               </div>
 
               {/* Generation time estimate + warning for large maps */}
-              <div style={{ padding: 6, background: "#111827", borderRadius: 5, fontSize: 10, marginBottom: 10, color: "#9CA3AF" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
-                  <span>Scale: <span style={{ color: est.tier === "sub-tactical" ? "#E879F9" : est.tier === "tactical" ? "#22C55E" : est.tier === "operational" ? "#F59E0B" : "#EF4444", fontWeight: 600 }}>{activeScale !== "custom" ? (SCALE_PRESETS.find(p => p.id === activeScale)?.label || est.tier) : est.tier}</span></span>
-                  <span>{est.wcTiles} WC {est.wcTiles === 1 ? "tile" : "tiles"}, {est.chunks} OSM {est.chunks === 1 ? "query" : "chunks"}</span>
+              <div style={{ padding: space[2], background: colors.bg.raised, borderRadius: radius.md, fontSize: typography.body.xs + 1, marginBottom: space[3], color: colors.text.secondary, border: `1px solid ${colors.border.subtle}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2, fontFamily: typography.fontFamily }}>
+                  <span>Scale: <span style={{ color: est.tier === "sub-tactical" ? colors.accent.purple : est.tier === "tactical" ? colors.accent.green : est.tier === "operational" ? colors.accent.amber : colors.accent.red, fontWeight: typography.weight.semibold }}>{activeScale !== "custom" ? (SCALE_PRESETS.find(p => p.id === activeScale)?.label || est.tier) : est.tier}</span></span>
+                  <span style={{ fontFamily: typography.monoFamily, fontSize: typography.body.xs }}>{est.wcTiles} WC {est.wcTiles === 1 ? "tile" : "tiles"}, {est.chunks} OSM {est.chunks === 1 ? "query" : "chunks"}</span>
                 </div>
                 {isLarge && (
-                  <div style={{ marginTop: 4, padding: 4, background: "#1E293B", borderRadius: 3, fontSize: 9, color: "#F59E0B", lineHeight: 1.4 }}>
+                  <div style={{ marginTop: space[1], padding: space[1] + 2, background: `${colors.accent.amber}10`, borderRadius: radius.sm, fontSize: typography.body.xs, color: colors.accent.amber, lineHeight: 1.5, border: `1px solid ${colors.accent.amber}25` }}>
                     {"\u26A0"} Large map — estimated ~{est.totalSec > 60 ? `${Math.round(est.totalSec / 60)} minutes` : `${est.totalSec}s`}.
                     {est.chunks > 20 && " Strategic-scale maps query many regions and may take several minutes. Ocean areas are auto-skipped to save time."}
                     {" "}Generation runs in the background — you can leave this tab open.
@@ -2933,104 +2943,110 @@ export default function Parser({ onBack, onViewMap }) {
                 )}
               </div>
 
-              <button onClick={go} disabled={gen} style={{ width: "100%", padding: "9px", borderRadius: 6, border: "none", background: gen ? "#374151" : "#22C55E", color: gen ? "#9CA3AF" : "white", fontWeight: 600, fontSize: 13, cursor: gen ? "wait" : "pointer" }}>{gen ? "Generating..." : "Generate"}</button>
-              {error && <div style={{ marginTop: 6, padding: 6, background: "#7F1D1D22", border: "1px solid #7F1D1D", borderRadius: 4, fontSize: 10, color: "#FCA5A5" }}>{error}{genLog && <span onClick={expLog} style={{ marginLeft: 8, color: "#818CF8", cursor: "pointer", textDecoration: "underline" }}>Download generation log</span>}</div>}
+              <Button variant={gen ? "secondary" : "success"} onClick={go} disabled={gen} style={{ width: "100%", padding: "10px", fontSize: typography.body.md, fontWeight: typography.weight.bold, cursor: gen ? "wait" : "pointer" }}>{gen ? "Generating..." : "Generate"}</Button>
+              {error && <div style={{ marginTop: space[2], padding: space[2], background: colors.glow.red, border: `1px solid ${colors.accent.red}30`, borderRadius: radius.md, fontSize: typography.body.xs + 1, color: "#FCA5A5", fontFamily: typography.fontFamily }}>{error}{genLog && <span onClick={expLog} style={{ marginLeft: space[2], color: colors.accent.purple, cursor: "pointer", textDecoration: "underline" }}>Download generation log</span>}</div>}
 
               {/* Progress bar during generation */}
               {gen && <ProgressBar progress={progress} status={status} startTime={startTime} />}
             </div>
-            <div style={{ flex: 1, maxWidth: 400 }}>
-              <div style={{ padding: 10, background: "#111827", borderRadius: 6, fontSize: 10, color: "#9CA3AF", lineHeight: 1.5 }}>
-                <div style={{ fontWeight: 700, color: "#D1D5DB", fontSize: 12, marginBottom: 6 }}>Per-Cell Data Model</div>
-                <div style={{ display: "flex", gap: 12, marginBottom: 6 }}>
+            <div style={{ flex: 1, maxWidth: 420 }}>
+              <div style={{ padding: space[3], background: colors.bg.raised, borderRadius: radius.lg, fontSize: typography.body.xs + 1, color: colors.text.secondary, lineHeight: 1.6, border: `1px solid ${colors.border.subtle}` }}>
+                <div style={{ fontWeight: typography.weight.bold, color: colors.text.primary, fontSize: typography.body.sm + 1, marginBottom: space[2] }}>Per-Cell Data Model</div>
+                <div style={{ display: "flex", gap: space[3], marginBottom: space[2] }}>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 9, fontWeight: 700, color: "#22C55E", marginBottom: 3 }}>Terrain (18)</div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: "1px 6px" }}>
-                      {TERRAIN_TYPES.map(t => <span key={t.id} style={{ fontSize: 8, display: "flex", alignItems: "center", gap: 2 }}><span style={{ width: 5, height: 5, borderRadius: 1, background: t.color, display: "inline-block", flexShrink: 0 }} />{t.label}</span>)}
+                    <div style={{ fontSize: typography.body.xs, fontWeight: typography.weight.bold, color: colors.accent.green, marginBottom: space[1] }}>Terrain (18)</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 6px" }}>
+                      {TERRAIN_TYPES.map(t => <span key={t.id} style={{ fontSize: 8, display: "flex", alignItems: "center", gap: 3, fontFamily: typography.fontFamily }}><span style={{ width: 6, height: 6, borderRadius: 2, background: t.color, display: "inline-block", flexShrink: 0 }} />{t.label}</span>)}
                     </div>
                   </div>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 9, fontWeight: 700, color: "#F59E0B", marginBottom: 3 }}>Features (per cell, multi-select)</div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: "1px 6px" }}>
-                      {Object.entries(FEATURE_TYPES).map(([k, v]) => <span key={k} style={{ fontSize: 8, display: "flex", alignItems: "center", gap: 2 }}><span style={{ width: 5, height: 5, borderRadius: 1, background: v.color, display: "inline-block", flexShrink: 0 }} />{v.label}</span>)}
+                    <div style={{ fontSize: typography.body.xs, fontWeight: typography.weight.bold, color: colors.accent.amber, marginBottom: space[1] }}>Features (per cell, multi-select)</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 6px" }}>
+                      {Object.entries(FEATURE_TYPES).map(([k, v]) => <span key={k} style={{ fontSize: 8, display: "flex", alignItems: "center", gap: 3, fontFamily: typography.fontFamily }}><span style={{ width: 6, height: 6, borderRadius: 2, background: v.color, display: "inline-block", flexShrink: 0 }} />{v.label}</span>)}
                     </div>
                   </div>
                 </div>
-                <div style={{ fontSize: 9, color: "#6B7280" }}>+ Elevation (m) per cell. Features accumulate — a cell can have highway + railway + bridge + military_base simultaneously.</div>
+                <div style={{ fontSize: typography.body.xs, color: colors.text.muted }}>+ Elevation (m) per cell. Features accumulate — a cell can have highway + railway + bridge + military_base simultaneously.</div>
               </div>
 
               {/* Scale tier explanation */}
-              <div style={{ marginTop: 8, padding: 8, background: "#111827", borderRadius: 6, fontSize: 9, color: "#9CA3AF", lineHeight: 1.5 }}>
-                <div style={{ fontWeight: 700, color: "#D1D5DB", fontSize: 10, marginBottom: 4 }}>v9: 4-Tier Scale-Adaptive Pipeline</div>
-                <div style={{ marginBottom: 4, color: "#818CF8" }}>ESA WorldCover (satellite) provides base terrain globally. OSM adds infrastructure and refinement, scaled to cell size.</div>
-                <div style={{ marginBottom: 2 }}><span style={{ color: "#E879F9", fontWeight: 600 }}>Sub-tactical</span> (&lt;0.5km cells): Buildings, barriers, footpaths, ditches, slope. Squad-level detail.</div>
-                <div style={{ marginBottom: 2 }}><span style={{ color: "#22C55E", fontWeight: 600 }}>Tactical</span> (0.5–2km cells): Full OSM refines WorldCover — urban types, water types, all roads</div>
-                <div style={{ marginBottom: 2 }}><span style={{ color: "#F59E0B", fontWeight: 600 }}>Operational</span> (2–8km): OSM adds urban, water detail, major roads. WorldCover handles vegetation.</div>
-                <div><span style={{ color: "#EF4444", fontWeight: 600 }}>Strategic</span> (&gt;8km): OSM infra only (highways, rail, military). Dam/river crossing filtered by significance.</div>
+              <div style={{ marginTop: space[2], padding: space[2] + 2, background: colors.bg.raised, borderRadius: radius.lg, fontSize: typography.body.xs, color: colors.text.secondary, lineHeight: 1.6, border: `1px solid ${colors.border.subtle}` }}>
+                <div style={{ fontWeight: typography.weight.bold, color: colors.text.primary, fontSize: typography.body.xs + 1, marginBottom: space[1] }}>4-Tier Scale-Adaptive Pipeline</div>
+                <div style={{ marginBottom: space[1], color: colors.accent.purple }}>ESA WorldCover (satellite) provides base terrain globally. OSM adds infrastructure and refinement, scaled to cell size.</div>
+                <div style={{ marginBottom: 2 }}><span style={{ color: colors.accent.purple, fontWeight: typography.weight.semibold }}>Sub-tactical</span> (&lt;0.5km cells): Buildings, barriers, footpaths, ditches, slope. Squad-level detail.</div>
+                <div style={{ marginBottom: 2 }}><span style={{ color: colors.accent.green, fontWeight: typography.weight.semibold }}>Tactical</span> (0.5–2km cells): Full OSM refines WorldCover — urban types, water types, all roads</div>
+                <div style={{ marginBottom: 2 }}><span style={{ color: colors.accent.amber, fontWeight: typography.weight.semibold }}>Operational</span> (2–8km): OSM adds urban, water detail, major roads. WorldCover handles vegetation.</div>
+                <div><span style={{ color: colors.accent.red, fontWeight: typography.weight.semibold }}>Strategic</span> (&gt;8km): OSM infra only (highways, rail, military). Dam/river crossing filtered by significance.</div>
               </div>
             </div>
           </div>
         )}
 
         {step === "result" && tG && (
-          <div>
-            <div style={{ display: "flex", gap: 4, marginBottom: 6, alignItems: "center", flexWrap: "wrap" }}>
-              <span style={{ fontSize: 9, color: "#6B7280" }}>Paint:</span>
-              <div onClick={() => setPt(null)} style={{ padding: "1px 6px", borderRadius: 3, fontSize: 9, cursor: "pointer", background: !pt ? "#3B82F6" : "#1F2937", color: !pt ? "white" : "#6B7280" }}>Off</div>
+          <div style={{ animation: "fadeIn 0.3s ease-out" }}>
+            <div style={{ display: "flex", gap: space[1], marginBottom: space[2], alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ fontSize: typography.body.xs, color: colors.text.muted, fontWeight: typography.weight.medium }}>Paint:</span>
+              <div onClick={() => setPt(null)} style={{ padding: "2px 7px", borderRadius: radius.sm, fontSize: typography.body.xs, cursor: "pointer", background: !pt ? colors.accent.blue : colors.bg.raised, color: !pt ? "white" : colors.text.muted, border: `1px solid ${!pt ? colors.accent.blue : colors.border.subtle}`, transition: `all ${animation.fast}` }}>Off</div>
               {TERRAIN_TYPES.map(t => (
-                <div key={t.id} onClick={() => setPt(t.id)} style={{ padding: "1px 5px", borderRadius: 2, fontSize: 8, cursor: "pointer", display: "flex", alignItems: "center", gap: 2, background: pt === t.id ? `${t.color}44` : "#1F2937", border: `1px solid ${pt === t.id ? t.color : "transparent"}`, color: pt === t.id ? t.color : "#9CA3AF" }}>
-                  <div style={{ width: 4, height: 4, borderRadius: 1, background: t.color }} />{t.label}
+                <div key={t.id} onClick={() => setPt(t.id)} style={{ padding: "2px 6px", borderRadius: radius.sm, fontSize: 8, cursor: "pointer", display: "flex", alignItems: "center", gap: 2, background: pt === t.id ? `${t.color}25` : colors.bg.raised, border: `1px solid ${pt === t.id ? t.color + "60" : "transparent"}`, color: pt === t.id ? t.color : colors.text.secondary, transition: `all ${animation.fast}`, fontFamily: typography.fontFamily }}>
+                  <div style={{ width: 5, height: 5, borderRadius: 2, background: t.color }} />{t.label}
                 </div>
               ))}
-              <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 3 }}>
-                <span style={{ fontSize: 8, color: "#6B7280" }}>Opacity:</span>
-                <input type="range" min={20} max={100} value={op} onChange={e => setOp(Number(e.target.value))} style={{ width: 50 }} />
+              <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: space[1] }}>
+                <span style={{ fontSize: typography.body.xs, color: colors.text.muted }}>Opacity:</span>
+                <input type="range" min={20} max={100} value={op} onChange={e => setOp(Number(e.target.value))} style={{ width: 50, accentColor: colors.accent.blue }} />
               </div>
             </div>
 
-            <div style={{ display: "flex", gap: 12 }}>
+            <div style={{ display: "flex", gap: space[3] }}>
               <div style={{ flex: "0 0 auto" }}>
                 <CanvasMap grid={tG} colorLUT={TERR_LUT} gC={gC} gR={gR} elevG={eG} features={fG} activeFeatures={activeFeatures}
                   opacity={op} paintType={pt}
                   onPaint={(c, r) => { const k = `${c},${r}`; setTG(p => ({ ...p, [k]: pt })); }} />
-                <div style={{ fontSize: 9, color: "#6B7280", marginTop: 3 }}>{gC}{"\u00D7"}{gR} {"\u2022"} {cellKm}km/cell {"\u2022"} {activeFeatures.size} feature filters active</div>
+                <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginTop: space[1], fontFamily: typography.monoFamily }}>{gC}{"\u00D7"}{gR} {"\u2022"} {cellKm}km/cell {"\u2022"} {activeFeatures.size} feature filters active</div>
               </div>
               <div style={{ flex: 1, minWidth: 200, display: "flex", flexDirection: "column", gap: 0 }}>
                 {/* ── PINNED ACTION BAR ── */}
-                <div style={{ display: "flex", gap: 4, marginBottom: 6, flexWrap: "wrap", alignItems: "center", flexShrink: 0 }}>
-                  <button onClick={exp} style={{ padding: "5px 14px", borderRadius: 5, border: "none", background: "#3B82F6", color: "white", fontWeight: 700, fontSize: 11, cursor: "pointer" }}>Export JSON</button>
-                  {onViewMap && <button onClick={viewInMap} style={{ padding: "5px 14px", borderRadius: 5, border: "none", background: "#22C55E", color: "white", fontWeight: 700, fontSize: 11, cursor: "pointer" }}>{"\u279C"} View in Map</button>}
-                  <button onClick={expLog} disabled={!genLog} style={{ padding: "5px 10px", borderRadius: 5, border: "1px solid #374151", background: "#1F2937", color: genLog ? "#D1D5DB" : "#4B5563", fontSize: 9, cursor: genLog ? "pointer" : "default" }}>Log</button>
-                  <button onClick={() => setShowLog(p => !p)} disabled={!genLog} style={{ padding: "5px 10px", borderRadius: 5, border: `1px solid ${showLog ? "#818CF8" : "#374151"}`, background: showLog ? "#818CF811" : "#1F2937", color: genLog ? (showLog ? "#818CF8" : "#D1D5DB") : "#4B5563", fontSize: 9, cursor: genLog ? "pointer" : "default" }}>{showLog ? "Hide" : "View"} Log</button>
-                  <button onClick={() => setStep("input")} style={{ padding: "5px 10px", borderRadius: 5, border: "1px solid #374151", background: "#1F2937", color: "#D1D5DB", fontSize: 9, cursor: "pointer" }}>{"\u25C0"} New Map</button>
-                  <div style={{ marginLeft: "auto", fontSize: 9, color: "#6B7280" }}>
+                <div style={{ display: "flex", gap: space[1] + 2, marginBottom: space[2], flexWrap: "wrap", alignItems: "center", flexShrink: 0 }}>
+                  <Button variant="primary" size="sm" onClick={exp} style={{ background: colors.accent.blue, color: "white" }}>Export JSON</Button>
+                  {onViewMap && <Button variant="success" size="sm" onClick={viewInMap}>{"\u279C"} View in Map</Button>}
+                  <Button variant="ghost" size="sm" onClick={expLog} disabled={!genLog}>Log</Button>
+                  <Button variant={showLog ? "secondary" : "ghost"} size="sm" onClick={() => setShowLog(p => !p)} disabled={!genLog} style={showLog ? { borderColor: colors.accent.purple + "60", color: colors.accent.purple } : {}}>{showLog ? "Hide" : "View"} Log</Button>
+                  <Button variant="ghost" size="sm" onClick={() => setStep("input")}>{"\u25C0"} New Map</Button>
+                  <div style={{ marginLeft: "auto", fontSize: typography.body.xs, color: colors.text.muted, fontFamily: typography.monoFamily }}>
                     {activeFeatures.size} filters {"\u2022"} {lat.toFixed(2)}, {lng.toFixed(2)}
                   </div>
                 </div>
 
                 {showLog && genLog && (
-                  <div style={{ maxHeight: 200, overflow: "auto", background: "#0A0F1A", borderRadius: 5, border: "1px solid #1E293B", padding: 6, marginBottom: 6, flexShrink: 0 }}>
-                    <pre style={{ fontSize: 8, fontFamily: "monospace", color: "#9CA3AF", whiteSpace: "pre-wrap", margin: 0, lineHeight: 1.4 }}>{genLog}</pre>
+                  <div style={{ maxHeight: 200, overflow: "auto", background: colors.bg.input, borderRadius: radius.md, border: `1px solid ${colors.border.subtle}`, padding: space[2], marginBottom: space[2], flexShrink: 0 }}>
+                    <pre style={{ fontSize: 8, fontFamily: typography.monoFamily, color: colors.text.secondary, whiteSpace: "pre-wrap", margin: 0, lineHeight: 1.5 }}>{genLog}</pre>
                   </div>
                 )}
 
                 {/* ── SCROLLABLE STATS ── */}
                 <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
-                  <div style={{ marginBottom: 8 }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4, color: "#22C55E" }}>Terrain</div>
+                  <div style={{ marginBottom: space[2] }}>
+                    <div style={{ fontSize: typography.body.sm + 1, fontWeight: typography.weight.bold, marginBottom: space[1], color: colors.accent.green, display: "flex", alignItems: "center", gap: space[1] }}>
+                      <div style={{ width: 3, height: 12, borderRadius: 2, background: colors.accent.green }} />
+                      Terrain
+                    </div>
                     <Dist grid={tG} types={TERRAIN_TYPES} />
                   </div>
-                  <div style={{ borderTop: "1px solid #1E293B", paddingTop: 6, marginBottom: 8 }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4, color: "#F59E0B" }}>Features <span style={{ fontSize: 9, fontWeight: 400, color: "#6B7280" }}>(toggle to overlay on map)</span></div>
+                  <div style={{ borderTop: `1px solid ${colors.border.subtle}`, paddingTop: space[2], marginBottom: space[2] }}>
+                    <div style={{ fontSize: typography.body.sm + 1, fontWeight: typography.weight.bold, marginBottom: space[1], color: colors.accent.amber, display: "flex", alignItems: "center", gap: space[1] }}>
+                      <div style={{ width: 3, height: 12, borderRadius: 2, background: colors.accent.amber }} />
+                      Features <span style={{ fontSize: typography.body.xs, fontWeight: typography.weight.normal, color: colors.text.muted }}>(toggle to overlay on map)</span>
+                    </div>
                     <FeatureFilterPanel features={fG} activeFeatures={activeFeatures} total={totalCells}
                       onToggle={toggleFeature} onToggleGroup={toggleGroup} onToggleAll={toggleAllFeatures} />
                   </div>
-                  <div style={{ padding: 5, background: "#111827", borderRadius: 5, fontSize: 9, color: "#9CA3AF", marginBottom: 4 }}>
-                    <div style={{ fontWeight: 700, color: "#D1D5DB", marginBottom: 2 }}>Data</div>
-                    <div style={{ color: "#22C55E" }}>{"\u2713"} ESA WorldCover (terrain)</div>
-                    <div style={{ color: "#22C55E" }}>{"\u2713"} OpenStreetMap (features)</div>
-                    <div style={{ color: "#22C55E" }}>{"\u2713"} SRTM elevation + slope</div>
-                    {elevInfo && <div style={{ color: "#818CF8", marginTop: 2 }}>{elevInfo}</div>}
+                  <div style={{ padding: space[2], background: colors.bg.raised, borderRadius: radius.md, fontSize: typography.body.xs, color: colors.text.secondary, marginBottom: space[1], border: `1px solid ${colors.border.subtle}` }}>
+                    <div style={{ fontWeight: typography.weight.bold, color: colors.text.primary, marginBottom: space[1] }}>Data Sources</div>
+                    <div style={{ color: colors.accent.green }}>{"\u2713"} ESA WorldCover (terrain)</div>
+                    <div style={{ color: colors.accent.green }}>{"\u2713"} OpenStreetMap (features)</div>
+                    <div style={{ color: colors.accent.green }}>{"\u2713"} SRTM elevation + slope</div>
+                    {elevInfo && <div style={{ color: colors.accent.purple, marginTop: space[1] }}>{elevInfo}</div>}
                   </div>
                 </div>
               </div>
