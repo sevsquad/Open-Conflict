@@ -1,9 +1,10 @@
 import { useState, useCallback } from "react";
 import Parser from "./Parser.jsx";
 import Viewer from "./Viewer.jsx";
+import Simulation from "./simulation/Simulation.jsx";
 
 export default function App() {
-  const [mode, setMode] = useState("menu"); // "menu" | "parser" | "viewer"
+  const [mode, setMode] = useState("menu"); // "menu" | "parser" | "viewer" | "simulation"
   const [viewerData, setViewerData] = useState(null);
 
   const handleViewMap = useCallback((data) => {
@@ -15,6 +16,7 @@ export default function App() {
 
   if (mode === "parser") return <Parser onBack={goMenu} onViewMap={handleViewMap} />;
   if (mode === "viewer") return <Viewer onBack={goMenu} initialData={viewerData} />;
+  if (mode === "simulation") return <Simulation onBack={goMenu} />;
 
   // ── MENU ──
   return (
@@ -72,11 +74,36 @@ export default function App() {
             ))}
           </div>
         </div>
+
+        {/* Simulation Card */}
+        <div onClick={() => setMode("simulation")}
+          style={{ width: 280, padding: "28px 24px", borderRadius: 10, cursor: "pointer", background: "#111827", border: "1px solid #1E293B", transition: "all 0.2s" }}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = "#F59E0B"; e.currentTarget.style.background = "#0D1520"; }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = "#1E293B"; e.currentTarget.style.background = "#111827"; }}>
+          <div style={{ fontSize: 36, marginBottom: 12 }}>
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="12" x2="15" y2="14" />
+              <path d="M4.93 4.93l2.83 2.83" />
+              <path d="M16.24 16.24l2.83 2.83" />
+            </svg>
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>Simulation</div>
+          <div style={{ fontSize: 11, color: "#9CA3AF", lineHeight: 1.5 }}>
+            Run LLM-adjudicated conflict simulations on generated terrain maps. Matrix game format with structured adjudication, logging, and turn management.
+          </div>
+          <div style={{ marginTop: 14, display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {["LLM Adjudication", "Turn Mgmt", "Logging", "Kill Switch"].map(t => (
+              <span key={t} style={{ fontSize: 8, padding: "2px 6px", borderRadius: 3, background: "#F59E0B15", color: "#F59E0B", border: "1px solid #F59E0B30" }}>{t}</span>
+            ))}
+          </div>
+        </div>
       </div>
 
       <div style={{ marginTop: 30, fontSize: 10, color: "#374151", textAlign: "center", lineHeight: 1.6 }}>
-        Generate terrain in the Parser, then view interactively or export for LLM analysis.<br />
-        Parser auto-saves maps to the saves folder. Viewer can load them directly.
+        Generate terrain in the Parser, then view interactively or run simulations.<br />
+        Parser auto-saves maps to the saves folder. Simulation uses saved maps as the geographic foundation.
       </div>
     </div>
   );
