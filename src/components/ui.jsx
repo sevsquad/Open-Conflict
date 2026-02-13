@@ -260,6 +260,34 @@ export function SectionHeader({ children, accent, style: extraStyle }) {
   );
 }
 
+// ── CollapsibleSection ──────────────────────────────────────────
+
+export function CollapsibleSection({ title, accent, defaultOpen = true, children, style: extraStyle }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div style={{ marginBottom: space[3], ...extraStyle }}>
+      <div
+        onClick={() => setOpen(!open)}
+        style={{
+          display: "flex", alignItems: "center", gap: space[2],
+          cursor: "pointer", padding: `${space[1]}px 0`, marginBottom: open ? space[2] : 0,
+          userSelect: "none",
+        }}
+      >
+        {accent && <div style={{ width: 3, height: 14, borderRadius: 2, background: accent, flexShrink: 0 }} />}
+        <div style={{ fontSize: typography.heading.sm, fontWeight: typography.weight.bold, color: accent || colors.text.primary, fontFamily: typography.fontFamily, flex: 1 }}>
+          {title}
+        </div>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={colors.text.muted} strokeWidth="2"
+          style={{ transition: `transform ${animation.fast}`, transform: open ? "rotate(0deg)" : "rotate(-90deg)" }}>
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </div>
+      {open && <div style={{ animation: "fadeIn 0.15s ease-out" }}>{children}</div>}
+    </div>
+  );
+}
+
 // ── ProgressBar ─────────────────────────────────────────────────
 
 export function ProgressBar({ progress, status, startTime }) {

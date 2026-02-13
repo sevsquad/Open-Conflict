@@ -3,6 +3,7 @@ import { TC, TL, ACTOR_COLORS } from "../terrainColors.js";
 import MapRenderer from "../mapRenderer/MapRenderer.js";
 import { buildLinearNetworks } from "../mapRenderer/RoadNetwork.js";
 import { buildNameGroups } from "../mapRenderer/overlays/LabelOverlay.js";
+import { parseUnitPosition } from "../mapRenderer/overlays/UnitOverlay.js";
 import {
   createViewport, screenToCell, zoomAtPoint, panViewport,
   clampCellPixels, ZOOM_FACTOR, getTier,
@@ -13,12 +14,23 @@ import {
 // ═══════════════════════════════════════════════════════════════
 
 const TIER_NAMES = ["Strategic", "Operational", "Tactical", "Close-up"];
+const CLICK_THRESHOLD = 5; // pixels — distinguishes click from drag
 
-export default function SimMap({ terrainData, units, actors, style }) {
+export default function SimMap({
+  terrainData, units, actors, style,
+  // New optional props for setup interaction
+  interactionMode = "navigate",
+  selectedUnitId = null,
+  ghostUnit = null,
+  onCellClick = null,
+  onCellHover = null,
+  isSetupMode = false,
+}) {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
   const viewportRef = useRef({ centerCol: 0, centerRow: 0, cellPixels: 10 });
-  const dragRef = useRef(null);
+  const dragRef = useRef(false);
+  const mouseDownRef = useRef(null); // { x, y, cell }
   const rendererRef = useRef(new MapRenderer());
   const preprocessedRef = useRef({ roadNetworks: null, nameGroups: null });
   const containerSizeRef = useRef({ w: 600, h: 400 });
@@ -32,6 +44,20 @@ export default function SimMap({ terrainData, units, actors, style }) {
   // Build actor color index
   const actorColorMap = {};
   (actors || []).forEach((a, i) => { actorColorMap[a.id] = ACTOR_COLORS[i % ACTOR_COLORS.length]; });
+
+  // Resolve selected unit to cell for selection highlight
+  const selCell = (() => {
+    if (!selectedUnitId || !units) return null;
+    const unit = units.find(u => u.id === selectedUnitId);
+    if (!unit || !unit.position) return null;
+    return parseUnitPosition(unit.position);
+  })();
+
+  // Build ghost unit with current hover cell
+  const activeGhostUnit = (() => {
+    if (!ghostUnit || !hovCell) return null;
+    return { ...ghostUnit, cell: hovCell };
+  })();
 
   // Preprocess on data change
   useEffect(() => {
@@ -90,10 +116,15 @@ export default function SimMap({ terrainData, units, actors, style }) {
       roadNetworks: preprocessedRef.current.roadNetworks,
       nameGroups: preprocessedRef.current.nameGroups,
       hovCell: hovCell,
+      selCell: selCell,
       units: units,
       actorColorMap: actorColorMap,
+      setupOptions: isSetupMode ? {
+        ghostUnit: activeGhostUnit,
+        isSetupMode: true,
+      } : null,
     });
-  }, [D, units, hovCell, redrawTick, cols, rows, actorColorMap]);
+  }, [D, units, hovCell, selCell, activeGhostUnit, redrawTick, cols, rows, actorColorMap, isSetupMode]);
 
   // Mouse handlers
   const getCellFromEvent = useCallback((e) => {
@@ -105,16 +136,59 @@ export default function SimMap({ terrainData, units, actors, style }) {
     return screenToCell(mx, my, viewportRef.current, w, h, cols, rows);
   }, [cols, rows]);
 
+  const handleMouseDown = useCallback((e) => {
+    if (e.button !== 0) return;
+    const cell = getCellFromEvent(e);
+    mouseDownRef.current = { x: e.clientX, y: e.clientY, cell };
+    // Don't start pan immediately — wait for movement threshold
+  }, [getCellFromEvent]);
+
   const handleMouseMove = useCallback((e) => {
+    const down = mouseDownRef.current;
+
+    if (down && !dragRef.current) {
+      // Check if we've exceeded the click threshold
+      const dist = Math.hypot(e.clientX - down.x, e.clientY - down.y);
+      if (dist > CLICK_THRESHOLD) {
+        // This is a drag — start panning
+        dragRef.current = true;
+      }
+    }
+
     if (dragRef.current) {
       const dx = e.movementX;
       const dy = e.movementY;
       viewportRef.current = panViewport(viewportRef.current, dx, dy);
       setRedrawTick(t => t + 1);
     } else {
-      setHovCell(getCellFromEvent(e));
+      const cell = getCellFromEvent(e);
+      setHovCell(cell);
+      onCellHover?.(cell);
     }
-  }, [getCellFromEvent]);
+  }, [getCellFromEvent, onCellHover]);
+
+  const handleMouseUp = useCallback((e) => {
+    const down = mouseDownRef.current;
+    mouseDownRef.current = null;
+
+    if (dragRef.current) {
+      // Was a pan drag — just clean up
+      dragRef.current = false;
+      return;
+    }
+
+    // This was a click (didn't exceed threshold)
+    if (down && down.cell) {
+      onCellClick?.(down.cell);
+    }
+  }, [onCellClick]);
+
+  const handleMouseLeave = useCallback(() => {
+    dragRef.current = false;
+    mouseDownRef.current = null;
+    setHovCell(null);
+    onCellHover?.(null);
+  }, [onCellHover]);
 
   const handleWheel = useCallback((e) => {
     e.preventDefault();
@@ -137,6 +211,13 @@ export default function SimMap({ terrainData, units, actors, style }) {
     return () => el.removeEventListener("wheel", handler);
   }, [handleWheel]);
 
+  // Determine cursor based on interaction state
+  const getCursor = () => {
+    if (dragRef.current) return "grabbing";
+    if (interactionMode === "place_unit") return "copy";
+    return "crosshair";
+  };
+
   // Cell info
   const cellData = hovCell && D ? D.cells[`${hovCell.c},${hovCell.r}`] : null;
   const currentTier = getTier(viewportRef.current.cellPixels);
@@ -145,10 +226,10 @@ export default function SimMap({ terrainData, units, actors, style }) {
     <div ref={containerRef} style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden", ...style }}>
       <canvas
         ref={canvasRef}
-        style={{ display: "block", width: "100%", height: "100%", cursor: dragRef.current ? "grabbing" : "crosshair" }}
-        onMouseDown={() => { dragRef.current = true; }}
-        onMouseUp={() => { dragRef.current = false; }}
-        onMouseLeave={() => { dragRef.current = false; setHovCell(null); }}
+        style={{ display: "block", width: "100%", height: "100%", cursor: getCursor() }}
+        onMouseDown={handleMouseDown}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseLeave}
         onMouseMove={handleMouseMove}
       />
       {/* Cell tooltip */}
@@ -156,7 +237,7 @@ export default function SimMap({ terrainData, units, actors, style }) {
         <div style={{
           position: "absolute", bottom: 8, left: 8, background: "rgba(0,0,0,0.85)", padding: "8px 12px",
           borderRadius: 6, fontSize: 11, color: "#E5E7EB", maxWidth: 300, lineHeight: 1.5,
-          border: "1px solid #1E293B"
+          border: "1px solid #1E293B", pointerEvents: "none",
         }}>
           <div style={{ fontWeight: 700, color: "#F59E0B" }}>
             {String.fromCharCode(65 + (hovCell.c % 26))}{hovCell.r + 1} &middot; {TL[cellData.terrain] || cellData.terrain}
@@ -170,12 +251,9 @@ export default function SimMap({ terrainData, units, actors, style }) {
           )}
           {/* Show units at this cell */}
           {units?.filter(u => {
-            const commaMatch = u.position?.match(/^(\d+),(\d+)$/);
-            const letterMatch = u.position?.match(/^([A-Z]+)(\d+)$/i);
-            let uc, ur;
-            if (commaMatch) { uc = parseInt(commaMatch[1]); ur = parseInt(commaMatch[2]); }
-            else if (letterMatch) { uc = letterMatch[1].toUpperCase().split("").reduce((s, ch) => s * 26 + ch.charCodeAt(0) - 64, 0) - 1; ur = parseInt(letterMatch[2]) - 1; }
-            return uc === hovCell.c && ur === hovCell.r;
+            if (!u.position) return false;
+            const pos = parseUnitPosition(u.position);
+            return pos && pos.c === hovCell.c && pos.r === hovCell.r;
           }).map(u => (
             <div key={u.id} style={{ color: actorColorMap[u.actor] || "#FFF", marginTop: 2 }}>
               {u.name} ({u.type}) — {u.strength}% str
@@ -187,9 +265,20 @@ export default function SimMap({ terrainData, units, actors, style }) {
       <div style={{
         position: "absolute", top: 4, right: 4, fontSize: 9, color: "#9CA3AF",
         fontFamily: "monospace", background: "rgba(0,0,0,0.5)", padding: "1px 4px", borderRadius: 3,
+        pointerEvents: "none",
       }}>
         {TIER_NAMES[currentTier]} · {viewportRef.current.cellPixels.toFixed(1)}px/cell
       </div>
+      {/* Placement mode indicator */}
+      {interactionMode === "place_unit" && (
+        <div style={{
+          position: "absolute", top: 4, left: 4, fontSize: 10, color: "#F59E0B",
+          fontFamily: "monospace", background: "rgba(0,0,0,0.7)", padding: "2px 8px", borderRadius: 3,
+          border: "1px solid rgba(245,158,11,0.3)", pointerEvents: "none",
+        }}>
+          Placing unit — click to place, Esc to cancel
+        </div>
+      )}
     </div>
   );
 }
