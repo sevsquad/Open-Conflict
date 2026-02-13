@@ -227,7 +227,7 @@ export default class MapRenderer {
 
     // Labels
     if (nameGroups) {
-      drawNameLabels(ctx, viewport, width, height, nameGroups, cols, rows);
+      drawNameLabels(ctx, viewport, width, height, nameGroups, cols, rows, { centerFade: false });
       drawCoordLabels(ctx, viewport, width, height, cols, rows);
     }
 
