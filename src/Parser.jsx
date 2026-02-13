@@ -2180,7 +2180,7 @@ function buildColorLUT(types) {
 const TERR_LUT = buildColorLUT(TERRAIN_TYPES);
 const INFRA_LUT = buildColorLUT(INFRA_TYPES);
 
-function CanvasMap({ grid, colorLUT, gC, gR, elevG, features, activeFeatures, opacity, paintType, onPaint }) {
+function CanvasMap({ grid, colorLUT, gC, gR, elevG, features, featureNames: fnG, activeFeatures, opacity, paintType, onPaint }) {
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
   const [tf, setTf] = useState({ x: 0, y: 0, s: 1 });
@@ -3000,7 +3000,7 @@ export default function Parser({ onBack, onViewMap }) {
 
             <div style={{ display: "flex", gap: space[3] }}>
               <div style={{ flex: "0 0 auto" }}>
-                <CanvasMap grid={tG} colorLUT={TERR_LUT} gC={gC} gR={gR} elevG={eG} features={fG} activeFeatures={activeFeatures}
+                <CanvasMap grid={tG} colorLUT={TERR_LUT} gC={gC} gR={gR} elevG={eG} features={fG} featureNames={fnG} activeFeatures={activeFeatures}
                   opacity={op} paintType={pt}
                   onPaint={(c, r) => { const k = `${c},${r}`; setTG(p => ({ ...p, [k]: pt })); }} />
                 <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginTop: space[1], fontFamily: typography.monoFamily }}>{gC}{"\u00D7"}{gR} {"\u2022"} {cellKm}km/cell {"\u2022"} {activeFeatures.size} feature filters active</div>
