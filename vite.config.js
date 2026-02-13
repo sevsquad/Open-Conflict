@@ -302,6 +302,9 @@ function gamePlugin() {
 export default defineConfig({
   plugins: [react(), savePlugin(), llmPlugin(), gamePlugin()],
   server: {
+    watch: {
+      ignored: ['**/saves/**'],
+    },
     proxy: {
       '/api/topo': {
         target: 'https://api.opentopodata.org',

@@ -1,40 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
 import { createGame, getProviders, listSavedGames, loadGameState } from "./orchestrator.js";
+import { colors, typography, radius, animation, space } from "../theme.js";
+import { Button, Input, Select, Card, Badge, SectionHeader } from "../components/ui.jsx";
+import { ACTOR_COLORS } from "../terrainColors.js";
 
 // ═══════════════════════════════════════════════════════════════
 // SIM SETUP — Scenario configuration, terrain selection, LLM config
 // ═══════════════════════════════════════════════════════════════
-
-const S = {
-  bg: "#0F172A", card: "#111827", border: "#1E293B", borderHover: "#F59E0B",
-  text: "#E5E7EB", muted: "#9CA3AF", dim: "#64748B",
-  accent: "#F59E0B", accentBg: "#F59E0B15", accentBorder: "#F59E0B30",
-  danger: "#EF4444", input: "#0D1520",
-};
-
-function Input({ label, value, onChange, placeholder, multiline, ...rest }) {
-  const Tag = multiline ? "textarea" : "input";
-  return (
-    <div style={{ marginBottom: 12 }}>
-      {label && <div style={{ fontSize: 11, color: S.muted, marginBottom: 4 }}>{label}</div>}
-      <Tag
-        value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-        style={{ width: "100%", padding: "8px 10px", background: S.input, border: `1px solid ${S.border}`, borderRadius: 6, color: S.text, fontSize: 13, fontFamily: "inherit", resize: multiline ? "vertical" : undefined, minHeight: multiline ? 60 : undefined, boxSizing: "border-box" }}
-        {...rest}
-      />
-    </div>
-  );
-}
-
-function Btn({ children, onClick, disabled, variant = "primary", style: extraStyle }) {
-  const base = { padding: "8px 16px", borderRadius: 6, cursor: disabled ? "default" : "pointer", fontSize: 13, fontWeight: 600, border: "none", transition: "all 0.2s", opacity: disabled ? 0.5 : 1 };
-  const variants = {
-    primary: { background: S.accent, color: "#000" },
-    secondary: { background: "transparent", color: S.muted, border: `1px solid ${S.border}` },
-    danger: { background: S.danger + "20", color: S.danger, border: `1px solid ${S.danger}40` },
-  };
-  return <button onClick={onClick} disabled={disabled} style={{ ...base, ...variants[variant], ...extraStyle }}>{children}</button>;
-}
 
 export default function SimSetup({ onBack, onStart }) {
   // ── Terrain maps ──
@@ -101,7 +73,7 @@ export default function SimSetup({ onBack, onStart }) {
   const handleLoadGame = useCallback(async (file) => {
     try {
       const gs = await loadGameState(file);
-      onStart(gs, null); // terrainData loaded separately if needed
+      onStart(gs, null);
     } catch (e) {
       alert("Failed to load game: " + e.message);
     }
@@ -112,7 +84,6 @@ export default function SimSetup({ onBack, onStart }) {
     setActors(prev => prev.map((a, i) => i === idx ? { ...a, [field]: value } : a));
   };
 
-  // Update actor list field (objectives, constraints)
   const updateActorList = (idx, field, listIdx, value) => {
     setActors(prev => prev.map((a, i) => {
       if (i !== idx) return a;
@@ -143,7 +114,6 @@ export default function SimSetup({ onBack, onStart }) {
     setActors(actors.filter((_, i) => i !== idx));
   };
 
-  // Add/remove units
   const addUnit = (actorId) => {
     setUnits([...units, {
       id: `unit_${Date.now()}`,
@@ -203,125 +173,132 @@ export default function SimSetup({ onBack, onStart }) {
   // ── Render ──
 
   return (
-    <div style={{ background: S.bg, minHeight: "100vh", color: S.text, fontFamily: "Arial, sans-serif" }}>
-      {/* Header */}
-      <div style={{ padding: "16px 24px", borderBottom: `1px solid ${S.border}`, display: "flex", alignItems: "center", gap: 16 }}>
-        <button onClick={onBack} style={{ background: "none", border: "none", color: S.muted, cursor: "pointer", fontSize: 13 }}>&larr; Back</button>
-        <div style={{ fontSize: 16, fontWeight: 700 }}>Simulation Setup</div>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-          <Btn variant="secondary" onClick={() => setShowLoadGame(!showLoadGame)}>Load Saved Game</Btn>
-          <Btn onClick={handleStart} disabled={!selectedMap || !terrainData || !title.trim() || !provider}>Start Simulation</Btn>
+    <div style={{ background: colors.bg.base, height: "100%", overflow: "auto", color: colors.text.primary, fontFamily: typography.fontFamily, animation: "fadeIn 0.3s ease-out" }}>
+      {/* Toolbar */}
+      <div style={{ padding: `${space[3]}px ${space[6]}px`, borderBottom: `1px solid ${colors.border.subtle}`, display: "flex", alignItems: "center", gap: space[4] }}>
+        <div style={{ fontSize: typography.heading.md, fontWeight: typography.weight.bold }}>Setup</div>
+        <div style={{ marginLeft: "auto", display: "flex", gap: space[2] }}>
+          <Button variant="secondary" onClick={() => setShowLoadGame(!showLoadGame)} size="sm">Load Saved Game</Button>
+          <Button onClick={handleStart} disabled={!selectedMap || !terrainData || !title.trim() || !provider} size="sm">Start Simulation</Button>
         </div>
       </div>
 
       {/* Load saved game panel */}
       {showLoadGame && savedGames.length > 0 && (
-        <div style={{ padding: "12px 24px", background: S.card, borderBottom: `1px solid ${S.border}` }}>
-          <div style={{ fontSize: 12, color: S.muted, marginBottom: 8 }}>Saved Games:</div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ padding: `${space[3]}px ${space[6]}px`, background: colors.bg.raised, borderBottom: `1px solid ${colors.border.subtle}` }}>
+          <div style={{ fontSize: typography.body.sm, color: colors.text.secondary, marginBottom: space[2] }}>Saved Games:</div>
+          <div style={{ display: "flex", gap: space[2], flexWrap: "wrap" }}>
             {savedGames.map(g => (
-              <Btn key={g.file} variant="secondary" onClick={() => handleLoadGame(g.file)}>
+              <Button key={g.file} variant="secondary" onClick={() => handleLoadGame(g.file)} size="sm">
                 {g.name} ({new Date(g.modified).toLocaleDateString()})
-              </Btn>
+              </Button>
             ))}
           </div>
         </div>
       )}
 
       {/* Main content — two columns */}
-      <div style={{ display: "flex", gap: 20, padding: 24, maxWidth: 1400, margin: "0 auto" }}>
+      <div style={{ display: "flex", gap: space[5], padding: space[6], maxWidth: 1400, margin: "0 auto" }}>
 
         {/* Left Column: Terrain + LLM Config */}
         <div style={{ flex: "0 0 380px" }}>
 
           {/* Terrain Selection */}
-          <div style={{ background: S.card, border: `1px solid ${S.border}`, borderRadius: 8, padding: 16, marginBottom: 16 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Terrain Map</div>
-            <select
+          <Card accent={colors.accent.amber} style={{ marginBottom: space[4] }}>
+            <SectionHeader accent={colors.accent.amber}>Terrain Map</SectionHeader>
+            <Select
               value={selectedMap || ""}
-              onChange={e => handleSelectMap(e.target.value)}
-              style={{ width: "100%", padding: "8px 10px", background: S.input, border: `1px solid ${S.border}`, borderRadius: 6, color: S.text, fontSize: 13 }}
-            >
-              <option value="">Select a terrain map...</option>
-              {maps.map(m => (
-                <option key={m.name} value={m.name}>{m.name} ({(m.size / 1024).toFixed(0)}KB)</option>
-              ))}
-            </select>
-            {loadingMap && <div style={{ fontSize: 11, color: S.dim, marginTop: 8 }}>Loading...</div>}
+              onChange={v => handleSelectMap(v)}
+              options={maps.map(m => ({ value: m.name, label: `${m.name} (${(m.size / 1024).toFixed(0)}KB)` }))}
+              placeholder="Select a terrain map..."
+            />
+            {loadingMap && <div style={{ fontSize: typography.body.sm, color: colors.text.muted, marginTop: space[2], animation: "pulse 1.5s infinite" }}>Loading terrain data...</div>}
             {terrainData && !loadingMap && (
-              <div style={{ fontSize: 11, color: S.muted, marginTop: 8, lineHeight: 1.5 }}>
-                {terrainData.cols}&times;{terrainData.rows} cells, {terrainData.cellSizeKm}km/cell
+              <div style={{ fontSize: typography.body.sm, color: colors.text.secondary, marginTop: space[2], lineHeight: 1.5 }}>
+                <Badge color={colors.accent.green} style={{ marginRight: space[1] }}>{terrainData.cols}&times;{terrainData.rows}</Badge>
+                {terrainData.cellSizeKm}km/cell
                 {terrainData.center && <> &middot; {terrainData.center.lat.toFixed(2)}, {terrainData.center.lng.toFixed(2)}</>}
                 {terrainData.widthKm && <> &middot; {terrainData.widthKm}&times;{terrainData.heightKm}km</>}
               </div>
             )}
-          </div>
+          </Card>
 
           {/* LLM Configuration */}
-          <div style={{ background: S.card, border: `1px solid ${S.border}`, borderRadius: 8, padding: 16, marginBottom: 16 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>LLM Configuration</div>
+          <Card accent={colors.accent.blue} style={{ marginBottom: space[4] }}>
+            <SectionHeader accent={colors.accent.blue}>LLM Configuration</SectionHeader>
             {providers.length === 0 ? (
-              <div style={{ fontSize: 12, color: S.danger, lineHeight: 1.5 }}>
+              <div style={{ fontSize: typography.body.sm, color: colors.accent.red, lineHeight: 1.5, padding: space[2], background: colors.glow.red, borderRadius: radius.md }}>
                 No LLM providers configured. Add API keys to your .env file (see .env.example).
               </div>
             ) : (
               <>
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ fontSize: 11, color: S.muted, marginBottom: 4 }}>Provider</div>
+                <div style={{ marginBottom: space[3] }}>
+                  <div style={{ fontSize: typography.body.sm, color: colors.text.secondary, marginBottom: space[1] }}>Provider</div>
                   <select value={provider} onChange={e => { setProvider(e.target.value); const p = providers.find(p => p.id === e.target.value); setModel(p?.models?.[0] || ""); }}
-                    style={{ width: "100%", padding: "8px 10px", background: S.input, border: `1px solid ${S.border}`, borderRadius: 6, color: S.text, fontSize: 13 }}>
+                    style={{ width: "100%", padding: "8px 10px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.md, color: colors.text.primary, fontSize: typography.body.md, fontFamily: typography.fontFamily }}>
                     {providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
                 </div>
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ fontSize: 11, color: S.muted, marginBottom: 4 }}>Model</div>
+                <div style={{ marginBottom: space[3] }}>
+                  <div style={{ fontSize: typography.body.sm, color: colors.text.secondary, marginBottom: space[1] }}>Model</div>
                   <select value={model} onChange={e => setModel(e.target.value)}
-                    style={{ width: "100%", padding: "8px 10px", background: S.input, border: `1px solid ${S.border}`, borderRadius: 6, color: S.text, fontSize: 13 }}>
+                    style={{ width: "100%", padding: "8px 10px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.md, color: colors.text.primary, fontSize: typography.body.md, fontFamily: typography.fontFamily }}>
                     {selectedProvider?.models?.map(m => <option key={m} value={m}>{m}</option>)}
                   </select>
                 </div>
                 <div>
-                  <div style={{ fontSize: 11, color: S.muted, marginBottom: 4 }}>Temperature: {temperature}</div>
+                  <div style={{ fontSize: typography.body.sm, color: colors.text.secondary, marginBottom: space[1], display: "flex", justifyContent: "space-between" }}>
+                    <span>Temperature</span>
+                    <span style={{ color: colors.accent.amber, fontWeight: typography.weight.semibold, fontFamily: typography.monoFamily }}>{temperature}</span>
+                  </div>
                   <input type="range" min="0" max="1" step="0.1" value={temperature} onChange={e => setTemperature(parseFloat(e.target.value))}
-                    style={{ width: "100%" }} />
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: S.dim }}>
+                    style={{ width: "100%", accentColor: colors.accent.amber }} />
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: typography.body.xs, color: colors.text.muted }}>
                     <span>Deterministic (0.0)</span><span>Creative (1.0)</span>
                   </div>
                 </div>
               </>
             )}
-          </div>
+          </Card>
 
           {/* Turn settings */}
-          <div style={{ background: S.card, border: `1px solid ${S.border}`, borderRadius: 8, padding: 16 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Turn Settings</div>
+          <Card style={{ marginBottom: space[4] }}>
+            <SectionHeader>Turn Settings</SectionHeader>
             <Input label="Turn Duration" value={turnDuration} onChange={setTurnDuration} placeholder="e.g., 12 hours, 1 day, 1 week" />
             <Input label="In-Game Start Date" value={startDate} onChange={setStartDate} placeholder="e.g., 1950-12-01" />
-          </div>
+          </Card>
         </div>
 
         {/* Right Column: Scenario + Actors + Units */}
         <div style={{ flex: 1, minWidth: 0 }}>
 
           {/* Scenario */}
-          <div style={{ background: S.card, border: `1px solid ${S.border}`, borderRadius: 8, padding: 16, marginBottom: 16 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Scenario</div>
+          <Card style={{ marginBottom: space[4] }}>
+            <SectionHeader accent={colors.accent.green}>Scenario</SectionHeader>
             <Input label="Title" value={title} onChange={setTitle} placeholder="e.g., Chosin Reservoir, December 1950" />
             <Input label="Description" value={description} onChange={setDescription} placeholder="Brief scenario description..." multiline />
             <Input label="Initial Conditions" value={initialConditions} onChange={setInitialConditions} placeholder="Overall starting situation..." multiline />
             <Input label="Special Rules" value={specialRules} onChange={setSpecialRules} placeholder="Scenario-specific adjudication guidance..." multiline />
-          </div>
+          </Card>
 
           {/* Actors */}
-          <div style={{ background: S.card, border: `1px solid ${S.border}`, borderRadius: 8, padding: 16, marginBottom: 16 }}>
-            <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
-              <div style={{ fontSize: 14, fontWeight: 700 }}>Actors</div>
-              <Btn variant="secondary" onClick={addActor} style={{ marginLeft: "auto", padding: "4px 10px", fontSize: 11 }}>+ Add Actor</Btn>
+          <Card style={{ marginBottom: space[4] }}>
+            <div style={{ display: "flex", alignItems: "center", marginBottom: space[3] }}>
+              <SectionHeader style={{ marginBottom: 0 }}>Actors</SectionHeader>
+              <Button variant="ghost" onClick={addActor} size="sm" style={{ marginLeft: "auto" }}>+ Add Actor</Button>
             </div>
 
             {actors.map((actor, ai) => (
-              <div key={ai} style={{ border: `1px solid ${S.border}`, borderRadius: 6, padding: 12, marginBottom: 12, background: S.bg }}>
-                <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+              <div key={ai} style={{
+                border: `1px solid ${colors.border.subtle}`,
+                borderLeft: `3px solid ${ACTOR_COLORS[ai % ACTOR_COLORS.length]}`,
+                borderRadius: radius.md,
+                padding: space[3],
+                marginBottom: space[3],
+                background: colors.bg.base,
+                animation: "fadeIn 0.2s ease-out",
+              }}>
+                <div style={{ display: "flex", gap: space[2], marginBottom: space[2] }}>
                   <div style={{ flex: 1 }}>
                     <Input label="Name" value={actor.name} onChange={v => updateActor(ai, "name", v)} placeholder="Actor name" />
                   </div>
@@ -329,90 +306,101 @@ export default function SimSetup({ onBack, onStart }) {
                     <Input label="ID" value={actor.id} onChange={v => updateActor(ai, "id", v)} placeholder="snake_case_id" />
                   </div>
                   {actors.length > 2 && (
-                    <Btn variant="danger" onClick={() => removeActor(ai)} style={{ alignSelf: "flex-end", marginBottom: 12, padding: "4px 8px", fontSize: 11 }}>Remove</Btn>
+                    <Button variant="danger" onClick={() => removeActor(ai)} size="sm" style={{ alignSelf: "flex-end", marginBottom: space[3] }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" /></svg>
+                    </Button>
                   )}
                 </div>
 
                 {/* Objectives */}
-                <div style={{ fontSize: 11, color: S.muted, marginBottom: 4 }}>Objectives</div>
+                <div style={{ fontSize: typography.body.sm, color: colors.text.secondary, marginBottom: space[1], fontWeight: typography.weight.medium }}>Objectives</div>
                 {actor.objectives.map((obj, oi) => (
-                  <div key={oi} style={{ display: "flex", gap: 4, marginBottom: 4 }}>
+                  <div key={oi} style={{ display: "flex", gap: space[1], marginBottom: space[1] }}>
                     <input value={obj} onChange={e => updateActorList(ai, "objectives", oi, e.target.value)}
                       placeholder="Objective..."
-                      style={{ flex: 1, padding: "6px 8px", background: S.input, border: `1px solid ${S.border}`, borderRadius: 4, color: S.text, fontSize: 12 }} />
+                      style={{ flex: 1, padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily, outline: "none" }} />
                     {actor.objectives.length > 1 && (
-                      <button onClick={() => removeActorListItem(ai, "objectives", oi)} style={{ background: "none", border: "none", color: S.dim, cursor: "pointer", fontSize: 14 }}>&times;</button>
+                      <button onClick={() => removeActorListItem(ai, "objectives", oi)} style={{ background: "none", border: "none", color: colors.text.muted, cursor: "pointer", fontSize: 14 }}>&times;</button>
                     )}
                   </div>
                 ))}
-                <button onClick={() => addActorListItem(ai, "objectives")} style={{ background: "none", border: "none", color: S.accent, cursor: "pointer", fontSize: 11, padding: "2px 0", marginBottom: 8 }}>+ objective</button>
+                <button onClick={() => addActorListItem(ai, "objectives")} style={{ background: "none", border: "none", color: colors.accent.amber, cursor: "pointer", fontSize: typography.body.sm, padding: "2px 0", marginBottom: space[2], fontFamily: typography.fontFamily }}>+ objective</button>
 
                 {/* Constraints */}
-                <div style={{ fontSize: 11, color: S.muted, marginBottom: 4 }}>Constraints</div>
+                <div style={{ fontSize: typography.body.sm, color: colors.text.secondary, marginBottom: space[1], fontWeight: typography.weight.medium }}>Constraints</div>
                 {actor.constraints.map((con, ci) => (
-                  <div key={ci} style={{ display: "flex", gap: 4, marginBottom: 4 }}>
+                  <div key={ci} style={{ display: "flex", gap: space[1], marginBottom: space[1] }}>
                     <input value={con} onChange={e => updateActorList(ai, "constraints", ci, e.target.value)}
                       placeholder="Constraint..."
-                      style={{ flex: 1, padding: "6px 8px", background: S.input, border: `1px solid ${S.border}`, borderRadius: 4, color: S.text, fontSize: 12 }} />
+                      style={{ flex: 1, padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily, outline: "none" }} />
                     {actor.constraints.length > 1 && (
-                      <button onClick={() => removeActorListItem(ai, "constraints", ci)} style={{ background: "none", border: "none", color: S.dim, cursor: "pointer", fontSize: 14 }}>&times;</button>
+                      <button onClick={() => removeActorListItem(ai, "constraints", ci)} style={{ background: "none", border: "none", color: colors.text.muted, cursor: "pointer", fontSize: 14 }}>&times;</button>
                     )}
                   </div>
                 ))}
-                <button onClick={() => addActorListItem(ai, "constraints")} style={{ background: "none", border: "none", color: S.accent, cursor: "pointer", fontSize: 11, padding: "2px 0" }}>+ constraint</button>
+                <button onClick={() => addActorListItem(ai, "constraints")} style={{ background: "none", border: "none", color: colors.accent.amber, cursor: "pointer", fontSize: typography.body.sm, padding: "2px 0", fontFamily: typography.fontFamily }}>+ constraint</button>
               </div>
             ))}
-          </div>
+          </Card>
 
           {/* Units */}
-          <div style={{ background: S.card, border: `1px solid ${S.border}`, borderRadius: 8, padding: 16 }}>
-            <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
-              <div style={{ fontSize: 14, fontWeight: 700 }}>Units</div>
-              <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+          <Card>
+            <div style={{ display: "flex", alignItems: "center", marginBottom: space[3] }}>
+              <SectionHeader style={{ marginBottom: 0 }}>Units</SectionHeader>
+              <div style={{ marginLeft: "auto", display: "flex", gap: space[1] }}>
                 {actors.map(a => (
-                  <Btn key={a.id} variant="secondary" onClick={() => addUnit(a.id)} style={{ padding: "4px 10px", fontSize: 11 }}>
+                  <Button key={a.id} variant="ghost" onClick={() => addUnit(a.id)} size="sm">
                     + {a.name} Unit
-                  </Btn>
+                  </Button>
                 ))}
               </div>
             </div>
 
             {units.length === 0 && (
-              <div style={{ fontSize: 12, color: S.dim, textAlign: "center", padding: 20 }}>
+              <div style={{ fontSize: typography.body.sm, color: colors.text.muted, textAlign: "center", padding: space[5] }}>
                 No units added. Units are optional for Phase 1 — the LLM can adjudicate based on scenario descriptions alone.
               </div>
             )}
 
             {units.map((unit, ui) => {
               const ownerActor = actors.find(a => a.id === unit.actor);
+              const actorIdx = actors.findIndex(a => a.id === unit.actor);
               return (
-                <div key={ui} style={{ border: `1px solid ${S.border}`, borderRadius: 6, padding: 10, marginBottom: 8, background: S.bg }}>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
-                    <span style={{ fontSize: 10, color: S.accent }}>{ownerActor?.name || unit.actor}</span>
-                    <button onClick={() => removeUnit(ui)} style={{ marginLeft: "auto", background: "none", border: "none", color: S.dim, cursor: "pointer", fontSize: 12 }}>&times; remove</button>
+                <div key={ui} style={{
+                  border: `1px solid ${colors.border.subtle}`,
+                  borderLeft: `3px solid ${ACTOR_COLORS[actorIdx % ACTOR_COLORS.length] || colors.text.muted}`,
+                  borderRadius: radius.md,
+                  padding: space[2] + 2,
+                  marginBottom: space[2],
+                  background: colors.bg.base,
+                  animation: "fadeIn 0.2s ease-out",
+                }}>
+                  <div style={{ display: "flex", gap: space[2], alignItems: "center", marginBottom: space[1] }}>
+                    <Badge color={ACTOR_COLORS[actorIdx % ACTOR_COLORS.length]}>{ownerActor?.name || unit.actor}</Badge>
+                    <button onClick={() => removeUnit(ui)} style={{ marginLeft: "auto", background: "none", border: "none", color: colors.text.muted, cursor: "pointer", fontSize: 12, fontFamily: typography.fontFamily }}>&times; remove</button>
                   </div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", gap: space[2], flexWrap: "wrap" }}>
                     <input value={unit.name} onChange={e => updateUnit(ui, "name", e.target.value)} placeholder="Unit name"
-                      style={{ flex: "1 1 150px", padding: "6px 8px", background: S.input, border: `1px solid ${S.border}`, borderRadius: 4, color: S.text, fontSize: 12 }} />
+                      style={{ flex: "1 1 150px", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily, outline: "none" }} />
                     <select value={unit.type} onChange={e => updateUnit(ui, "type", e.target.value)}
-                      style={{ flex: "0 0 120px", padding: "6px 8px", background: S.input, border: `1px solid ${S.border}`, borderRadius: 4, color: S.text, fontSize: 12 }}>
+                      style={{ flex: "0 0 120px", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}>
                       {["infantry", "mechanized", "armor", "artillery", "air", "naval", "special_forces", "logistics", "headquarters", "other"].map(t =>
                         <option key={t} value={t}>{t.replace(/_/g, " ")}</option>
                       )}
                     </select>
                     <input value={unit.position} onChange={e => updateUnit(ui, "position", e.target.value)} placeholder="Position (e.g., C5)"
-                      style={{ flex: "0 0 100px", padding: "6px 8px", background: S.input, border: `1px solid ${S.border}`, borderRadius: 4, color: S.text, fontSize: 12 }} />
-                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                      <span style={{ fontSize: 10, color: S.dim }}>Str</span>
+                      style={{ flex: "0 0 100px", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily, outline: "none" }} />
+                    <div style={{ display: "flex", alignItems: "center", gap: space[1] }}>
+                      <span style={{ fontSize: typography.body.xs, color: colors.text.muted }}>Str</span>
                       <input type="number" value={unit.strength} onChange={e => updateUnit(ui, "strength", parseInt(e.target.value) || 0)} min="0" max="100"
-                        style={{ width: 50, padding: "6px 4px", background: S.input, border: `1px solid ${S.border}`, borderRadius: 4, color: S.text, fontSize: 12, textAlign: "center" }} />
-                      <span style={{ fontSize: 10, color: S.dim }}>%</span>
+                        style={{ width: 50, padding: "6px 4px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: unit.strength > 70 ? colors.accent.green : unit.strength > 30 ? colors.accent.amber : colors.accent.red, fontSize: typography.body.sm, textAlign: "center", fontFamily: typography.monoFamily, fontWeight: typography.weight.semibold, outline: "none" }} />
+                      <span style={{ fontSize: typography.body.xs, color: colors.text.muted }}>%</span>
                     </div>
                   </div>
                 </div>
               );
             })}
-          </div>
+          </Card>
         </div>
       </div>
     </div>

@@ -1,29 +1,9 @@
 import { useRef, useEffect, useCallback, useState } from "react";
+import { TC, TL, ACTOR_COLORS } from "../terrainColors.js";
 
 // ═══════════════════════════════════════════════════════════════
 // SIM MAP — Simplified terrain renderer with unit overlay
-// Reuses color maps from Viewer.jsx
 // ═══════════════════════════════════════════════════════════════
-
-// Terrain colors (from Viewer.jsx:9-15)
-const TC = {
-  deep_water: "#1A3A5C", coastal_water: "#2A5A7C", lake: "#2E6B8A", river: "#3478A0",
-  wetland: "#3A6B55", open_ground: "#A8B060", light_veg: "#8AA050", farmland: "#B8C468",
-  forest: "#2D6B1E", dense_forest: "#1A4A12", highland: "#8A9060", mountain_forest: "#4A6830",
-  mountain: "#7A7A6A", peak: "#B0A890", desert: "#D4C090", ice: "#D0E0F0",
-  light_urban: "#B0A890", dense_urban: "#8A8070",
-};
-
-const TL = {
-  deep_water: "Deep Water", coastal_water: "Coastal", lake: "Lake", river: "River",
-  wetland: "Wetland", open_ground: "Open Ground", light_veg: "Light Veg", farmland: "Farmland",
-  forest: "Forest", dense_forest: "Dense Forest", highland: "Highland", mountain_forest: "Mtn Forest",
-  mountain: "Mountain", peak: "Peak/Alpine", desert: "Desert", ice: "Ice/Glacier",
-  light_urban: "Light Urban", dense_urban: "Dense Urban",
-};
-
-// Actor colors for unit markers
-const ACTOR_COLORS = ["#3B82F6", "#EF4444", "#22C55E", "#F59E0B", "#A855F7", "#EC4899"];
 
 const CELL_BASE = 10;
 
