@@ -20,7 +20,7 @@ export default function Simulation({ onBack }) {
       // Load terrain from saved reference
       fetch(`/api/load?file=${encodeURIComponent(gs.terrain._ref)}`)
         .then(r => r.json())
-        .then(setTerrainData)
+        .then(data => setTerrainData(data.map || data))
         .catch(() => {});
     }
     setPhase("game");

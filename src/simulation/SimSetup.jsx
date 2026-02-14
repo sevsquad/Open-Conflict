@@ -27,7 +27,7 @@ export default function SimSetup({ onBack, onStart }) {
     try {
       const resp = await fetch(`/api/load?file=${encodeURIComponent(mapName)}`);
       const data = await resp.json();
-      setTerrainData(data);
+      setTerrainData(data.map || data);
     } catch (e) {
       console.error("Failed to load terrain:", e);
     }
