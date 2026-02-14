@@ -124,7 +124,7 @@ export default function Viewer({ onBack, initialData }) {
     if (!el) return;
     const ro = new ResizeObserver(entries => {
       for (const entry of entries) {
-        containerSizeRef.current = { w: entry.contentRect.width, h: entry.contentRect.height };
+        containerSizeRef.current = { w: Math.round(entry.contentRect.width), h: Math.round(entry.contentRect.height) };
         setRedrawTick(t => t + 1);
       }
     });
