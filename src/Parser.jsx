@@ -1331,15 +1331,55 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
   const tIdx = buildIdx(feat.terrAreas, bbox);
   const iaIdx = feat.infraAreas.length > 0 ? buildIdx(feat.infraAreas, bbox) : null;
 
+  // ── Line rasterization helpers ──────────────────────────────────
+  // 4-connected Bresenham: returns all cells along a line from (c0,r0) to (c1,r1).
+  // Every consecutive pair shares an orthogonal edge (no diagonal steps).
+  function rasterizeLine4(c0, r0, c1, r1) {
+    const cells = [];
+    let c = c0, r = r0;
+    const dc = Math.abs(c1 - c0), dr = Math.abs(r1 - r0);
+    const sc = c0 < c1 ? 1 : -1, sr = r0 < r1 ? 1 : -1;
+    let err = dc - dr;
+    for (;;) {
+      cells.push([c, r]);
+      if (c === c1 && r === r1) break;
+      const e2 = 2 * err;
+      if (e2 > -dr) { err -= dr; c += sc; }
+      else { err += dc; r += sr; }
+    }
+    return cells;
+  }
+
+  // Rasterize an OSM way into grid cells using 4-connected line segments.
+  // Returns array of [c, r] pairs for all cells the way passes through.
+  function rasterizeWay(nodes) {
+    const result = [];
+    let prevC = -1, prevR = -1;
+    for (const nd of nodes) {
+      const c = Math.floor((nd.lon - west) / cW);
+      const r = Math.floor((north - nd.lat) / cH);
+      if (c < 0 || c >= cols || r < 0 || r >= rows) { prevC = -1; continue; }
+      if (prevC >= 0 && (prevC !== c || prevR !== r)) {
+        const seg = rasterizeLine4(prevC, prevR, c, r);
+        for (let i = 1; i < seg.length; i++) {
+          const [sc, sr] = seg[i];
+          if (sc >= 0 && sc < cols && sr >= 0 && sr < rows) result.push(seg[i]);
+        }
+      } else if (prevC < 0) {
+        result.push([c, r]);
+      }
+      prevC = c; prevR = r;
+    }
+    return result;
+  }
+
   onS("Indexing lines...");
   const cellInfra = {};
   const cellInfraAll = {}; // ALL infra types per cell (no winner-take-all)
   const cellRoadCount = {};
   for (const line of feat.infraLines) {
     const seen = new Set();
-    for (const nd of line.nodes) {
-      const c = Math.floor((nd.lon - west) / cW), r = Math.floor((north - nd.lat) / cH);
-      if (c < 0 || c >= cols || r < 0 || r >= rows) continue;
+    for (const [c, r] of rasterizeWay(line.nodes)) {
       const k = `${c},${r}`;
       if (seen.has(k)) continue; seen.add(k);
       if (["highway", "major_road", "road", "minor_road"].includes(line.type)) {
@@ -1363,9 +1403,8 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
 
   // River lines
   const cellRiver = new Set();
-  for (const wl of feat.waterLines) for (const nd of wl.nodes) {
-    const c = Math.floor((nd.lon - west) / cW), r = Math.floor((north - nd.lat) / cH);
-    if (c >= 0 && c < cols && r >= 0 && r < rows) cellRiver.add(`${c},${r}`);
+  for (const wl of feat.waterLines) {
+    for (const [c, r] of rasterizeWay(wl.nodes)) cellRiver.add(`${c},${r}`);
   }
 
   // Stream lines (sub-tactical + tactical)
@@ -1373,12 +1412,9 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
   const cellDitch = new Set();
   if (feat.streamLines) {
     for (const sl of feat.streamLines) {
-      for (const nd of sl.nodes) {
-        const c = Math.floor((nd.lon - west) / cW), r = Math.floor((north - nd.lat) / cH);
-        if (c >= 0 && c < cols && r >= 0 && r < rows) {
-          if (sl.isDitch) cellDitch.add(`${c},${r}`);
-          else cellStream.add(`${c},${r}`);
-        }
+      for (const [c, r] of rasterizeWay(sl.nodes)) {
+        if (sl.isDitch) cellDitch.add(`${c},${r}`);
+        else cellStream.add(`${c},${r}`);
       }
     }
   }
@@ -1427,12 +1463,9 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
   const cellBarrier = {};
   if (tier === "sub-tactical" && feat.barrierLines) {
     for (const bl of feat.barrierLines) {
-      for (const nd of bl.nodes) {
-        const c = Math.floor((nd.lon - west) / cW), r = Math.floor((north - nd.lat) / cH);
-        if (c >= 0 && c < cols && r >= 0 && r < rows) {
-          const k = `${c},${r}`;
-          if (!cellBarrier[k]) cellBarrier[k] = bl.type;
-        }
+      for (const [c, r] of rasterizeWay(bl.nodes)) {
+        const k = `${c},${r}`;
+        if (!cellBarrier[k]) cellBarrier[k] = bl.type;
       }
     }
   }
@@ -1489,10 +1522,7 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
 
       for (const nl of feat.navigableLines) {
         const wayCells = new Set();
-        for (const nd of nl.nodes) {
-          const c = Math.floor((nd.lon - west) / cW), r = Math.floor((north - nd.lat) / cH);
-          if (c >= 0 && c < cols && r >= 0 && r < rows) wayCells.add(`${c},${r}`);
-        }
+        for (const [c, r] of rasterizeWay(nl.nodes)) wayCells.add(`${c},${r}`);
         const wName = nl.actualName || null;
         const markNav = (k) => { cellNavigable.add(k); if (wName && !cellNavName.has(k)) cellNavName.set(k, wName); };
 
@@ -1540,16 +1570,14 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
     // At strategic/operational, only show pipelines that span many cells (trunk lines)
     const pipeMinSpan = tier === "strategic" ? 10 : tier === "operational" ? 6 : 1;
     if (pipeMinSpan <= 1) {
-      for (const pl of feat.pipelineLines) for (const nd of pl.nodes) {
-        const c = Math.floor((nd.lon - west) / cW), r = Math.floor((north - nd.lat) / cH);
-        if (c >= 0 && c < cols && r >= 0 && r < rows) cellPipeline.add(`${c},${r}`);
+      for (const pl of feat.pipelineLines) {
+        for (const [c, r] of rasterizeWay(pl.nodes)) cellPipeline.add(`${c},${r}`);
       }
     } else {
       // Index per-way, then flood-fill connected components
       const pipeCandidates = new Set();
-      for (const pl of feat.pipelineLines) for (const nd of pl.nodes) {
-        const c = Math.floor((nd.lon - west) / cW), r = Math.floor((north - nd.lat) / cH);
-        if (c >= 0 && c < cols && r >= 0 && r < rows) pipeCandidates.add(`${c},${r}`);
+      for (const pl of feat.pipelineLines) {
+        for (const [c, r] of rasterizeWay(pl.nodes)) pipeCandidates.add(`${c},${r}`);
       }
       const visited = new Set();
       for (const seed of pipeCandidates) {
