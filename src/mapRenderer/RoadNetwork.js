@@ -5,8 +5,9 @@
 const ROAD_TYPES = ["highway", "major_road", "road", "minor_road", "footpath", "trail"];
 const RAIL_TYPES = ["railway", "light_rail"];
 const WATER_TYPES = ["navigable_waterway"];
+const PIPE_TYPES = ["pipeline"];
 
-const LINEAR_TYPES = [...ROAD_TYPES, ...RAIL_TYPES, ...WATER_TYPES];
+const LINEAR_TYPES = [...ROAD_TYPES, ...RAIL_TYPES, ...WATER_TYPES, ...PIPE_TYPES];
 
 // Drawing config per type and tier
 export const LINE_CONFIG = {
@@ -19,6 +20,7 @@ export const LINE_CONFIG = {
   railway:      { color: "#E05050", width: [0, 1, 1.5, 2],    minTier: 1, dash: [6, 3] },
   light_rail:   { color: "#D07070", width: [0, 0.5, 1, 1.5],  minTier: 1, dash: [4, 3] },
   navigable_waterway: { color: "#3AC4E0", width: [0, 0.5, 1.5, 2], minTier: 1, dash: null },
+  pipeline:  { color: "#A070D0", width: [0, 0.5, 1, 1.5], minTier: 1, dash: [4, 2] },
 };
 
 function getFeats(cell) {
