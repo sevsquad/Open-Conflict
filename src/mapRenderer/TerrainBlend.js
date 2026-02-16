@@ -1,8 +1,13 @@
 // ════════════════════════════════════════════════════════════════
-// TerrainBlend — terrain edge blending for Tier 3
+// TerrainBlend — terrain edge blending for Tier 3 (hex grid)
+// Per-pixel blending across hex edges with 6-neighbor interpolation
 // ════════════════════════════════════════════════════════════════
 
 import { TC } from "../terrainColors.js";
+import {
+  hexChunkLayout, chunkHexCenter, getNeighbors,
+  hexVertices, cellPixelsToHexSize, SQRT3,
+} from "./HexMath.js";
 
 // Parse hex color to {r, g, b}
 function parseColor(hex) {
@@ -65,15 +70,25 @@ function smoothstep(edge0, edge1, x) {
   return t * t * (3 - 2 * t);
 }
 
-// Render a blended terrain chunk to an ImageData buffer
-// chunk: { colStart, rowStart, colEnd, rowEnd }
-// cellPixels: size of each cell in the output
-// cells: the map cells object
+// Signed distance from point (px, py) to a line segment (v0 → v1).
+// Returns positive if the point is on the interior side of the edge.
+// For a convex hex with vertices in order, interior is to the right of each edge.
+function edgeDistance(px, py, v0, v1) {
+  const ex = v1.x - v0.x;
+  const ey = v1.y - v0.y;
+  const len = Math.sqrt(ex * ex + ey * ey);
+  if (len === 0) return 0;
+  // Normal pointing inward (right of edge direction for CW vertex order)
+  // Pointy-top hexVertices go CW, so right normal = inward
+  return ((px - v0.x) * (-ey) + (py - v0.y) * ex) / len;
+}
+
+// Render a blended terrain chunk to an OffscreenCanvas using hex geometry
 export function renderBlendedChunk(chunk, cellPixels, cells) {
+  const layout = hexChunkLayout(chunk, cellPixels);
+  const { width, height, size } = layout;
   const chunkCols = chunk.colEnd - chunk.colStart;
   const chunkRows = chunk.rowEnd - chunk.rowStart;
-  const width = Math.ceil(chunkCols * cellPixels);
-  const height = Math.ceil(chunkRows * cellPixels);
 
   if (width <= 0 || height <= 0) return null;
 
@@ -82,19 +97,62 @@ export function renderBlendedChunk(chunk, cellPixels, cells) {
   const imgData = ctx.createImageData(width, height);
   const data = imgData.data;
 
+  // Precompute hex centers and vertices for all cells in chunk
+  const centerCache = {};
+  const vertCache = {};
+  for (let lr = 0; lr < chunkRows; lr++) {
+    const row = chunk.rowStart + lr;
+    for (let lc = 0; lc < chunkCols; lc++) {
+      const col = chunk.colStart + lc;
+      const key = `${col},${row}`;
+      const c = chunkHexCenter(col, row, layout);
+      centerCache[key] = c;
+      vertCache[key] = hexVertices(c.x, c.y, size);
+    }
+  }
+
+  // The apothem (inner radius) = distance from center to edge midpoint
+  const apothem = size * SQRT3 / 2;
+
   for (let py = 0; py < height; py++) {
     for (let px = 0; px < width; px++) {
-      // Which cell is this pixel in?
-      const localCol = px / cellPixels;
-      const localRow = py / cellPixels;
-      const col = chunk.colStart + Math.floor(localCol);
-      const row = chunk.rowStart + Math.floor(localRow);
+      // Find which cell this pixel belongs to by checking nearest hex center
+      // Approximate: compute rough cell from pixel position, then check neighbors
+      let bestKey = null;
+      let bestDistSq = Infinity;
 
-      // Fractional position within the cell (0..1)
-      const u = localCol - Math.floor(localCol);
-      const v = localRow - Math.floor(localRow);
+      // Estimate cell from pixel position (reverse of chunkHexCenter)
+      const estRow = Math.round((py - layout.padY) / (size * 1.5)) + chunk.rowStart;
+      const stagger = (estRow & 1) ? 0.5 : 0;
+      const startStagger = (chunk.rowStart & 1) ? 0.5 : 0;
+      const estCol = Math.round((px - layout.padX) / (size * SQRT3) - stagger + startStagger) + chunk.colStart;
 
-      const cell = cells[`${col},${row}`];
+      // Check estimated cell and its immediate neighbors
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+          const tr = estRow + dr;
+          const tc = estCol + dc;
+          const key = `${tc},${tr}`;
+          const c = centerCache[key];
+          if (!c) continue;
+          const dx = px - c.x;
+          const dy = py - c.y;
+          const d = dx * dx + dy * dy;
+          if (d < bestDistSq) {
+            bestDistSq = d;
+            bestKey = key;
+          }
+        }
+      }
+
+      if (!bestKey) {
+        // Pixel outside all cells — transparent
+        const idx = (py * width + px) * 4;
+        data[idx + 3] = 0;
+        continue;
+      }
+
+      const cell = cells[bestKey];
       if (!cell) {
         const idx = (py * width + px) * 4;
         data[idx] = 17; data[idx + 1] = 17; data[idx + 2] = 17; data[idx + 3] = 255;
@@ -104,64 +162,45 @@ export function renderBlendedChunk(chunk, cellPixels, cells) {
       const baseRGB = getTerrainRGB(cell.terrain);
       let r = baseRGB.r, g = baseRGB.g, b = baseRGB.b;
 
-      // Blend with neighbors at edges
-      const neighbors = [
-        { du: 0, dv: -1, dc: 0, dr: -1 },  // North
-        { du: 0, dv: 1, dc: 0, dr: 1 },     // South
-        { du: -1, dv: 0, dc: -1, dr: 0 },   // West
-        { du: 1, dv: 0, dc: 1, dr: 0 },     // East
-      ];
+      // Get this cell's vertices and neighbors for edge blending
+      const verts = vertCache[bestKey];
+      const center = centerCache[bestKey];
+      const parts = bestKey.split(",");
+      const col = parseInt(parts[0]);
+      const row = parseInt(parts[1]);
+      const neighborCoords = getNeighbors(col, row);
 
-      for (const n of neighbors) {
-        const nc = col + n.dc;
-        const nr = row + n.dr;
-        const nCell = cells[`${nc},${nr}`];
-        if (!nCell || nCell.terrain === cell.terrain) continue;
+      // Distance from pixel to hex center (normalized by apothem)
+      const dxC = px - center.x;
+      const dyC = py - center.y;
+      const distFromCenter = Math.sqrt(dxC * dxC + dyC * dyC) / apothem;
 
-        const margin = getBlendMargin(cell.terrain, nCell.terrain);
-        if (margin <= 0) continue;
+      // Blend with each of the 6 neighbors at their shared edge
+      if (verts) {
+        for (let i = 0; i < 6; i++) {
+          const [nc, nr] = neighborCoords[i];
+          const nCell = cells[`${nc},${nr}`];
+          if (!nCell || nCell.terrain === cell.terrain) continue;
 
-        // Distance to this edge (0 at edge, 1 at center)
-        let dist;
-        if (n.dc === 0 && n.dr === -1) dist = v;          // North: distance = v (0 at top)
-        else if (n.dc === 0 && n.dr === 1) dist = 1 - v;   // South: distance = 1-v (0 at bottom)
-        else if (n.dc === -1 && n.dr === 0) dist = u;       // West: distance = u (0 at left)
-        else dist = 1 - u;                                   // East: distance = 1-u (0 at right)
+          const margin = getBlendMargin(cell.terrain, nCell.terrain);
+          if (margin <= 0) continue;
 
-        if (dist >= margin) continue;
+          // Distance from pixel to this hex edge (signed, positive = inside)
+          const v0 = verts[i];
+          const v1 = verts[(i + 1) % 6];
+          const dist = edgeDistance(px, py, v0, v1);
+          // Normalize by apothem so margin is relative to hex size
+          const normDist = dist / apothem;
 
-        const blendFactor = (1 - smoothstep(0, margin, dist)) * 0.5;
-        const nRGB = getTerrainRGB(nCell.terrain);
-        r += (nRGB.r - r) * blendFactor;
-        g += (nRGB.g - g) * blendFactor;
-        b += (nRGB.b - b) * blendFactor;
-      }
+          if (normDist >= margin) continue;
+          if (normDist < 0) continue; // outside hex on this edge
 
-      // Diagonal neighbor blending (corners, weaker)
-      const diagonals = [
-        { dc: -1, dr: -1, checkU: u, checkV: v },           // NW
-        { dc: 1, dr: -1, checkU: 1 - u, checkV: v },        // NE
-        { dc: -1, dr: 1, checkU: u, checkV: 1 - v },        // SW
-        { dc: 1, dr: 1, checkU: 1 - u, checkV: 1 - v },     // SE
-      ];
-
-      for (const d of diagonals) {
-        const nc = col + d.dc;
-        const nr = row + d.dr;
-        const nCell = cells[`${nc},${nr}`];
-        if (!nCell || nCell.terrain === cell.terrain) continue;
-
-        const margin = getBlendMargin(cell.terrain, nCell.terrain) * 0.7;
-        if (margin <= 0) continue;
-
-        const cornerDist = Math.sqrt(d.checkU * d.checkU + d.checkV * d.checkV) / Math.SQRT2;
-        if (cornerDist >= margin) continue;
-
-        const blendFactor = (1 - smoothstep(0, margin, cornerDist)) * 0.25;
-        const nRGB = getTerrainRGB(nCell.terrain);
-        r += (nRGB.r - r) * blendFactor;
-        g += (nRGB.g - g) * blendFactor;
-        b += (nRGB.b - b) * blendFactor;
+          const blendFactor = (1 - smoothstep(0, margin, normDist)) * 0.5;
+          const nRGB = getTerrainRGB(nCell.terrain);
+          r += (nRGB.r - r) * blendFactor;
+          g += (nRGB.g - g) * blendFactor;
+          b += (nRGB.b - b) * blendFactor;
+        }
       }
 
       const idx = (py * width + px) * 4;
@@ -176,36 +215,77 @@ export function renderBlendedChunk(chunk, cellPixels, cells) {
   return canvas;
 }
 
-// Render elevation shading overlay (pseudo-3D relief)
+// Render elevation shading overlay (pseudo-3D relief) for hex grid
 export function applyElevationShading(ctx, chunk, cellPixels, cells) {
+  const layout = hexChunkLayout(chunk, cellPixels);
+  const { size } = layout;
+
   for (let row = chunk.rowStart; row < chunk.rowEnd; row++) {
     for (let col = chunk.colStart; col < chunk.colEnd; col++) {
       const cell = cells[`${col},${row}`];
       if (!cell || cell.elevation === undefined) continue;
 
-      const northCell = cells[`${col},${row - 1}`];
-      const southCell = cells[`${col},${row + 1}`];
+      const center = chunkHexCenter(col, row, layout);
+      const neighbors = getNeighbors(col, row);
 
-      const lx = (col - chunk.colStart) * cellPixels;
-      const ly = (row - chunk.rowStart) * cellPixels;
+      // Check NW and NE neighbors (indices 2, 1 in hex dirs) for northern highlight
+      // Check SW and SE neighbors (indices 4, 5) for southern shadow
+      const northIdxs = [1, 2]; // NE, NW
+      const southIdxs = [4, 5]; // SW, SE
 
-      // Northern highlight (cell is higher than north neighbor)
-      if (northCell && northCell.elevation !== undefined) {
-        const diff = cell.elevation - northCell.elevation;
-        if (diff > 10) {
-          const intensity = Math.min(0.15, diff / 500);
-          ctx.fillStyle = `rgba(255,255,220,${intensity})`;
-          ctx.fillRect(lx, ly, cellPixels, cellPixels * 0.15);
+      let northDiff = 0;
+      let northCount = 0;
+      for (const ni of northIdxs) {
+        const [nc, nr] = neighbors[ni];
+        const nCell = cells[`${nc},${nr}`];
+        if (nCell && nCell.elevation !== undefined) {
+          northDiff += cell.elevation - nCell.elevation;
+          northCount++;
         }
       }
 
-      // Southern shadow (cell is higher than south neighbor)
-      if (southCell && southCell.elevation !== undefined) {
-        const diff = cell.elevation - southCell.elevation;
+      let southDiff = 0;
+      let southCount = 0;
+      for (const si of southIdxs) {
+        const [nc, nr] = neighbors[si];
+        const nCell = cells[`${nc},${nr}`];
+        if (nCell && nCell.elevation !== undefined) {
+          southDiff += cell.elevation - nCell.elevation;
+          southCount++;
+        }
+      }
+
+      if (northCount > 0) {
+        const diff = northDiff / northCount;
+        if (diff > 10) {
+          const intensity = Math.min(0.15, diff / 500);
+          ctx.fillStyle = `rgba(255,255,220,${intensity})`;
+          // Highlight top portion of hex
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(center.x - size, center.y - size, size * 2, size * 0.5);
+          ctx.clip();
+          ctx.beginPath();
+          ctx.arc(center.x, center.y, size * 0.85, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+
+      if (southCount > 0) {
+        const diff = southDiff / southCount;
         if (diff > 10) {
           const intensity = Math.min(0.15, diff / 500);
           ctx.fillStyle = `rgba(0,0,0,${intensity})`;
-          ctx.fillRect(lx, ly + cellPixels * 0.85, cellPixels, cellPixels * 0.15);
+          // Shadow bottom portion of hex
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(center.x - size, center.y + size * 0.5, size * 2, size * 0.5);
+          ctx.clip();
+          ctx.beginPath();
+          ctx.arc(center.x, center.y, size * 0.85, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
         }
       }
     }

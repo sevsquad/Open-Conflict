@@ -41,8 +41,8 @@ export function buildNameGroups(cells, cols, rows) {
   // Pre-compute centroid for each group
   const groups = Object.values(nameGroups);
   for (const g of groups) {
-    g.centerCol = g.cells.reduce((s, p) => s + p.c, 0) / g.cells.length + 0.5;
-    g.centerRow = g.cells.reduce((s, p) => s + p.r, 0) / g.cells.length + 0.5;
+    g.centerCol = g.cells.reduce((s, p) => s + p.c, 0) / g.cells.length;
+    g.centerRow = g.cells.reduce((s, p) => s + p.r, 0) / g.cells.length;
     const config = LABEL_CONFIG[g.type] || DEFAULT_CONFIG;
     g.priority = config.priority;
     g.minCellPx = config.minCellPx;

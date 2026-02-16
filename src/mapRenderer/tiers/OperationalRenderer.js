@@ -1,9 +1,12 @@
 // ════════════════════════════════════════════════════════════════
 // OperationalRenderer — Tier 1 (3–12 px/cell): small cells + line features
-// The campaign map: cells visible, features as shapes and lines
+// The campaign map: hex cells visible, features as shapes and lines
 // ════════════════════════════════════════════════════════════════
 
 import { TC, FC } from "../../terrainColors.js";
+import {
+  hexChunkLayout, chunkHexCenter, traceHexPath, hexVertices,
+} from "../HexMath.js";
 
 // Point feature icon shapes
 const ICON_SHAPES = {
@@ -85,35 +88,29 @@ function drawIcon(ctx, shape, cx, cy, size, color) {
 // Render a chunk at operational scale
 // Returns an OffscreenCanvas
 export function renderOperationalChunk(chunk, cellPixels, cells, activeFeatures) {
+  const layout = hexChunkLayout(chunk, cellPixels);
+  const { width, height, size } = layout;
   const chunkCols = chunk.colEnd - chunk.colStart;
   const chunkRows = chunk.rowEnd - chunk.rowStart;
-  const width = Math.ceil(chunkCols * cellPixels);
-  const height = Math.ceil(chunkRows * cellPixels);
 
   if (width <= 0 || height <= 0) return null;
 
   const canvas = new OffscreenCanvas(width, height);
   const ctx = canvas.getContext("2d");
 
-  // Draw terrain cells
+  // Draw terrain cells as hex shapes
   for (let localRow = 0; localRow < chunkRows; localRow++) {
     const row = chunk.rowStart + localRow;
     for (let localCol = 0; localCol < chunkCols; localCol++) {
       const col = chunk.colStart + localCol;
       const cell = cells[`${col},${row}`];
-      const x = localCol * cellPixels;
-      const y = localRow * cellPixels;
+      const center = chunkHexCenter(col, row, layout);
 
-      // Terrain fill
+      // Terrain fill as hex
       ctx.fillStyle = cell ? (TC[cell.terrain] || "#222") : "#111";
-      ctx.fillRect(x, y, cellPixels, cellPixels);
-
-      // Subtle cell borders (at 5+ px/cell)
-      if (cellPixels >= 5) {
-        ctx.fillStyle = "rgba(0,0,0,0.06)";
-        ctx.fillRect(x + cellPixels - 0.5, y, 0.5, cellPixels);
-        ctx.fillRect(x, y + cellPixels - 0.5, cellPixels, 0.5);
-      }
+      ctx.beginPath();
+      traceHexPath(ctx, center.x, center.y, size);
+      ctx.fill();
 
       // Point feature icons (not linear features — those are drawn as lines by RoadNetwork)
       if (cell && activeFeatures) {
@@ -125,43 +122,29 @@ export function renderOperationalChunk(chunk, cellPixels, cells, activeFeatures)
           const shape = ICON_SHAPES[feat];
           const color = FC[feat] || "#999";
           const iconSize = Math.max(2, cellPixels * 0.5);
-          const cx = x + cellPixels / 2;
-          const cy = y + cellPixels / 2;
           ctx.globalAlpha = 0.85;
-          drawIcon(ctx, shape, cx, cy, iconSize, color);
+          drawIcon(ctx, shape, center.x, center.y, iconSize, color);
           ctx.globalAlpha = 1;
         }
       }
     }
   }
 
-  // Major grid lines at 8+ px/cell
-  if (cellPixels >= 8) {
-    ctx.strokeStyle = "rgba(0,0,0,0.25)";
+  // Hex grid edges at 5+ px/cell
+  if (cellPixels >= 5) {
     ctx.lineWidth = 0.5;
-    for (let localRow = 0; localRow <= chunkRows; localRow++) {
+    for (let localRow = 0; localRow < chunkRows; localRow++) {
       const row = chunk.rowStart + localRow;
-      if (row % 10 === 0) {
-        ctx.lineWidth = 1;
-        ctx.strokeStyle = "rgba(0,0,0,0.35)";
-      } else {
-        ctx.lineWidth = 0.5;
-        ctx.strokeStyle = "rgba(0,0,0,0.12)";
+      for (let localCol = 0; localCol < chunkCols; localCol++) {
+        const col = chunk.colStart + localCol;
+        const isMajor = (col % 10 === 0 || row % 10 === 0);
+        ctx.strokeStyle = isMajor ? "rgba(0,0,0,0.35)" : "rgba(0,0,0,0.12)";
+        ctx.lineWidth = isMajor ? 1 : 0.5;
+        const center = chunkHexCenter(col, row, layout);
+        ctx.beginPath();
+        traceHexPath(ctx, center.x, center.y, size);
+        ctx.stroke();
       }
-      const y = localRow * cellPixels;
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
-    }
-    for (let localCol = 0; localCol <= chunkCols; localCol++) {
-      const col = chunk.colStart + localCol;
-      if (col % 10 === 0) {
-        ctx.lineWidth = 1;
-        ctx.strokeStyle = "rgba(0,0,0,0.35)";
-      } else {
-        ctx.lineWidth = 0.5;
-        ctx.strokeStyle = "rgba(0,0,0,0.12)";
-      }
-      const x = localCol * cellPixels;
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
     }
   }
 

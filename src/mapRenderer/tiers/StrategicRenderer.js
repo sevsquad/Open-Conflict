@@ -1,9 +1,10 @@
 // ════════════════════════════════════════════════════════════════
 // StrategicRenderer — Tier 0 (1–3 px/cell): ImageData pixel-level
-// Satellite-photo view: each cell is 1–3 pixels
+// Satellite-photo view: each cell is 1–3 pixels (hex grid)
 // ════════════════════════════════════════════════════════════════
 
 import { TC, FC } from "../../terrainColors.js";
+import { hexChunkLayout, chunkHexCenter, cellPixelsToHexSize, SQRT3 } from "../HexMath.js";
 
 // Pre-parse terrain colors to RGB arrays for fast pixel ops
 const TC_RGB = {};
@@ -46,11 +47,9 @@ function topFeature(cell) {
 // Render a chunk at strategic scale using ImageData direct pixel manipulation
 // Returns an OffscreenCanvas
 export function renderStrategicChunk(chunk, cellPixels, cells, activeFeatures) {
-  const chunkCols = chunk.colEnd - chunk.colStart;
-  const chunkRows = chunk.rowEnd - chunk.rowStart;
+  const layout = hexChunkLayout(chunk, cellPixels);
+  const { width, height, size } = layout;
   const cpx = Math.max(1, Math.round(cellPixels));
-  const width = chunkCols * cpx;
-  const height = chunkRows * cpx;
 
   if (width <= 0 || height <= 0) return null;
 
@@ -60,6 +59,8 @@ export function renderStrategicChunk(chunk, cellPixels, cells, activeFeatures) {
   const data = imgData.data;
 
   const fallback = [34, 34, 34]; // #222
+  const chunkCols = chunk.colEnd - chunk.colStart;
+  const chunkRows = chunk.rowEnd - chunk.rowStart;
 
   for (let localRow = 0; localRow < chunkRows; localRow++) {
     const row = chunk.rowStart + localRow;
@@ -85,11 +86,16 @@ export function renderStrategicChunk(chunk, cellPixels, cells, activeFeatures) {
         }
       }
 
+      // Position pixel block at hex center
+      const center = chunkHexCenter(col, row, layout);
+      const startPx = Math.round(center.x - cpx / 2);
+      const startPy = Math.round(center.y - cpx / 2);
+
       // Fill the cell's pixel block
-      const startPx = localCol * cpx;
-      const startPy = localRow * cpx;
       for (let py = startPy; py < startPy + cpx && py < height; py++) {
+        if (py < 0) continue;
         for (let px = startPx; px < startPx + cpx && px < width; px++) {
+          if (px < 0) continue;
           const idx = (py * width + px) * 4;
           data[idx] = fr;
           data[idx + 1] = fg;
@@ -104,9 +110,9 @@ export function renderStrategicChunk(chunk, cellPixels, cells, activeFeatures) {
         if (feat && activeFeatures.has(feat)) {
           const frgb = FC_RGB[feat];
           if (frgb) {
-            const cx = startPx + Math.floor(cpx / 2);
-            const cy = startPy + Math.floor(cpx / 2);
-            if (cx < width && cy < height) {
+            const cx = Math.round(center.x);
+            const cy = Math.round(center.y);
+            if (cx >= 0 && cx < width && cy >= 0 && cy < height) {
               const idx = (cy * width + cx) * 4;
               data[idx] = frgb[0];
               data[idx + 1] = frgb[1];
@@ -125,6 +131,7 @@ export function renderStrategicChunk(chunk, cellPixels, cells, activeFeatures) {
 
 // Render the full map at strategic scale (for minimap use)
 export function renderStrategicFullMap(cols, rows, cells, maxDim = 150) {
+  // Compute pixel dimensions based on hex layout
   const ratio = rows / cols;
   const mw = ratio > 1 ? Math.round(maxDim / ratio) : maxDim;
   const mh = ratio > 1 ? maxDim : Math.round(maxDim * ratio);
@@ -134,20 +141,31 @@ export function renderStrategicFullMap(cols, rows, cells, maxDim = 150) {
   const data = imgData.data;
   const fallback = [34, 34, 34];
 
-  const cpw = mw / cols;
-  const cph = mh / rows;
+  // Compute a hex size that makes the map fit in the minimap
+  // Map width in hex-pixels ≈ (cols + 0.5) * sqrt(3) * size
+  // Map height in hex-pixels ≈ (rows - 1) * 1.5 * size + 2 * size
+  // Solve for size:
+  const sizeW = mw / (SQRT3 * (cols + 0.5));
+  const sizeH = mh / (1.5 * (rows - 1) + 2);
+  const size = Math.min(sizeW, sizeH);
 
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const cell = cells[`${c},${r}`];
       const rgb = cell ? (TC_RGB[cell.terrain] || fallback) : fallback;
-      const x0 = Math.floor(c * cpw);
-      const y0 = Math.floor(r * cph);
-      const x1 = Math.floor((c + 1) * cpw);
-      const y1 = Math.floor((r + 1) * cph);
-      for (let py = y0; py < y1 && py < mh; py++) {
-        for (let px = x0; px < x1 && px < mw; px++) {
-          const idx = (py * mw + px) * 4;
+      // Hex center position in minimap pixels
+      const px = size * SQRT3 * (c + 0.5 * (r & 1));
+      const py = size * 1.5 * r + size; // +size offset so row 0 isn't clipped
+      const x0 = Math.floor(px);
+      const y0 = Math.floor(py);
+      // At minimap scale, just fill 1-2 pixels per cell
+      const x1 = Math.min(Math.ceil(px + size * SQRT3), mw);
+      const y1 = Math.min(Math.ceil(py + size), mh);
+      for (let iy = y0; iy < y1 && iy < mh; iy++) {
+        if (iy < 0) continue;
+        for (let ix = x0; ix < x1 && ix < mw; ix++) {
+          if (ix < 0) continue;
+          const idx = (iy * mw + ix) * 4;
           data[idx] = rgb[0]; data[idx + 1] = rgb[1]; data[idx + 2] = rgb[2]; data[idx + 3] = 255;
         }
       }

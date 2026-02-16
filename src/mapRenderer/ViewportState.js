@@ -1,6 +1,12 @@
 // ════════════════════════════════════════════════════════════════
 // ViewportState — viewport math, visible range, pixel-to-cell
+// Hex grid (pointy-top, odd-r offset coordinates)
 // ════════════════════════════════════════════════════════════════
+
+import {
+  cellPixelsToHexSize, hexToScreen, screenToHex,
+  screenToGridHex, offsetToPixel, pixelToOffset, SQRT3,
+} from "./HexMath.js";
 
 export const MIN_CELL_PIXELS = 1.0;
 export const MAX_CELL_PIXELS = 64.0;
@@ -17,7 +23,14 @@ export function getTier(cellPixels) {
 }
 
 export function createViewport(cols, rows, canvasWidth, canvasHeight) {
-  const cellPixels = Math.min(canvasWidth / cols, canvasHeight / rows) * 0.95;
+  // For pointy-top hex: width = sqrt(3) * size, row spacing = 1.5 * size
+  // cellPixels = hex width = sqrt(3) * size, so size = cellPixels / sqrt(3)
+  // Total map width ≈ cols * cellPixels (+ 0.5 for odd-row stagger)
+  // Total map height ≈ rows * 1.5 * size + 0.5 * size = rows * cellPixels * 1.5/sqrt(3) + ...
+  // Simplified: fit both axes
+  const fitW = canvasWidth / (cols + 0.5);  // account for odd-row stagger
+  const fitH = canvasHeight / (rows * 1.5 / SQRT3 + 0.5 / SQRT3);
+  const cellPixels = Math.min(fitW, fitH) * 0.95;
   return {
     centerCol: cols / 2,
     centerRow: rows / 2,
@@ -30,8 +43,12 @@ export function clampCellPixels(cp) {
 }
 
 export function getVisibleRange(viewport, canvasWidth, canvasHeight, cols, rows) {
-  const halfW = (canvasWidth / 2) / viewport.cellPixels;
-  const halfH = (canvasHeight / 2) / viewport.cellPixels;
+  // Compute a conservative rectangular bounding box of visible cells
+  const size = cellPixelsToHexSize(viewport.cellPixels);
+  const colSpacing = size * SQRT3;
+  const rowSpacing = size * 1.5;
+  const halfW = (canvasWidth / 2) / colSpacing + 1;
+  const halfH = (canvasHeight / 2) / rowSpacing + 1;
   return {
     colMin: Math.max(0, Math.floor(viewport.centerCol - halfW)),
     colMax: Math.min(cols, Math.ceil(viewport.centerCol + halfW)),
@@ -42,45 +59,55 @@ export function getVisibleRange(viewport, canvasWidth, canvasHeight, cols, rows)
 
 // Convert a screen pixel position to grid coordinates (floating point)
 export function screenToGrid(screenX, screenY, viewport, canvasWidth, canvasHeight) {
-  const col = viewport.centerCol + (screenX - canvasWidth / 2) / viewport.cellPixels;
-  const row = viewport.centerRow + (screenY - canvasHeight / 2) / viewport.cellPixels;
-  return { col, row };
+  return screenToGridHex(screenX, screenY, viewport, canvasWidth, canvasHeight);
 }
 
 // Convert a screen pixel position to integer cell coordinates, or null if out of bounds
 export function screenToCell(screenX, screenY, viewport, canvasWidth, canvasHeight, cols, rows) {
-  const { col, row } = screenToGrid(screenX, screenY, viewport, canvasWidth, canvasHeight);
-  const c = Math.floor(col);
-  const r = Math.floor(row);
-  if (c >= 0 && c < cols && r >= 0 && r < rows) return { c, r };
-  return null;
+  return screenToHex(screenX, screenY, viewport, canvasWidth, canvasHeight, cols, rows);
 }
 
-// Convert grid coordinates to screen pixel position
+// Convert grid coordinates to screen pixel position (cell center)
 export function gridToScreen(col, row, viewport, canvasWidth, canvasHeight) {
-  const x = (col - viewport.centerCol) * viewport.cellPixels + canvasWidth / 2;
-  const y = (row - viewport.centerRow) * viewport.cellPixels + canvasHeight / 2;
-  return { x, y };
+  return hexToScreen(col, row, viewport, canvasWidth, canvasHeight);
 }
 
 // Compute the new viewport after a zoom operation centered on a screen point
 export function zoomAtPoint(viewport, screenX, screenY, canvasWidth, canvasHeight, factor) {
   const newCellPixels = clampCellPixels(viewport.cellPixels * factor);
   // The grid point under the cursor should stay at the same screen position
-  const gridPt = screenToGrid(screenX, screenY, viewport, canvasWidth, canvasHeight);
+  // Get the world pixel of the cursor
+  const size = cellPixelsToHexSize(viewport.cellPixels);
+  const cpx = size * SQRT3 * (viewport.centerCol + 0.5 * (Math.round(viewport.centerRow) & 1));
+  const cpy = size * 1.5 * viewport.centerRow;
+  const wx = screenX - canvasWidth / 2 + cpx;
+  const wy = screenY - canvasHeight / 2 + cpy;
+  // Now compute what centerCol/centerRow should be so (wx, wy) maps to (screenX, screenY) at new zoom.
+  // wx, wy were computed at the old hex size; world pixels scale linearly
+  // with size, so rescale them to the new size first.
+  const newSize = cellPixelsToHexSize(newCellPixels);
+  const scale = newSize / size;
+  const newCpx = wx * scale - (screenX - canvasWidth / 2);
+  const newCpy = wy * scale - (screenY - canvasHeight / 2);
+  // Reverse: cpx = newSize * sqrt3 * (centerCol + 0.5*(round(centerRow)&1))
+  //          cpy = newSize * 1.5 * centerRow
+  const newCenterRow = newCpy / (newSize * 1.5);
+  const parity = Math.round(newCenterRow) & 1;
+  const newCenterCol = newCpx / (newSize * SQRT3) - 0.5 * parity;
   return {
-    centerCol: gridPt.col - (screenX - canvasWidth / 2) / newCellPixels,
-    centerRow: gridPt.row - (screenY - canvasHeight / 2) / newCellPixels,
+    centerCol: newCenterCol,
+    centerRow: newCenterRow,
     cellPixels: newCellPixels,
   };
 }
 
 // Compute the new viewport after a pan (drag) operation
 export function panViewport(viewport, deltaScreenX, deltaScreenY) {
+  const size = cellPixelsToHexSize(viewport.cellPixels);
   return {
     ...viewport,
-    centerCol: viewport.centerCol - deltaScreenX / viewport.cellPixels,
-    centerRow: viewport.centerRow - deltaScreenY / viewport.cellPixels,
+    centerCol: viewport.centerCol - deltaScreenX / (size * SQRT3),
+    centerRow: viewport.centerRow - deltaScreenY / (size * 1.5),
   };
 }
 
@@ -96,10 +123,8 @@ export function getAdaptiveChunkSize(tier, cols, rows) {
   const maxDim = Math.max(cols, rows);
   if (maxDim <= 100) return CHUNK_SIZES[tier];
   if (maxDim <= 300) {
-    // Medium maps: slightly larger chunks at Tier 1-2 for fewer cache entries
     return [64, 24, 12, 4][tier] || 12;
   }
-  // Large maps: larger chunks to limit total tile count
   return [128, 32, 16, 8][tier] || 16;
 }
 

@@ -8,6 +8,7 @@ import {
   getTier, getVisibleChunks, getAdaptiveChunkSize,
   getVisibleRange, gridToScreen,
 } from "./ViewportState.js";
+import { cellPixelsToHexSize, hexChunkLayout, SQRT3 } from "./HexMath.js";
 import { renderStrategicChunk, renderStrategicFullMap } from "./tiers/StrategicRenderer.js";
 import { renderOperationalChunk } from "./tiers/OperationalRenderer.js";
 import { renderTacticalChunk } from "./tiers/TacticalRenderer.js";
@@ -109,11 +110,12 @@ export default class MapRenderer {
       }
 
       if (tileCanvas) {
-        // Compute where this chunk draws on screen
+        // Compute where this chunk draws on screen (hex-aware)
+        // gridToScreen returns the CENTER of cell (colStart, rowStart).
+        // In the tile canvas, that cell's center is at (layout.padX, layout.padY).
         const screenPos = gridToScreen(chunk.colStart, chunk.rowStart, viewport, canvasWidth, canvasHeight);
-        const drawW = (chunk.colEnd - chunk.colStart) * viewport.cellPixels;
-        const drawH = (chunk.rowEnd - chunk.rowStart) * viewport.cellPixels;
-        ctx.drawImage(tileCanvas, screenPos.x, screenPos.y, drawW, drawH);
+        const size = cellPixelsToHexSize(viewport.cellPixels);
+        ctx.drawImage(tileCanvas, screenPos.x - size, screenPos.y - size);
       }
     }
 
@@ -190,11 +192,15 @@ export default class MapRenderer {
     const cols = mapData.cols;
     const rows = mapData.rows;
     const exportCellSize = 28; // match original
-    const width = cols * exportCellSize;
-    const height = rows * exportCellSize;
+    const size = cellPixelsToHexSize(exportCellSize);
+    // Hex map dimensions: width includes stagger, height uses row spacing
+    const width = Math.ceil(size * SQRT3 * (cols + 0.5)) + 1;
+    const height = Math.ceil(size * 1.5 * (rows - 1) + size * 2) + 1;
 
     const canvas = new OffscreenCanvas(width, height);
     const ctx = canvas.getContext("2d");
+    ctx.fillStyle = BG_COLOR;
+    ctx.fillRect(0, 0, width, height);
 
     // Create a virtual viewport covering the entire map
     const viewport = {
@@ -216,7 +222,10 @@ export default class MapRenderer {
         };
         const tile = renderTacticalChunk(chunk, exportCellSize, mapData.cells, activeFeatures);
         if (tile) {
-          ctx.drawImage(tile, chunk.colStart * exportCellSize, chunk.rowStart * exportCellSize);
+          // Position using hex world coordinates
+          const cx = size * SQRT3 * (chunk.colStart + 0.5 * (chunk.rowStart & 1));
+          const cy = size * 1.5 * chunk.rowStart;
+          ctx.drawImage(tile, cx - size, cy - size);
         }
       }
     }

@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { fromUrl } from "geotiff";
 import { colors, typography, radius, shadows, animation, space } from "./theme.js";
 import { Button, Badge, Panel } from "./components/ui.jsx";
+import { getNeighbors, hexLine, offsetToAxial, axialToOffset, SQRT3_2 } from "./mapRenderer/HexMath.js";
 
 // ════════════════════════════════════════════════════════════════
 // TERRAIN — physical character (movement, cover, LOS)
@@ -1331,39 +1332,30 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
   const tIdx = buildIdx(feat.terrAreas, bbox);
   const iaIdx = feat.infraAreas.length > 0 ? buildIdx(feat.infraAreas, bbox) : null;
 
-  // ── Line rasterization helpers ──────────────────────────────────
-  // 4-connected Bresenham: returns all cells along a line from (c0,r0) to (c1,r1).
-  // Every consecutive pair shares an orthogonal edge (no diagonal steps).
-  function rasterizeLine4(c0, r0, c1, r1) {
-    const cells = [];
-    let c = c0, r = r0;
-    const dc = Math.abs(c1 - c0), dr = Math.abs(r1 - r0);
-    const sc = c0 < c1 ? 1 : -1, sr = r0 < r1 ? 1 : -1;
-    let err = dc - dr;
-    for (;;) {
-      cells.push([c, r]);
-      if (c === c1 && r === r1) break;
-      const e2 = 2 * err;
-      if (e2 > -dr) { err -= dr; c += sc; }
-      else { err += dc; r += sr; }
-    }
-    return cells;
+  // ── Hex grid projection helpers ─────────────────────────────────
+  // Convert lat/lon to hex grid cell (offset coords, odd-r pointy-top)
+  function geoToCell(lon, lat) {
+    const r = Math.floor((north - lat) / cH);
+    const stagger = (r & 1) ? cW * 0.5 : 0;
+    const c = Math.floor((lon - west - stagger) / cW);
+    if (c < 0 || c >= cols || r < 0 || r >= rows) return null;
+    return [c, r];
   }
 
-  // Rasterize an OSM way into grid cells using 4-connected line segments.
+  // Rasterize an OSM way into hex grid cells using hex line interpolation.
   // Returns array of [c, r] pairs for all cells the way passes through.
   function rasterizeWay(nodes) {
     const result = [];
     let prevC = -1, prevR = -1;
     for (const nd of nodes) {
-      const c = Math.floor((nd.lon - west) / cW);
-      const r = Math.floor((north - nd.lat) / cH);
-      if (c < 0 || c >= cols || r < 0 || r >= rows) { prevC = -1; continue; }
+      const cell = geoToCell(nd.lon, nd.lat);
+      if (!cell) { prevC = -1; continue; }
+      const [c, r] = cell;
       if (prevC >= 0 && (prevC !== c || prevR !== r)) {
-        const seg = rasterizeLine4(prevC, prevR, c, r);
+        const seg = hexLine(prevC, prevR, c, r);
         for (let i = 1; i < seg.length; i++) {
-          const [sc, sr] = seg[i];
-          if (sc >= 0 && sc < cols && sr >= 0 && sr < rows) result.push(seg[i]);
+          const { col, row } = seg[i];
+          if (col >= 0 && col < cols && row >= 0 && row < rows) result.push([col, row]);
         }
       } else if (prevC < 0) {
         result.push([c, r]);
@@ -1425,8 +1417,9 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
   const damCandidates = [];
   for (const d of feat.damNodes) {
     const lat = d.lat, lon = d.lon || (d.nodes ? d.nodes[0].lon : 0);
-    const c = Math.floor((lon - west) / cW), r = Math.floor((north - lat) / cH);
-    if (c >= 0 && c < cols && r >= 0 && r < rows) {
+    const dc = geoToCell(lon, lat);
+    if (dc) {
+      const [c, r] = dc;
       const k = `${c},${r}`;
       if (tier === "strategic") {
         // Strategic: defer — will check adjacency to lake after terrain classification
@@ -1446,9 +1439,9 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
     for (const bldg of feat.buildingAreas) {
       // Approximate: count which cells each building falls in
       for (const nd of bldg.ring) {
-        const c = Math.floor((nd.lon - west) / cW), r = Math.floor((north - nd.lat) / cH);
-        if (c >= 0 && c < cols && r >= 0 && r < rows) {
-          const k = `${c},${r}`;
+        const bc = geoToCell(nd.lon, nd.lat);
+        if (bc) {
+          const k = `${bc[0]},${bc[1]}`;
           bldgCount[k] = (bldgCount[k] || 0) + 1;
         }
       }
@@ -1477,9 +1470,9 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       for (let i = 0; i < hl.nodes.length - 1; i++) {
         const a = hl.nodes[i], b = hl.nodes[i + 1];
         const midLat = (a.lat + b.lat) / 2, midLon = (a.lon + b.lon) / 2;
-        const c = Math.floor((midLon - west) / cW), r = Math.floor((north - midLat) / cH);
-        if (c >= 0 && c < cols && r >= 0 && r < rows) {
-          const k = `${c},${r}`;
+        const hc = geoToCell(midLon, midLat);
+        if (hc) {
+          const k = `${hc[0]},${hc[1]}`;
           cellHedgeLen[k] = (cellHedgeLen[k] || 0) + segLenKm(a, b);
         }
       }
@@ -1490,8 +1483,8 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
   const cellTower = new Set();
   if (tier === "sub-tactical" && feat.towerNodes) {
     for (const t of feat.towerNodes) {
-      const c = Math.floor((t.lon - west) / cW), r = Math.floor((north - t.lat) / cH);
-      if (c >= 0 && c < cols && r >= 0 && r < rows) cellTower.add(`${c},${r}`);
+      const tc = geoToCell(t.lon, t.lat);
+      if (tc) cellTower.add(`${tc[0]},${tc[1]}`);
     }
   }
 
@@ -1559,8 +1552,8 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       let sumLat = 0, sumLon = 0;
       for (const nd of ba.ring) { sumLat += nd.lat; sumLon += nd.lon; }
       const cLat = sumLat / ba.ring.length, cLon = sumLon / ba.ring.length;
-      const c = Math.floor((cLon - west) / cW), r = Math.floor((north - cLat) / cH);
-      if (c >= 0 && c < cols && r >= 0 && r < rows) cellBeach.add(`${c},${r}`);
+      const bc = geoToCell(cLon, cLat);
+      if (bc) cellBeach.add(`${bc[0]},${bc[1]}`);
     }
   }
 
@@ -1588,8 +1581,8 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
           const cur = queue.shift();
           component.push(cur);
           const [cc, cr] = cur.split(",").map(Number);
-          for (const [dc, dr] of [[0,1],[0,-1],[1,0],[-1,0]]) {
-            const nk = `${cc+dc},${cr+dr}`;
+          for (const [nc, nr] of getNeighbors(cc, cr)) {
+            const nk = `${nc},${nr}`;
             if (pipeCandidates.has(nk) && !visited.has(nk)) { visited.add(nk); queue.push(nk); }
           }
         }
@@ -1606,8 +1599,8 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       let sumLat = 0, sumLon = 0;
       for (const nd of pp.ring) { sumLat += nd.lat; sumLon += nd.lon; }
       const cLat = sumLat / pp.ring.length, cLon = sumLon / pp.ring.length;
-      const c = Math.floor((cLon - west) / cW), r = Math.floor((north - cLat) / cH);
-      if (c >= 0 && c < cols && r >= 0 && r < rows) cellPowerPlant.add(`${c},${r}`);
+      const pc = geoToCell(cLon, cLat);
+      if (pc) cellPowerPlant.add(`${pc[0]},${pc[1]}`);
     }
   }
 
@@ -1615,9 +1608,9 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
   const cellSettlement = new Map(); // cell → { name, place, rank, population }
   if (feat.placeNodes) {
     for (const pn of feat.placeNodes) {
-      const c = Math.floor((pn.lon - west) / cW), r = Math.floor((north - pn.lat) / cH);
-      if (c >= 0 && c < cols && r >= 0 && r < rows) {
-        const k = `${c},${r}`;
+      const pc = geoToCell(pn.lon, pn.lat);
+      if (pc) {
+        const k = `${pc[0]},${pc[1]}`;
         const existing = cellSettlement.get(k);
         if (!existing || pn.rank > existing.rank || (pn.rank === existing.rank && pn.population > existing.population)) {
           cellSettlement.set(k, { name: pn.name, place: pn.place, rank: pn.rank });
@@ -1650,9 +1643,9 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       let sumLat = 0, sumLon = 0;
       for (const nd of ia.ring) { sumLat += nd.lat; sumLon += nd.lon; }
       const cLat = sumLat / ia.ring.length, cLon = sumLon / ia.ring.length;
-      const gc = Math.floor((cLon - west) / cW), gr = Math.floor((north - cLat) / cH);
-      if (gc >= 0 && gc < cols && gr >= 0 && gr < rows) {
-        const gk = `${gc},${gr}`;
+      const gc = geoToCell(cLon, cLat);
+      if (gc) {
+        const gk = `${gc[0]},${gc[1]}`;
         if (ia.type === "airfield") cellAirfield.add(gk);
         else if (ia.type === "port") cellPort.add(gk);
         else if (ia.type === "military_base") cellMilitaryBase.add(gk);
@@ -1666,7 +1659,8 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const k = `${c},${r}`;
-      const lat = north - (r + 0.5) * cH, lng = west + (c + 0.5) * cW;
+      const hexStagger = (r & 1) ? cW * 0.5 : 0;
+      const lat = north - (r + 0.5) * cH, lng = west + (c + 0.5) * cW + hexStagger;
       const e = elev[r * cols + c] || 0;
       elevG[k] = Math.round(e);
 
@@ -1675,7 +1669,7 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       // This catches features that don't cover the cell center (coastal cities, small polygons)
       const PTS = (tier === "sub-tactical") ? 1 : 5; // 5×5 = 25 sample points
       const cellS = north - (r + 1) * cH, cellN = north - r * cH;
-      const cellWest = west + c * cW, cellEast = west + (c + 1) * cW;
+      const cellWest = west + c * cW + hexStagger, cellEast = west + (c + 1) * cW + hexStagger;
       const tCandidates = qIdxRect(tIdx, bbox, cellS, cellN, cellWest, cellEast);
 
       // Count OSM terrain type hits across sample points
@@ -1917,8 +1911,8 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
     for (const k of damCandidates) {
       const [c, r] = k.split(",").map(Number);
       let adjLake = false;
-      for (const [dc, dr] of [[0,1],[0,-1],[1,0],[-1,0],[1,1],[1,-1],[-1,1],[-1,-1]]) {
-        const nk = `${c+dc},${r+dr}`;
+      for (const [nc, nr] of getNeighbors(c, r)) {
+        const nk = `${nc},${nr}`;
         if (terrain[nk] && isLake(terrain[nk])) { adjLake = true; break; }
       }
       if (adjLake) {
@@ -1964,8 +1958,7 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
     while (qi < bQ.length) {
       ocean.add(bQ[qi]);
       const [cc, cr] = bQ[qi++].split(",").map(Number);
-      for (const [dc, dr] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
-        const nc = cc + dc, nr = cr + dr;
+      for (const [nc, nr] of getNeighbors(cc, cr)) {
         if (nc >= 0 && nc < cols && nr >= 0 && nr < rows) {
           const nk = `${nc},${nr}`;
           if (!vis.has(nk) && isCand(nk)) { vis.add(nk); bQ.push(nk); }
@@ -1980,8 +1973,7 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
     qi = 0;
     while (qi < ldQ.length) {
       const [cc, cr] = ldQ[qi].split(",").map(Number);
-      for (const [dc, dr] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
-        const nc = cc + dc, nr = cr + dr;
+      for (const [nc, nr] of getNeighbors(cc, cr)) {
         if (nc >= 0 && nc < cols && nr >= 0 && nr < rows) {
           const nk = `${nc},${nr}`;
           if (ld[nk] === undefined) { ld[nk] = (ld[ldQ[qi]] || 0) + 1; ldQ.push(nk); }
@@ -2006,8 +1998,8 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
       if (rc < roadThresh) continue;
 
       let neighborUrbanRoads = 0;
-      for (const [dc, dr] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
-        const nk = `${c + dc},${r + dr}`;
+      for (const [nc, nr] of getNeighbors(c, r)) {
+        const nk = `${nc},${nr}`;
         if ((cellRoadCount[nk] || 0) >= roadThresh * 0.5) neighborUrbanRoads++;
       }
 
@@ -2049,8 +2041,8 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
       if (!lzTerrain.includes(tG[k])) continue;
       const e = elevG[k] || 0;
       let maxD = 0;
-      for (const [dc, dr] of [[0,1],[0,-1],[1,0],[-1,0]]) {
-        const nk = `${c+dc},${r+dr}`;
+      for (const [nc, nr] of getNeighbors(c, r)) {
+        const nk = `${nc},${nr}`;
         if (elevG[nk] !== undefined) { const d = Math.abs(e - (elevG[nk] || 0)); if (d > maxD) maxD = d; }
       }
       const slopeDeg = Math.atan(maxD / (slopeKm * 1000)) * (180 / Math.PI);
@@ -2062,8 +2054,8 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
       if (needCluster) {
         const [c, r] = k.split(",").map(Number);
         let hasNeighborLZ = false;
-        for (const [dc, dr] of [[0,1],[0,-1],[1,0],[-1,0]]) {
-          if (lzCandidates.has(`${c+dc},${r+dr}`)) { hasNeighborLZ = true; break; }
+        for (const [nc, nr] of getNeighbors(c, r)) {
+          if (lzCandidates.has(`${nc},${nr}`)) { hasNeighborLZ = true; break; }
         }
         if (!hasNeighborLZ) continue;
       }
@@ -2082,8 +2074,8 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
       const k = `${c},${r}`;
       const e = elevG[k] || 0;
       let maxD = 0;
-      for (const [dc, dr] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
-        const nk = `${c + dc},${r + dr}`;
+      for (const [nc, nr] of getNeighbors(c, r)) {
+        const nk = `${nc},${nr}`;
         if (elevG[nk] !== undefined) { const d = Math.abs(e - (elevG[nk] || 0)); if (d > maxD) maxD = d; }
       }
       if (maxD >= cliffThresh) { if (!aG[k]) aG[k] = []; aG[k].push("cliffs"); }
@@ -2098,11 +2090,11 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
       const e = elevG[k] || 0;
       if (e < 50) continue;
       let isR = true, nb = 0;
-      for (const [dc, dr] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
-        const nk = `${c + dc},${r + dr}`;
+      for (const [nc, nr] of getNeighbors(c, r)) {
+        const nk = `${nc},${nr}`;
         if (elevG[nk] !== undefined) { nb++; if (e - (elevG[nk] || 0) < 30) { isR = false; break; } }
       }
-      if (isR && nb >= 3) { if (!aG[k]) aG[k] = []; aG[k].push("ridgeline"); }
+      if (isR && nb >= 4) { if (!aG[k]) aG[k] = []; aG[k].push("ridgeline"); }
     }
   }
 
@@ -2111,8 +2103,8 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
     for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
       const k = `${c},${r}`;
       if (!isForest(tG[k])) continue;
-      for (const [dc, dr] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
-        const nk = `${c + dc},${r + dr}`;
+      for (const [nc, nr] of getNeighbors(c, r)) {
+        const nk = `${nc},${nr}`;
         if (tG[nk] && isOpen(tG[nk])) { if (!aG[k]) aG[k] = []; aG[k].push("treeline"); break; }
       }
     }
@@ -2125,8 +2117,8 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
       const k = `${c},${r}`;
       const e = elevG[k] || 0;
       let maxD = 0;
-      for (const [dc, dr] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
-        const nk = `${c + dc},${r + dr}`;
+      for (const [nc, nr] of getNeighbors(c, r)) {
+        const nk = `${nc},${nr}`;
         if (elevG[nk] !== undefined) { const d = Math.abs(e - (elevG[nk] || 0)); if (d > maxD) maxD = d; }
       }
       const slopeDeg = Math.atan(maxD / (slopeKm * 1000)) * (180 / Math.PI);
@@ -2152,8 +2144,8 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
       if (isW(tG[k])) continue;
       const e = elevG[k] || 0;
       let nb = 0, totalNeighE = 0;
-      for (const [dc, dr] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
-        const nk = `${c + dc},${r + dr}`;
+      for (const [nc, nr] of getNeighbors(c, r)) {
+        const nk = `${nc},${nr}`;
         if (elevG[nk] !== undefined) { nb++; totalNeighE += (elevG[nk] || 0); }
       }
       if (nb >= 2 && e - (totalNeighE / nb) >= 50) {
@@ -2169,8 +2161,8 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
     if (!["dense_urban", "light_urban"].includes(tG[k])) continue;
     if (iG[k] !== "none") continue;
     let isPort = false;
-    for (const [dc, dr] of [[0, 1], [0, -1], [1, 0], [-1, 0], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
-      const nk = `${c + dc},${r + dr}`;
+    for (const [nc, nr] of getNeighbors(c, r)) {
+      const nk = `${nc},${nr}`;
       if (tG[nk] && isW(tG[nk])) { isPort = true; break; }
     }
     if (isPort) {
