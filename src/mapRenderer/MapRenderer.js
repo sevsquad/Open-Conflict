@@ -19,7 +19,7 @@ import { drawNameLabels, drawCoordLabels } from "./overlays/LabelOverlay.js";
 import { drawHoverHighlight, drawSelectionHighlight } from "./overlays/SelectionOverlay.js";
 import { drawUnits } from "./overlays/UnitOverlay.js";
 
-const MAX_TILE_RENDERS_PER_FRAME = 6;
+const MAX_TILE_RENDERS_PER_FRAME = 32;
 const BG_COLOR = "#0A0F1A";
 
 // Tier-specific chunk renderers
@@ -37,6 +37,7 @@ export default class MapRenderer {
     this.lastTier = -1;
     this._pendingRender = false;
     this._isAnimating = false;
+    this._lastRenderArgs = null; // saved for direct rAF re-render
   }
 
   // Invalidate all cached tiles (call when feature filters change, data reloads, etc.)
@@ -66,6 +67,9 @@ export default class MapRenderer {
       skipLabels = false, // true during zoom animation
       setupOptions = null, // { ghostUnit, isSetupMode, draggedUnitId } for setup mode
     } = options;
+
+    // Save render args so _requestRerender can re-invoke directly
+    this._lastRenderArgs = [ctx, canvasWidth, canvasHeight, viewport, mapData, options];
 
     const cols = mapData.cols;
     const rows = mapData.rows;
@@ -100,7 +104,7 @@ export default class MapRenderer {
 
         if (!tileCanvas) {
           // Try fallback from lower tier (scaled up)
-          const fallback = this.tileCache.getFallback(tier, chunk.chunkCol, chunk.chunkRow, chunkSize, cols, rows);
+          const fallback = this.tileCache.getFallback(tier, chunk.chunkCol, chunk.chunkRow, chunkSize, cols, rows, getAdaptiveChunkSize);
           if (fallback) {
             tileCanvas = fallback.canvas;
             // Request re-render for next frame
@@ -244,15 +248,21 @@ export default class MapRenderer {
     return canvas;
   }
 
-  // Internal: request re-render on next frame (for progressive tile loading)
+  // Internal: request re-render on next animation frame.
+  // Re-renders directly from rAF using saved args to avoid React setState
+  // latency (which would add an extra frame of delay per tile batch).
+  // Falls back to onNeedsRerender callback if no saved args.
   _requestRerender() {
     if (this._pendingRender) return;
     this._pendingRender = true;
     requestAnimationFrame(() => {
       this._pendingRender = false;
-      // The component using MapRenderer should call render() again
-      // This is signaled via the onNeedsRerender callback if set
-      if (this.onNeedsRerender) this.onNeedsRerender();
+      if (this._lastRenderArgs) {
+        // Direct re-render: bypass React for faster progressive tile loading
+        this.render(...this._lastRenderArgs);
+      } else if (this.onNeedsRerender) {
+        this.onNeedsRerender();
+      }
     });
   }
 
