@@ -106,13 +106,8 @@ export default class MapRenderer {
         }
 
         if (!tileCanvas) {
-          // Try fallback from lower tier (scaled up)
-          const fallback = this.tileCache.getFallback(tier, chunk.chunkCol, chunk.chunkRow, chunkSize, cols, rows, getAdaptiveChunkSize);
-          if (fallback) {
-            tileCanvas = fallback.canvas;
-            // Request re-render for next frame
-            this._requestRerender();
-          }
+          // Skip this chunk — the rAF re-render loop will fill it in
+          this._requestRerender();
         }
       }
 
