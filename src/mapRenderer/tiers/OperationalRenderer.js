@@ -106,8 +106,18 @@ export function renderOperationalChunk(chunk, cellPixels, cells, activeFeatures)
       const cell = cells[`${col},${row}`];
       const center = chunkHexCenter(col, row, layout);
 
-      // Terrain fill as hex
-      ctx.fillStyle = cell ? (TC[cell.terrain] || "#222") : "#111";
+      // Terrain fill as hex (with elevation brightness modulation)
+      let fillColor = cell ? (TC[cell.terrain] || "#222") : "#111";
+      if (cell && cell.elevation) {
+        const elevFactor = Math.min(0.15, cell.elevation / 3000);
+        // Parse hex and lighten
+        const h = fillColor.replace("#", "");
+        const cr = Math.min(255, parseInt(h.substring(0, 2), 16) + Math.round(elevFactor * 255));
+        const cg = Math.min(255, parseInt(h.substring(2, 4), 16) + Math.round(elevFactor * 255));
+        const cb = Math.min(255, parseInt(h.substring(4, 6), 16) + Math.round(elevFactor * 255));
+        fillColor = `rgb(${cr},${cg},${cb})`;
+      }
+      ctx.fillStyle = fillColor;
       ctx.beginPath();
       traceHexPath(ctx, center.x, center.y, size);
       ctx.fill();

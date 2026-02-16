@@ -19,8 +19,10 @@ import { drawNameLabels, drawCoordLabels } from "./overlays/LabelOverlay.js";
 import { drawHoverHighlight, drawSelectionHighlight } from "./overlays/SelectionOverlay.js";
 import { drawUnits } from "./overlays/UnitOverlay.js";
 
-const MAX_TILE_RENDERS_PER_FRAME = 32;
-const BG_COLOR = "#0A0F1A";
+// Tier-aware tile render budgets: Tier 0/1 are cheap (pixel ops / simple hex fills),
+// Tier 2/3 are expensive (terrain blending, micro-patterns)
+const TILE_BUDGET_BY_TIER = [32, 24, 8, 4];
+const BG_COLOR = "#1A2535";
 
 // Tier-specific chunk renderers
 const TIER_RENDERERS = {
@@ -83,6 +85,7 @@ export default class MapRenderer {
     // Get visible chunks for current tier
     const chunks = getVisibleChunks(viewport, canvasWidth, canvasHeight, cols, rows, tier);
     const chunkSize = getAdaptiveChunkSize(tier, cols, rows);
+    const maxTiles = TILE_BUDGET_BY_TIER[tier] || 8;
     let tilesRendered = 0;
 
     // Draw tile chunks
@@ -90,7 +93,7 @@ export default class MapRenderer {
       let tileCanvas = this.tileCache.get(tier, chunk.chunkCol, chunk.chunkRow);
 
       if (!tileCanvas) {
-        if (tilesRendered < MAX_TILE_RENDERS_PER_FRAME) {
+        if (tilesRendered < maxTiles) {
           // Render this tile
           const renderer = TIER_RENDERERS[tier];
           if (renderer) {
@@ -124,12 +127,12 @@ export default class MapRenderer {
     }
 
     // If we hit the tile render budget, request another frame to finish
-    if (tilesRendered >= MAX_TILE_RENDERS_PER_FRAME) {
+    if (tilesRendered >= maxTiles) {
       this._requestRerender();
     }
 
     // Linear features (roads, rails, waterways) — drawn as screen-space overlay
-    if (roadNetworks && tier >= 1) {
+    if (roadNetworks) {
       drawLinearFeatures(ctx, roadNetworks, viewport, canvasWidth, canvasHeight, tier, activeFeatures);
     }
 
@@ -250,15 +253,13 @@ export default class MapRenderer {
 
   // Internal: request re-render on next animation frame.
   // Re-renders directly from rAF using saved args to avoid React setState
-  // latency (which would add an extra frame of delay per tile batch).
-  // Falls back to onNeedsRerender callback if no saved args.
+  // latency (which adds an extra frame of delay per tile batch).
   _requestRerender() {
     if (this._pendingRender) return;
     this._pendingRender = true;
     requestAnimationFrame(() => {
       this._pendingRender = false;
       if (this._lastRenderArgs) {
-        // Direct re-render: bypass React for faster progressive tile loading
         this.render(...this._lastRenderArgs);
       } else if (this.onNeedsRerender) {
         this.onNeedsRerender();

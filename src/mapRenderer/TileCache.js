@@ -44,16 +44,16 @@ export default class TileCache {
       // contains the top-left cell of the requested chunk
       if (getChunkSizeFn) {
         const lowerChunkSize = getChunkSizeFn(t, cols, rows);
-        const lowerChunkCol = Math.floor(colStart / lowerChunkSize);
-        const lowerChunkRow = Math.floor(rowStart / lowerChunkSize);
-        const key = this._key(t, lowerChunkCol, lowerChunkRow);
+        const lowerCC = Math.floor(colStart / lowerChunkSize);
+        const lowerCR = Math.floor(rowStart / lowerChunkSize);
+        const key = this._key(t, lowerCC, lowerCR);
         const entry = this.cache.get(key);
         if (entry) {
           entry.lastUsed = performance.now();
           return { canvas: entry.canvas, tier: t };
         }
       } else {
-        // Legacy path: scan for any tile at this tier (better than nothing)
+        // Legacy path: scan for any tile at this tier
         for (const [key, entry] of this.cache) {
           if (!key.startsWith(`${t}:`)) continue;
           return { canvas: entry.canvas, tier: t };

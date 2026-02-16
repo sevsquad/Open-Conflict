@@ -73,15 +73,15 @@ export function renderStrategicChunk(chunk, cellPixels, cells, activeFeatures) {
 
       // Feature tinting: modify pixel color based on top feature
       let fr = rgb[0], fg = rgb[1], fb = rgb[2];
-      if (cell && cpx <= 2 && activeFeatures) {
+      if (cell && cpx <= 3 && activeFeatures) {
         const feat = topFeature(cell);
         if (feat && activeFeatures.has(feat)) {
           const frgb = FC_RGB[feat];
           if (frgb) {
-            // Subtle tint: blend 20% of feature color into terrain
-            fr = Math.round(fr * 0.8 + frgb[0] * 0.2);
-            fg = Math.round(fg * 0.8 + frgb[1] * 0.2);
-            fb = Math.round(fb * 0.8 + frgb[2] * 0.2);
+            // Stronger tint: blend 35% of feature color into terrain
+            fr = Math.round(fr * 0.65 + frgb[0] * 0.35);
+            fg = Math.round(fg * 0.65 + frgb[1] * 0.35);
+            fb = Math.round(fb * 0.65 + frgb[2] * 0.35);
           }
         }
       }
