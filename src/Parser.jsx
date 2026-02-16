@@ -241,17 +241,25 @@ function createHexProjection(bbox, cols, rows) {
       };
     },
 
-    // N×N sample points uniformly distributed within the cell's bounding box
+    // N×N sample points within the hex cell (filtered to hex interior)
     cellSamplePoints(col, row, N) {
       const { cellN, cellS, cellW, cellE } = this.cellBbox(col, row);
+      const { x: cx, y: cy } = offsetToPixel(col, row, 1);
       const dLat = cellN - cellS, dLon = cellE - cellW;
       const pts = [];
       for (let sy = 0; sy < N; sy++) {
         for (let sx = 0; sx < N; sx++) {
-          pts.push({
-            lat: cellN - (sy + 0.5) / N * dLat,
-            lon: cellW + (sx + 0.5) / N * dLon,
-          });
+          const lat = cellN - (sy + 0.5) / N * dLat;
+          const lon = cellW + (sx + 0.5) / N * dLon;
+          // Point-in-hex test: convert to hex pixel space and check against
+          // pointy-top hex boundary (size=1). The bbox corners extend beyond
+          // the hex; sampling those would pull terrain from neighboring cells.
+          const { hx, hy } = this.geoToHexPixel(lon, lat);
+          const dx = Math.abs(hx - cx);
+          const dy = Math.abs(hy - cy);
+          // Pointy-top hex (size=1): dx ≤ √3/2 and dy ≤ 1 - dx/√3
+          if (dy > 1.01 - dx / SQRT3) continue;
+          pts.push({ lat, lon });
         }
       }
       return pts;
@@ -1954,14 +1962,19 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       const { cellN, cellS, cellW: cellWest, cellE: cellEast } = proj.cellBbox(c, r);
       const tCandidates = qIdxRect(tIdx, bbox, cellS, cellN, cellWest, cellEast);
 
-      // Count OSM terrain type hits across sample points
+      // Count OSM terrain type hits across sample points (hex-filtered)
       const osmVotes = {};
       let osmTotal = 0;
       const cellDLat = cellN - cellS, cellDLon = cellEast - cellWest;
+      const { x: hcx, y: hcy } = offsetToPixel(c, r, 1);
       for (let sy = 0; sy < PTS; sy++) {
         for (let sx = 0; sx < PTS; sx++) {
           const tLat = cellN - (sy + 0.5) / PTS * cellDLat;
           const tLng = cellWest + (sx + 0.5) / PTS * cellDLon;
+          // Skip samples in bbox corners that fall outside the hex
+          const { hx: shx, hy: shy } = proj.geoToHexPixel(tLng, tLat);
+          const sdx = Math.abs(shx - hcx), sdy = Math.abs(shy - hcy);
+          if (sdy > 1.01 - sdx / SQRT3) continue;
           let best = null, bestPri = -1;
           for (const ai of tCandidates) {
             const a = feat.terrAreas[ai];
