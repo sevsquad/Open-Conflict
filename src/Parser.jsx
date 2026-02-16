@@ -1011,16 +1011,24 @@ async function fetchElevSmart(bbox, cols, rows, onS, onProg, log) {
   for (let r = 0; r < rows; r++) {
     const ri = findBracket(sampleR, r);
     const tr = sampleR[ri] === sampleR[ri + 1] ? 0 : (r - sampleR[ri]) / (sampleR[ri + 1] - sampleR[ri]);
+    const targetParity = r & 1; // hex row parity for offset adjustment
 
     for (let c = 0; c < cols; c++) {
       const ci = findBracket(sampleC, c);
-      const tc = sampleC[ci] === sampleC[ci + 1] ? 0 : (c - sampleC[ci]) / (sampleC[ci + 1] - sampleC[ci]);
 
-      // Bicubic separable: interpolate 4 rows along columns, then interpolate the 4 results along rows
+      // Bicubic separable: interpolate 4 rows along columns, then interpolate the 4 results along rows.
+      // Hex correction: in odd-r offset coords, odd rows are shifted right by half a cell width.
+      // When interpolating across rows with different parities, adjust the column parameter
+      // to account for this shift, preventing rectangular banding in elevation data.
       const rowVals = [];
       for (let dr = -1; dr <= 2; dr++) {
         const rIdx = ri + dr;
-        rowVals.push(catmullRom(tc, sGet(ci - 1, rIdx), sGet(ci, rIdx), sGet(ci + 1, rIdx), sGet(ci + 2, rIdx)));
+        const sRow = sampleR[Math.max(0, Math.min(rIdx, sampleR.length - 1))];
+        const hexShift = 0.5 * (targetParity - (sRow & 1));
+        const cAdj = c + hexShift;
+        const tcAdj = sampleC[ci] === sampleC[ci + 1] ? 0 :
+          Math.max(0, Math.min(1, (cAdj - sampleC[ci]) / (sampleC[ci + 1] - sampleC[ci])));
+        rowVals.push(catmullRom(tcAdj, sGet(ci - 1, rIdx), sGet(ci, rIdx), sGet(ci + 1, rIdx), sGet(ci + 2, rIdx)));
       }
       const val = catmullRom(tr, rowVals[0], rowVals[1], rowVals[2], rowVals[3]);
 
@@ -2118,6 +2126,10 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
         for (let sy = 0; sy < PTS; sy++) for (let sx = 0; sx < PTS; sx++) {
           const tLat = cellN - (sy + 0.5) / PTS * cellDLat;
           const tLng = cellWest + (sx + 0.5) / PTS * cellDLon;
+          // Skip samples in bbox corners that fall outside the hex
+          const { hx: ihx, hy: ihy } = proj.geoToHexPixel(tLng, tLat);
+          const idx2 = Math.abs(ihx - hcx), idy2 = Math.abs(ihy - hcy);
+          if (idy2 > 1.01 - idx2 / SQRT3) continue;
           for (const ai of iaCandidates) {
             const a = feat.infraAreas[ai];
             if (["military_base", "airfield", "port"].includes(a.type)) continue;
@@ -2160,6 +2172,10 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
         for (let sy = 0; sy < PTS; sy++) for (let sx = 0; sx < PTS; sx++) {
           const tLat = cellN - (sy + 0.5) / PTS * cellDLat;
           const tLng = cellWest + (sx + 0.5) / PTS * cellDLon;
+          // Skip samples in bbox corners that fall outside the hex
+          const { hx: fhx, hy: fhy } = proj.geoToHexPixel(tLng, tLat);
+          const fdx = Math.abs(fhx - hcx), fdy = Math.abs(fhy - hcy);
+          if (fdy > 1.01 - fdx / SQRT3) continue;
           for (const ai of iaCandidates) {
             const a = feat.infraAreas[ai];
             if (["military_base", "airfield", "port"].includes(a.type)) continue;
@@ -2386,22 +2402,29 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
   }
 
   // ── CHOKEPOINT — passable terrain narrows between deep impassable barriers ──
+  // Uses proper hex neighbor directions (3 opposite pairs) instead of cardinal offsets
   const isImpass = t => ["deep_water", "coastal_water", "lake", "mountain", "peak"].includes(t);
   const isPass = t => !isImpass(t) && !isW(t);
-  const deepImpass = (c, r, dc, dr) => {
-    // Check 2 cells deep in direction — both must be impassable (or off-map)
-    const k1 = `${c+dc},${r+dr}`, k2 = `${c+dc*2},${r+dr*2}`;
-    const t1 = tG[k1], t2 = tG[k2];
+  const hexDeepImpass = (c, r, dirIdx) => {
+    // Check 2 cells deep in a hex direction — both must be impassable (or off-map)
+    const [c1, r1] = getNeighbors(c, r)[dirIdx];
+    const k1 = `${c1},${r1}`;
+    const t1 = tG[k1];
+    if (t1 && !isImpass(t1)) return false;
+    const [c2, r2] = getNeighbors(c1, r1)[dirIdx];
+    const k2 = `${c2},${r2}`;
+    const t2 = tG[k2];
     return (!t1 || isImpass(t1)) && (!t2 || isImpass(t2));
   };
-  for (let r = 2; r < rows - 2; r++) for (let c = 2; c < cols - 2; c++) {
+  for (let r = 1; r < rows - 1; r++) for (let c = 1; c < cols - 1; c++) {
     const k = `${c},${r}`;
     if (!isPass(tG[k])) continue;
-    // N-S corridor: deep impassable E and W
-    const eDep = deepImpass(c, r, 1, 0) && deepImpass(c, r, -1, 0);
-    // E-W corridor: deep impassable N and S
-    const nsDep = deepImpass(c, r, 0, 1) && deepImpass(c, r, 0, -1);
-    if (eDep || nsDep) {
+    // 3 opposite hex direction pairs: E(0)↔W(3), NE(1)↔SW(4), NW(2)↔SE(5)
+    const isChoke =
+      (hexDeepImpass(c, r, 0) && hexDeepImpass(c, r, 3)) ||
+      (hexDeepImpass(c, r, 1) && hexDeepImpass(c, r, 4)) ||
+      (hexDeepImpass(c, r, 2) && hexDeepImpass(c, r, 5));
+    if (isChoke) {
       if (!fG[k]) fG[k] = [];
       if (!fG[k].includes("chokepoint")) fG[k].push("chokepoint");
     }

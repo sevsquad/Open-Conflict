@@ -86,16 +86,26 @@ export function renderStrategicChunk(chunk, cellPixels, cells, activeFeatures) {
         }
       }
 
-      // Position pixel block at hex center
+      // Fill hex-shaped pixel region (pointy-top) instead of square
       const center = chunkHexCenter(col, row, layout);
-      const startPx = Math.round(center.x - cpx / 2);
-      const startPy = Math.round(center.y - cpx / 2);
+      const cx = center.x, cy = center.y;
+      const hh = Math.ceil(size) + 1; // half-height scan range
 
-      // Fill the cell's pixel block
-      for (let py = startPy; py < startPy + cpx && py < height; py++) {
-        if (py < 0) continue;
-        for (let px = startPx; px < startPx + cpx && px < width; px++) {
-          if (px < 0) continue;
+      for (let dy = -hh; dy <= hh; dy++) {
+        const py = Math.round(cy) + dy;
+        if (py < 0 || py >= height) continue;
+        const ady = Math.abs(py - cy);
+        if (ady > size + 0.5) continue;
+        // Pointy-top hex half-width at this y offset:
+        //   middle band (|dy| ≤ s/2): hw = √3/2 * s
+        //   taper zone (|dy| > s/2):  hw = √3 * (s - |dy|)
+        const rowHW = ady <= size * 0.5
+          ? SQRT3 * 0.5 * size
+          : SQRT3 * (size - ady);
+        if (rowHW < 0) continue;
+        const x0 = Math.max(0, Math.ceil(cx - rowHW - 0.49));
+        const x1 = Math.min(width - 1, Math.floor(cx + rowHW + 0.49));
+        for (let px = x0; px <= x1; px++) {
           const idx = (py * width + px) * 4;
           data[idx] = fr;
           data[idx + 1] = fg;
@@ -156,15 +166,20 @@ export function renderStrategicFullMap(cols, rows, cells, maxDim = 150) {
       // Hex center position in minimap pixels
       const px = size * SQRT3 * (c + 0.5 * (r & 1));
       const py = size * 1.5 * r + size; // +size offset so row 0 isn't clipped
-      const x0 = Math.floor(px);
-      const y0 = Math.floor(py);
-      // At minimap scale, just fill 1-2 pixels per cell
-      const x1 = Math.min(Math.ceil(px + size * SQRT3), mw);
-      const y1 = Math.min(Math.ceil(py + size), mh);
-      for (let iy = y0; iy < y1 && iy < mh; iy++) {
-        if (iy < 0) continue;
-        for (let ix = x0; ix < x1 && ix < mw; ix++) {
-          if (ix < 0) continue;
+      // Fill hex-shaped region (pointy-top) instead of rectangular block
+      const mmHH = Math.ceil(size) + 1;
+      for (let dy = -mmHH; dy <= mmHH; dy++) {
+        const iy = Math.round(py) + dy;
+        if (iy < 0 || iy >= mh) continue;
+        const ady = Math.abs(iy - py);
+        if (ady > size + 0.5) continue;
+        const rowHW = ady <= size * 0.5
+          ? SQRT3 * 0.5 * size
+          : SQRT3 * (size - ady);
+        if (rowHW < 0) continue;
+        const ix0 = Math.max(0, Math.ceil(px - rowHW - 0.49));
+        const ix1 = Math.min(mw - 1, Math.floor(px + rowHW + 0.49));
+        for (let ix = ix0; ix <= ix1; ix++) {
           const idx = (iy * mw + ix) * 4;
           data[idx] = rgb[0]; data[idx + 1] = rgb[1]; data[idx + 2] = rgb[2]; data[idx + 3] = 255;
         }
