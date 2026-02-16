@@ -2,7 +2,8 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { fromUrl } from "geotiff";
 import { colors, typography, radius, shadows, animation, space } from "./theme.js";
 import { Button, Badge, Panel } from "./components/ui.jsx";
-import { getNeighbors, hexLine, offsetToAxial, axialToOffset, SQRT3_2 } from "./mapRenderer/HexMath.js";
+import { getNeighbors, hexLine, offsetToAxial, axialToOffset,
+         offsetToPixel, pixelToOffset, SQRT3, SQRT3_2 } from "./mapRenderer/HexMath.js";
 
 // ════════════════════════════════════════════════════════════════
 // TERRAIN — physical character (movement, cover, LOS)
@@ -134,6 +135,109 @@ function getBBox(lat, lng, wKm, hKm) {
   return { south: lat - dLat, north: lat + dLat, west: lng - dLng, east: lng + dLng };
 }
 
+// ════════════════════════════════════════════════════════════════
+// HEX GRID GEOGRAPHIC PROJECTION
+// Maps hex grid (col,row) ↔ geographic (lon,lat) using the same
+// pointy-top odd-r geometry as the viewer (HexMath.js, size = 1).
+// ════════════════════════════════════════════════════════════════
+
+function createHexProjection(bbox, cols, rows) {
+  const { south, north, west, east } = bbox;
+
+  // Hex pixel-space extents (size = 1, pointy-top, odd-r offset)
+  // Cell (0,0) center at pixel (0,0); leftmost hex edge at -SQRT3_2,
+  // rightmost (odd-row last col) at SQRT3*cols; top edge at -1,
+  // bottom edge at 1.5*(rows-1)+1.
+  const hxMin = -SQRT3_2;
+  const hyMin = -1.0;
+  const hxSpan = SQRT3 * (cols + 0.5);   // total width in hex units
+  const hySpan = 1.5 * rows + 0.5;       // total height in hex units
+
+  // Degrees per hex-pixel-space unit
+  const lonPerUnit = (east - west) / hxSpan;
+  const latPerUnit = (north - south) / hySpan;
+
+  return {
+    cols, rows, lonPerUnit, latPerUnit, hxMin, hyMin, hxSpan, hySpan,
+
+    // Geographic (lon, lat) → hex pixel coords (size = 1)
+    geoToHexPixel(lon, lat) {
+      return {
+        hx: (lon - west) / lonPerUnit + hxMin,
+        hy: (north - lat) / latPerUnit + hyMin,
+      };
+    },
+
+    // Hex pixel coords → geographic
+    hexPixelToGeo(hx, hy) {
+      return {
+        lon: west + (hx - hxMin) * lonPerUnit,
+        lat: north - (hy - hyMin) * latPerUnit,
+      };
+    },
+
+    // Geographic → offset cell [col, row] or null if out of bounds
+    geoToCell(lon, lat) {
+      const hx = (lon - west) / lonPerUnit + hxMin;
+      const hy = (north - lat) / latPerUnit + hyMin;
+      const { col, row } = pixelToOffset(hx, hy, 1);
+      if (col < 0 || col >= cols || row < 0 || row >= rows) return null;
+      return [col, row];
+    },
+
+    // Offset cell → geographic center {lon, lat}
+    cellCenter(col, row) {
+      const { x, y } = offsetToPixel(col, row, 1);
+      return {
+        lon: west + (x - hxMin) * lonPerUnit,
+        lat: north - (y - hyMin) * latPerUnit,
+      };
+    },
+
+    // Offset cell → geographic axis-aligned bounding box of the hex
+    // (pointy-top hex at size=1: ±SQRT3_2 wide, ±1 tall from center)
+    cellBbox(col, row) {
+      const { x: cx, y: cy } = offsetToPixel(col, row, 1);
+      return {
+        cellN: north - (cy - 1 - hyMin) * latPerUnit,
+        cellS: north - (cy + 1 - hyMin) * latPerUnit,
+        cellW: west + (cx - SQRT3_2 - hxMin) * lonPerUnit,
+        cellE: west + (cx + SQRT3_2 - hxMin) * lonPerUnit,
+      };
+    },
+
+    // N×N sample points uniformly distributed within the cell's bounding box
+    cellSamplePoints(col, row, N) {
+      const { cellN, cellS, cellW, cellE } = this.cellBbox(col, row);
+      const dLat = cellN - cellS, dLon = cellE - cellW;
+      const pts = [];
+      for (let sy = 0; sy < N; sy++) {
+        for (let sx = 0; sx < N; sx++) {
+          pts.push({
+            lat: cellN - (sy + 0.5) / N * dLat,
+            lon: cellW + (sx + 0.5) / N * dLon,
+          });
+        }
+      }
+      return pts;
+    },
+
+    // Geographic rect → conservative grid cell range {r0, r1, c0, c1}
+    geoRangeToGridRange(s, n, w, e) {
+      const nwHx = (w - west) / lonPerUnit + hxMin;
+      const nwHy = (north - n) / latPerUnit + hyMin;
+      const seHx = (e - west) / lonPerUnit + hxMin;
+      const seHy = (north - s) / latPerUnit + hyMin;
+      return {
+        r0: Math.max(0, Math.floor((nwHy - 1) / 1.5)),
+        r1: Math.min(rows - 1, Math.ceil((seHy + 1) / 1.5)),
+        c0: Math.max(0, Math.floor((nwHx - SQRT3_2) / SQRT3 - 0.5)),
+        c1: Math.min(cols - 1, Math.ceil((seHx + SQRT3_2) / SQRT3 + 0.5)),
+      };
+    },
+  };
+}
+
 function pip(lat, lng, ring) {
   let ins = false;
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
@@ -263,8 +367,7 @@ function getWCTilesForBbox(bbox) {
 }
 
 async function fetchWorldCover(bbox, cols, rows, onS, onProg, log, tier) {
-  const cH = (bbox.north - bbox.south) / rows;
-  const cW = (bbox.east - bbox.west) / cols;
+  const proj = createHexProjection(bbox, cols, rows);
   const tiles = getWCTilesForBbox(bbox);
   const wcGrid = {}, wcMix = {};
   const isSubTac = tier === "sub-tactical";
@@ -307,18 +410,18 @@ async function fetchWorldCover(bbox, cols, rows, onS, onProg, log, tier) {
       const px1 = Math.min(imgW, Math.ceil((isectE - tileBbox.west) / (tileBbox.east - tileBbox.west) * imgW));
       const py1 = Math.min(imgH, Math.ceil((tileBbox.north - isectS) / (tileBbox.north - tileBbox.south) * imgH));
 
-      // Grid cells in this intersection
-      const gridR0 = Math.max(0, Math.floor((bbox.north - isectN) / cH));
-      const gridR1 = Math.min(rows - 1, Math.ceil((bbox.north - isectS) / cH) - 1);
-      const gridC0 = Math.max(0, Math.floor((isectW - bbox.west) / cW));
-      const gridC1 = Math.min(cols - 1, Math.ceil((isectE - bbox.west) / cW) - 1);
+      // Grid cells overlapping this intersection (hex-aware range)
+      const { r0: gridR0, r1: gridR1, c0: gridC0, c1: gridC1 } = proj.geoRangeToGridRange(isectS, isectN, isectW, isectE);
+      const cellsInRange = (gridC1 - gridC0 + 1) * (gridR1 - gridR0 + 1);
 
-      const outW = (gridC1 - gridC0 + 1) * SAMPLES_PER_CELL;
-      const outH = (gridR1 - gridR0 + 1) * SAMPLES_PER_CELL;
+      if (cellsInRange <= 0) { tilesDone++; continue; }
 
-      if (outW <= 0 || outH <= 0) { tilesDone++; continue; }
+      // Read raster at reduced resolution — sized for SAMPLES_PER_CELL per cell
+      const targetPixels = cellsInRange * SAMPLES_PER_CELL * SAMPLES_PER_CELL;
+      const rasterAspect = (px1 - px0) / Math.max(1, py1 - py0);
+      const outH = Math.max(1, Math.min(py1 - py0, Math.round(Math.sqrt(targetPixels / rasterAspect))));
+      const outW = Math.max(1, Math.min(px1 - px0, Math.round(outH * rasterAspect)));
 
-      // Read raster at reduced resolution — geotiff.js reads from appropriate COG overview
       const rasters = await image.readRasters({
         window: [px0, py0, px1, py1],
         width: outW,
@@ -327,20 +430,23 @@ async function fetchWorldCover(bbox, cols, rows, onS, onProg, log, tier) {
       });
       const data = rasters[0];
 
-      // Majority vote per cell (or direct pixel for sub-tactical)
+      // Inverse scale: geographic → raster pixel
+      const isectLonSpan = isectE - isectW, isectLatSpan = isectN - isectS;
+
+      // Majority vote per cell using hex-projected sample points
       let cellsClassified = 0;
       for (let r = gridR0; r <= gridR1; r++) {
         for (let c = gridC0; c <= gridC1; c++) {
-          const localR = r - gridR0;
-          const localC = c - gridC0;
           const counts = {};
           let total = 0;
-          for (let sr = 0; sr < SAMPLES_PER_CELL; sr++) {
-            for (let sc = 0; sc < SAMPLES_PER_CELL; sc++) {
-              const pi = (localR * SAMPLES_PER_CELL + sr) * outW + (localC * SAMPLES_PER_CELL + sc);
-              const val = data[pi];
-              if (val !== undefined && val !== 0) { counts[val] = (counts[val] || 0) + 1; total++; }
-            }
+          const samplePts = proj.cellSamplePoints(c, r, SAMPLES_PER_CELL);
+          for (const pt of samplePts) {
+            if (pt.lon < isectW || pt.lon > isectE || pt.lat < isectS || pt.lat > isectN) continue;
+            const rx = Math.floor((pt.lon - isectW) / isectLonSpan * outW);
+            const ry = Math.floor((isectN - pt.lat) / isectLatSpan * outH);
+            if (rx < 0 || rx >= outW || ry < 0 || ry >= outH) continue;
+            const val = data[ry * outW + rx];
+            if (val !== undefined && val !== 0) { counts[val] = (counts[val] || 0) + 1; total++; }
           }
           let maxVal = 60, maxCnt = 0; // default: bare/sparse → open_ground
           for (const [v, cnt] of Object.entries(counts)) {
@@ -610,17 +716,13 @@ async function fetchOSM(bbox, onS, onProg, mapWKm, mapHKm, cellKm, elevations, c
   // Pre-compute which chunks are ocean (all elevation points ≤ 1m)
   const oceanChunks = new Set();
   if (elevations && elevations.length > 0) {
-    const cH = (bbox.north - bbox.south) / rows;
-    const cW = (bbox.east - bbox.west) / cols;
+    const osmProj = createHexProjection(bbox, cols, rows);
     for (let cy = 0; cy < chunksY; cy++) {
       for (let cx = 0; cx < chunksX; cx++) {
         const chunkS = bbox.south + cy * latStep, chunkN = bbox.south + (cy + 1) * latStep;
         const chunkW = bbox.west + cx * lngStep, chunkE = bbox.west + (cx + 1) * lngStep;
-        // Find grid cells within this chunk
-        const r0 = Math.max(0, Math.floor((bbox.north - chunkN) / cH));
-        const r1 = Math.min(rows - 1, Math.floor((bbox.north - chunkS) / cH));
-        const c0 = Math.max(0, Math.floor((chunkW - bbox.west) / cW));
-        const c1 = Math.min(cols - 1, Math.floor((chunkE - bbox.west) / cW));
+        // Find grid cells within this chunk (hex-aware range)
+        const { r0, r1, c0, c1 } = osmProj.geoRangeToGridRange(chunkS, chunkN, chunkW, chunkE);
         let allOcean = true, count = 0;
         for (let r = r0; r <= r1; r += Math.max(1, Math.floor((r1 - r0) / 4))) {
           for (let c = c0; c <= c1; c += Math.max(1, Math.floor((c1 - c0) / 4))) {
@@ -790,7 +892,7 @@ async function fetchElev(pts, onS, onProg, log) {
 // ════════════════════════════════════════════════════════════════
 
 async function fetchElevSmart(bbox, cols, rows, onS, onProg, log) {
-  const ch = (bbox.north - bbox.south) / rows, cw = (bbox.east - bbox.west) / cols;
+  const proj = createHexProjection(bbox, cols, rows);
   const totalCells = cols * rows;
   const SAMPLE_THRESHOLD = 5000;
 
@@ -805,7 +907,8 @@ async function fetchElevSmart(bbox, cols, rows, onS, onProg, log) {
   if (totalCells <= SAMPLE_THRESHOLD) {
     const pts = [];
     for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
-      pts.push({ lat: bbox.north - (r + 0.5) * ch, lng: bbox.west + (c + 0.5) * cw });
+      const { lon, lat } = proj.cellCenter(c, r);
+      pts.push({ lat, lng: lon });
     }
     return await fetchElev(pts, onS, onProg, log);
   }
@@ -823,7 +926,8 @@ async function fetchElevSmart(bbox, cols, rows, onS, onProg, log) {
 
   const pts = [];
   for (const r of sampleR) for (const c of sampleC) {
-    pts.push({ lat: bbox.north - (r + 0.5) * ch, lng: bbox.west + (c + 0.5) * cw });
+    const { lon, lat } = proj.cellCenter(c, r);
+    pts.push({ lat, lng: lon });
   }
   const sampledElev = await fetchElev(pts, onS, onProg, log);
 
@@ -1323,7 +1427,7 @@ LIMIT 2000`.trim();
 
 function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellKm, wikidataRivers) {
   const { south, north, west, east } = bbox;
-  const cW = (east - west) / cols, cH = (north - south) / rows;
+  const proj = createHexProjection(bbox, cols, rows);
   const elev = elevData.elevations;
   const wcGrid = wcData ? wcData.wcGrid : null;
   const wcMix = wcData ? wcData.wcMix : null;
@@ -1335,11 +1439,7 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
   // ── Hex grid projection helpers ─────────────────────────────────
   // Convert lat/lon to hex grid cell (offset coords, odd-r pointy-top)
   function geoToCell(lon, lat) {
-    const r = Math.floor((north - lat) / cH);
-    const stagger = (r & 1) ? cW * 0.5 : 0;
-    const c = Math.floor((lon - west - stagger) / cW);
-    if (c < 0 || c >= cols || r < 0 || r >= rows) return null;
-    return [c, r];
+    return proj.geoToCell(lon, lat);
   }
 
   // Rasterize an OSM way into hex grid cells using hex line interpolation.
@@ -1659,8 +1759,7 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const k = `${c},${r}`;
-      const hexStagger = (r & 1) ? cW * 0.5 : 0;
-      const lat = north - (r + 0.5) * cH, lng = west + (c + 0.5) * cW + hexStagger;
+      const { lon: lng, lat } = proj.cellCenter(c, r);
       const e = elev[r * cols + c] || 0;
       elevG[k] = Math.round(e);
 
@@ -1668,17 +1767,17 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       // At strategic/operational: test 5×5 grid of points per cell against OSM terrain polygons
       // This catches features that don't cover the cell center (coastal cities, small polygons)
       const PTS = (tier === "sub-tactical") ? 1 : 5; // 5×5 = 25 sample points
-      const cellS = north - (r + 1) * cH, cellN = north - r * cH;
-      const cellWest = west + c * cW + hexStagger, cellEast = west + (c + 1) * cW + hexStagger;
+      const { cellN, cellS, cellW: cellWest, cellE: cellEast } = proj.cellBbox(c, r);
       const tCandidates = qIdxRect(tIdx, bbox, cellS, cellN, cellWest, cellEast);
 
       // Count OSM terrain type hits across sample points
       const osmVotes = {};
       let osmTotal = 0;
+      const cellDLat = cellN - cellS, cellDLon = cellEast - cellWest;
       for (let sy = 0; sy < PTS; sy++) {
         for (let sx = 0; sx < PTS; sx++) {
-          const tLat = cellN - (sy + 0.5) / PTS * cH;
-          const tLng = cellWest + (sx + 0.5) / PTS * cW;
+          const tLat = cellN - (sy + 0.5) / PTS * cellDLat;
+          const tLng = cellWest + (sx + 0.5) / PTS * cellDLon;
           let best = null, bestPri = -1;
           for (const ai of tCandidates) {
             const a = feat.terrAreas[ai];
@@ -1771,7 +1870,7 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       // Hedgerow — dense hedge network characteristic of bocage terrain
       // Threshold: 10 km of hedge per km² — conservative to avoid false positives
       if (cellHedgeLen[k]) {
-        const cellArea = cellKm * cellKm; // km²
+        const cellArea = (SQRT3 / 2) * cellKm * cellKm; // hex area in km²
         const densityKmPerKm2 = cellHedgeLen[k] / cellArea; // already in km
         if (densityKmPerKm2 >= 10) at.push("hedgerow");
       }
@@ -1789,8 +1888,8 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
         let iap = -1;
         const iaCandidates = qIdxRect(iaIdx, bbox, cellS, cellN, cellWest, cellEast);
         for (let sy = 0; sy < PTS; sy++) for (let sx = 0; sx < PTS; sx++) {
-          const tLat = cellN - (sy + 0.5) / PTS * cH;
-          const tLng = cellWest + (sx + 0.5) / PTS * cW;
+          const tLat = cellN - (sy + 0.5) / PTS * cellDLat;
+          const tLng = cellWest + (sx + 0.5) / PTS * cellDLon;
           for (const ai of iaCandidates) {
             const a = feat.infraAreas[ai];
             if (["military_base", "airfield", "port"].includes(a.type)) continue;
@@ -1831,8 +1930,8 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       if (iaIdx) {
         const iaCandidates = qIdxRect(iaIdx, bbox, cellS, cellN, cellWest, cellEast);
         for (let sy = 0; sy < PTS; sy++) for (let sx = 0; sx < PTS; sx++) {
-          const tLat = cellN - (sy + 0.5) / PTS * cH;
-          const tLng = cellWest + (sx + 0.5) / PTS * cW;
+          const tLat = cellN - (sy + 0.5) / PTS * cellDLat;
+          const tLng = cellWest + (sx + 0.5) / PTS * cellDLon;
           for (const ai of iaCandidates) {
             const a = feat.infraAreas[ai];
             if (["military_base", "airfield", "port"].includes(a.type)) continue;
