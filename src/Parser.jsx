@@ -491,7 +491,7 @@ async function fetchWorldCover(bbox, cols, rows, onS, onProg, log, tier) {
           }
           const k = `${c},${r}`;
           wcGrid[k] = WC_CLASSES[maxVal] || "open_ground";
-          wcHasData.add(k); // mark cell as having actual WC raster data (vs backfilled ocean)
+          if (total > 0) wcHasData.add(k); // only mark as having data if we got valid raster samples
           // Store percentage mix of all land cover classes (needed for urban detection at all tiers)
           if (total > 0) {
             const mix = {};
@@ -2266,14 +2266,24 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
   // Desert terrain is never ocean — prevents flooding Dead Sea, Caspian Depression, etc.
   const doOcean = elevCoverage > 0.5;
   if (doOcean) {
+    // Ocean candidate: low elevation cells that aren't clearly land.
+    // Key exclusions to prevent flooding real land:
+    //  - desert terrain (Dead Sea, Caspian Depression)
+    //  - cells with real WC data showing specific land types (farmland, forest, urban, wetland)
+    //    These are genuinely land even if at sea level (e.g. Netherlands polders)
+    //  - only open_ground/lake terrain types can become ocean
+    const WC_DEFINITE_LAND = new Set(["farmland", "forest", "dense_forest", "light_veg", "wetland", "light_urban", "dense_urban", "ice"]);
     const isCand = k => {
       const t = tG[k], e = elevG[k] || 0;
-      if (t === "desert") return false; // desert at sea level is not ocean
-      const wcVal = wcGrid ? wcGrid[k] : null;
-      const wcIsWater = wcVal === "lake"; // WC class 80 maps to "lake"
-      // Cell has no actual WC raster data = likely ocean tile (404 → backfilled as open_ground)
-      const wcBackfilled = wcHasData ? !wcHasData.has(k) : (!wcGrid || !wcVal);
-      return (t === "open_ground" || t === "lake") && e <= 1 && (wcIsWater || wcBackfilled);
+      if (t === "desert") return false;
+      if (!(t === "open_ground" || t === "lake")) return false;
+      if (e > 1) return false;
+      // If WC has real data showing definite land cover, this is not ocean
+      if (wcHasData && wcHasData.has(k) && wcGrid) {
+        const wcVal = wcGrid[k];
+        if (WC_DEFINITE_LAND.has(wcVal)) return false;
+      }
+      return true;
     };
 
     // Seed BFS from map edges
