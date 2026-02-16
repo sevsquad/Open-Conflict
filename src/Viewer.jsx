@@ -9,6 +9,7 @@ import {
   createViewport, screenToCell, zoomAtPoint, panViewport,
   clampCellPixels, ZOOM_FACTOR, MIN_CELL_PIXELS, MAX_CELL_PIXELS, getTier,
 } from "./mapRenderer/ViewportState.js";
+import { cellPixelsToHexSize, SQRT3 } from "./mapRenderer/HexMath.js";
 
 // ═══════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -193,7 +194,7 @@ export default function Viewer({ onBack, initialData }) {
 
   useEffect(() => { draw(); }, [draw]);
 
-  // ── Zoom animation loop ──
+  // ── Zoom animation loop (hex-aware) ──
   const animateZoom = useCallback(() => {
     const a = animRef.current;
     if (!a.active) return;
@@ -202,16 +203,20 @@ export default function Viewer({ onBack, initialData }) {
     const eased = t * (2 - t); // ease-out quadratic
 
     const newCellPixels = clampCellPixels(a.from + (a.to - a.from) * eased);
-    const vp = viewportRef.current;
     const { w, h } = containerSizeRef.current;
 
-    // Keep the pivot point at the same screen position
-    const pivotScreenX = (a.pivotCol - vp.centerCol) * vp.cellPixels + w / 2;
-    const pivotScreenY = (a.pivotRow - vp.centerRow) * vp.cellPixels + h / 2;
+    // Keep the world pixel under the cursor at the same screen position
+    // a.wx, a.wy = world pixel coords of pivot; a.sx, a.sy = screen coords
+    const newSize = cellPixelsToHexSize(newCellPixels);
+    const newCpx = a.wx - (a.sx - w / 2);
+    const newCpy = a.wy - (a.sy - h / 2);
+    const newCenterRow = newCpy / (newSize * 1.5);
+    const parity = Math.round(newCenterRow) & 1;
+    const newCenterCol = newCpx / (newSize * SQRT3) - 0.5 * parity;
 
     viewportRef.current = {
-      centerCol: a.pivotCol - (pivotScreenX - w / 2) / newCellPixels,
-      centerRow: a.pivotRow - (pivotScreenY - h / 2) / newCellPixels,
+      centerCol: newCenterCol,
+      centerRow: newCenterRow,
       cellPixels: newCellPixels,
     };
 
@@ -240,16 +245,21 @@ export default function Viewer({ onBack, initialData }) {
     const viewport = viewportRef.current;
     const targetCellPixels = clampCellPixels(viewport.cellPixels * factor);
 
-    // Compute grid point under cursor for pivot
-    const pivotCol = viewport.centerCol + (mx - w / 2) / viewport.cellPixels;
-    const pivotRow = viewport.centerRow + (my - h / 2) / viewport.cellPixels;
+    // Compute world pixel under cursor for pivot (hex-aware)
+    const size = cellPixelsToHexSize(viewport.cellPixels);
+    const cpx = size * SQRT3 * (viewport.centerCol + 0.5 * (Math.round(viewport.centerRow) & 1));
+    const cpy = size * 1.5 * viewport.centerRow;
+    const wx = mx - w / 2 + cpx;
+    const wy = my - h / 2 + cpy;
 
     // Start or update zoom animation
     const a = animRef.current;
     a.from = viewport.cellPixels;
     a.to = targetCellPixels;
-    a.pivotCol = pivotCol;
-    a.pivotRow = pivotRow;
+    a.wx = wx;
+    a.wy = wy;
+    a.sx = mx;
+    a.sy = my;
     a.startTime = performance.now();
     a.duration = 120;
     if (!a.active) {

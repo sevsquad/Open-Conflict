@@ -1,9 +1,13 @@
 // ════════════════════════════════════════════════════════════════
 // TacticalRenderer — Tier 2 (12–32 px/cell): full detail
-// Port of current Viewer.jsx draw logic, adapted for tile-based rendering
+// Port of current Viewer.jsx draw logic, adapted for hex tile rendering
 // ════════════════════════════════════════════════════════════════
 
 import { TC, FC } from "../../terrainColors.js";
+import {
+  hexChunkLayout, chunkHexCenter, traceHexPath,
+  hexVertices, getNeighbors,
+} from "../HexMath.js";
 
 function getFeats(cell) {
   if (!cell) return [];
@@ -12,33 +16,39 @@ function getFeats(cell) {
   return [];
 }
 
-// Subtle terrain edge embossing — adds shadow/highlight at terrain boundaries
-function drawTerrainEdges(ctx, chunk, cellPixels, cells) {
-  if (cellPixels < 16) return; // only at 16px+
+// Subtle terrain edge embossing along hex edges at terrain boundaries
+function drawTerrainEdges(ctx, chunk, layout, cells) {
+  if (layout.size < 7) return; // only at ~16+ px cellPixels
+  const { size } = layout;
+  const chunkRows = chunk.rowEnd - chunk.rowStart;
+  const chunkCols = chunk.colEnd - chunk.colStart;
 
-  for (let localRow = 0; localRow < chunk.rowEnd - chunk.rowStart; localRow++) {
+  ctx.lineWidth = 1;
+  for (let localRow = 0; localRow < chunkRows; localRow++) {
     const row = chunk.rowStart + localRow;
-    for (let localCol = 0; localCol < chunk.colEnd - chunk.colStart; localCol++) {
+    for (let localCol = 0; localCol < chunkCols; localCol++) {
       const col = chunk.colStart + localCol;
       const cell = cells[`${col},${row}`];
       if (!cell) continue;
 
-      const x = localCol * cellPixels;
-      const y = localRow * cellPixels;
+      const center = chunkHexCenter(col, row, layout);
+      const verts = hexVertices(center.x, center.y, size);
+      const neighbors = getNeighbors(col, row);
 
-      // Check if neighbors have different terrain
-      const east = cells[`${col + 1},${row}`];
-      const south = cells[`${col},${row + 1}`];
+      // Check each of the 6 hex edges for terrain change
+      for (let i = 0; i < 6; i++) {
+        const [nc, nr] = neighbors[i];
+        const nCell = cells[`${nc},${nr}`];
+        if (!nCell || nCell.terrain === cell.terrain) continue;
 
-      if (east && east.terrain !== cell.terrain) {
-        // Vertical edge at right side
-        ctx.fillStyle = "rgba(0,0,0,0.12)";
-        ctx.fillRect(x + cellPixels - 1, y, 1, cellPixels);
-      }
-      if (south && south.terrain !== cell.terrain) {
-        // Horizontal edge at bottom
-        ctx.fillStyle = "rgba(0,0,0,0.12)";
-        ctx.fillRect(x, y + cellPixels - 1, cellPixels, 1);
+        // Draw a dark line along this hex edge
+        const v0 = verts[i];
+        const v1 = verts[(i + 1) % 6];
+        ctx.strokeStyle = "rgba(0,0,0,0.12)";
+        ctx.beginPath();
+        ctx.moveTo(v0.x, v0.y);
+        ctx.lineTo(v1.x, v1.y);
+        ctx.stroke();
       }
     }
   }
@@ -47,40 +57,36 @@ function drawTerrainEdges(ctx, chunk, cellPixels, cells) {
 // Render a chunk at tactical scale
 // Returns an OffscreenCanvas
 export function renderTacticalChunk(chunk, cellPixels, cells, activeFeatures) {
+  const layout = hexChunkLayout(chunk, cellPixels);
+  const { width, height, size } = layout;
   const chunkCols = chunk.colEnd - chunk.colStart;
   const chunkRows = chunk.rowEnd - chunk.rowStart;
-  const width = Math.ceil(chunkCols * cellPixels);
-  const height = Math.ceil(chunkRows * cellPixels);
 
   if (width <= 0 || height <= 0) return null;
 
   const canvas = new OffscreenCanvas(width, height);
   const ctx = canvas.getContext("2d");
 
-  // Terrain fill + grid borders
+  // Terrain fill as hex shapes
   for (let localRow = 0; localRow < chunkRows; localRow++) {
     const row = chunk.rowStart + localRow;
     for (let localCol = 0; localCol < chunkCols; localCol++) {
       const col = chunk.colStart + localCol;
       const cell = cells[`${col},${row}`];
-      const x = localCol * cellPixels;
-      const y = localRow * cellPixels;
+      const center = chunkHexCenter(col, row, layout);
 
       // Terrain base color
       ctx.fillStyle = cell ? (TC[cell.terrain] || "#222") : "#111";
-      ctx.fillRect(x, y, cellPixels, cellPixels);
-
-      // Cell border (subtle)
-      ctx.fillStyle = "rgba(0,0,0,0.08)";
-      ctx.fillRect(x + cellPixels - 0.5, y, 0.5, cellPixels); // right
-      ctx.fillRect(x, y + cellPixels - 0.5, cellPixels, 0.5); // bottom
+      ctx.beginPath();
+      traceHexPath(ctx, center.x, center.y, size);
+      ctx.fill();
     }
   }
 
   // Terrain edge embossing
-  drawTerrainEdges(ctx, chunk, cellPixels, cells);
+  drawTerrainEdges(ctx, chunk, layout, cells);
 
-  // Feature overlays (colored rounded rects)
+  // Feature overlays (colored hex insets)
   if (activeFeatures && activeFeatures.size > 0) {
     for (let localRow = 0; localRow < chunkRows; localRow++) {
       const row = chunk.rowStart + localRow;
@@ -91,58 +97,56 @@ export function renderTacticalChunk(chunk, cellPixels, cells, activeFeatures) {
         const feats = getFeats(cell).filter(f => activeFeatures.has(f));
         if (feats.length === 0) continue;
 
-        const x = localCol * cellPixels;
-        const y = localRow * cellPixels;
-        const margin = Math.max(2, cellPixels * 0.15);
-        const inner = cellPixels - margin * 2;
-        const cornerRadius = Math.max(1, Math.min(3, cellPixels * 0.1));
+        const center = chunkHexCenter(col, row, layout);
+        const insetSize = size * 0.7; // smaller hex inset
 
         if (feats.length === 1) {
           ctx.fillStyle = FC[feats[0]] || "#999";
           ctx.globalAlpha = 0.7;
           ctx.beginPath();
-          ctx.roundRect(x + margin, y + margin, inner, inner, cornerRadius);
+          traceHexPath(ctx, center.x, center.y, insetSize);
           ctx.fill();
           ctx.globalAlpha = 1;
         } else {
-          const segH = inner / feats.length;
+          // Multiple features: draw as stacked horizontal bands clipped to hex
+          const bandH = (size * 2) / feats.length;
+          const topY = center.y - size;
+          ctx.save();
+          ctx.beginPath();
+          traceHexPath(ctx, center.x, center.y, insetSize);
+          ctx.clip();
           feats.forEach((f, i) => {
             ctx.fillStyle = FC[f] || "#999";
             ctx.globalAlpha = 0.7;
-            ctx.fillRect(x + margin, y + margin + i * segH, inner, segH);
-            ctx.globalAlpha = 1;
+            ctx.fillRect(center.x - size, topY + i * bandH, size * 2, bandH);
           });
+          ctx.globalAlpha = 1;
+          ctx.restore();
         }
       }
     }
   }
 
-  // Grid lines
+  // Hex grid outlines
   ctx.strokeStyle = "rgba(0,0,0,0.18)";
   ctx.lineWidth = 0.5;
-  for (let localRow = 0; localRow <= chunkRows; localRow++) {
-    const y = localRow * cellPixels;
-    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
-  }
-  for (let localCol = 0; localCol <= chunkCols; localCol++) {
-    const x = localCol * cellPixels;
-    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
-  }
-
-  // Major grid (every 10 cells)
-  ctx.strokeStyle = "rgba(0,0,0,0.35)";
-  ctx.lineWidth = 1;
-  for (let localRow = 0; localRow <= chunkRows; localRow++) {
+  for (let localRow = 0; localRow < chunkRows; localRow++) {
     const row = chunk.rowStart + localRow;
-    if (row % 10 !== 0) continue;
-    const y = localRow * cellPixels;
-    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
-  }
-  for (let localCol = 0; localCol <= chunkCols; localCol++) {
-    const col = chunk.colStart + localCol;
-    if (col % 10 !== 0) continue;
-    const x = localCol * cellPixels;
-    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
+    for (let localCol = 0; localCol < chunkCols; localCol++) {
+      const col = chunk.colStart + localCol;
+      const isMajor = (col % 10 === 0 || row % 10 === 0);
+      if (isMajor) {
+        ctx.strokeStyle = "rgba(0,0,0,0.35)";
+        ctx.lineWidth = 1;
+      } else {
+        ctx.strokeStyle = "rgba(0,0,0,0.18)";
+        ctx.lineWidth = 0.5;
+      }
+      const center = chunkHexCenter(col, row, layout);
+      ctx.beginPath();
+      traceHexPath(ctx, center.x, center.y, size);
+      ctx.stroke();
+    }
   }
 
   return canvas;

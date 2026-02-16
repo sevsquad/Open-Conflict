@@ -1,6 +1,9 @@
 // ════════════════════════════════════════════════════════════════
-// RoadNetwork — BFS road preprocessing for line drawing
+// RoadNetwork — BFS road preprocessing for line drawing (hex grid)
 // ════════════════════════════════════════════════════════════════
+
+import { getNeighbors } from "./HexMath.js";
+import { gridToScreen } from "./ViewportState.js";
 
 const ROAD_TYPES = ["highway", "major_road", "road", "minor_road", "footpath", "trail"];
 const RAIL_TYPES = ["railway", "light_rail"];
@@ -30,7 +33,7 @@ function getFeats(cell) {
   return [];
 }
 
-// Build road/rail/waterway network segments by BFS
+// Build road/rail/waterway network segments by BFS (6-connected hex neighbors)
 export function buildLinearNetworks(cells, cols, rows) {
   const networks = {}; // type → array of segments [{from: {c,r}, to: {c,r}}]
 
@@ -52,10 +55,8 @@ export function buildLinearNetworks(cells, cols, rows) {
         visited.add(key);
         while (queue.length > 0) {
           const cur = queue.shift();
-          // Check 4-connected neighbors
-          for (const [dc, dr] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
-            const nc = cur.c + dc;
-            const nr = cur.r + dr;
+          // Check 6-connected hex neighbors
+          for (const [nc, nr] of getNeighbors(cur.c, cur.r)) {
             if (nc < 0 || nc >= cols || nr < 0 || nr >= rows) continue;
             const nk = `${nc},${nr}`;
             if (visited.has(nk)) continue;
@@ -101,12 +102,10 @@ export function drawLinearFeatures(ctx, networks, viewport, canvasWidth, canvasH
 
     ctx.beginPath();
     for (const seg of segments) {
-      const fx = (seg.from.c + 0.5 - viewport.centerCol) * viewport.cellPixels + canvasWidth / 2;
-      const fy = (seg.from.r + 0.5 - viewport.centerRow) * viewport.cellPixels + canvasHeight / 2;
-      const tx = (seg.to.c + 0.5 - viewport.centerCol) * viewport.cellPixels + canvasWidth / 2;
-      const ty = (seg.to.r + 0.5 - viewport.centerRow) * viewport.cellPixels + canvasHeight / 2;
-      ctx.moveTo(fx, fy);
-      ctx.lineTo(tx, ty);
+      const from = gridToScreen(seg.from.c, seg.from.r, viewport, canvasWidth, canvasHeight);
+      const to = gridToScreen(seg.to.c, seg.to.r, viewport, canvasWidth, canvasHeight);
+      ctx.moveTo(from.x, from.y);
+      ctx.lineTo(to.x, to.y);
     }
     ctx.stroke();
     ctx.globalAlpha = 1;

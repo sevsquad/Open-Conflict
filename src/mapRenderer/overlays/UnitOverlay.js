@@ -127,7 +127,7 @@ function drawUnitsStrategic(ctx, units, actorColorMap, viewport, canvasWidth, ca
     if (setupOpts?.draggedUnitId === unit.id) continue;
     const pos = parseUnitPosition(unit.position);
     if (!pos || pos.c < 0 || pos.c >= cols || pos.r < 0 || pos.r >= rows) continue;
-    const { x, y } = gridToScreen(pos.c + 0.5, pos.r + 0.5, viewport, canvasWidth, canvasHeight);
+    const { x, y } = gridToScreen(pos.c, pos.r, viewport, canvasWidth, canvasHeight);
     const color = actorColorMap[unit.actor] || "#FFF";
     const dotSize = Math.max(2, viewport.cellPixels * 0.6);
 
@@ -151,7 +151,7 @@ function drawUnitsOperational(ctx, units, actorColorMap, viewport, canvasWidth, 
     if (setupOpts?.draggedUnitId === unit.id) continue;
     const pos = parseUnitPosition(unit.position);
     if (!pos || pos.c < 0 || pos.c >= cols || pos.r < 0 || pos.r >= rows) continue;
-    const { x, y } = gridToScreen(pos.c + 0.5, pos.r + 0.5, viewport, canvasWidth, canvasHeight);
+    const { x, y } = gridToScreen(pos.c, pos.r, viewport, canvasWidth, canvasHeight);
     const color = actorColorMap[unit.actor] || "#FFF";
     const r = Math.max(2, viewport.cellPixels * 0.35);
 
@@ -180,7 +180,7 @@ function drawUnitsTactical(ctx, units, actorColorMap, viewport, canvasWidth, can
     if (setupOpts?.draggedUnitId === unit.id) continue;
     const pos = parseUnitPosition(unit.position);
     if (!pos || pos.c < 0 || pos.c >= cols || pos.r < 0 || pos.r >= rows) continue;
-    const { x, y } = gridToScreen(pos.c + 0.5, pos.r + 0.5, viewport, canvasWidth, canvasHeight);
+    const { x, y } = gridToScreen(pos.c, pos.r, viewport, canvasWidth, canvasHeight);
     const color = actorColorMap[unit.actor] || "#FFF";
     const r = cp * 0.35;
 
@@ -234,7 +234,7 @@ function drawUnitsCloseup(ctx, units, actorColorMap, viewport, canvasWidth, canv
     if (setupOpts?.draggedUnitId === unit.id) continue;
     const pos = parseUnitPosition(unit.position);
     if (!pos || pos.c < 0 || pos.c >= cols || pos.r < 0 || pos.r >= rows) continue;
-    const { x, y } = gridToScreen(pos.c + 0.5, pos.r + 0.5, viewport, canvasWidth, canvasHeight);
+    const { x, y } = gridToScreen(pos.c, pos.r, viewport, canvasWidth, canvasHeight);
     const color = actorColorMap[unit.actor] || "#FFF";
 
     const boxW = cp * 0.7;
@@ -288,7 +288,7 @@ function drawUnitsCloseup(ctx, units, actorColorMap, viewport, canvasWidth, canv
 function drawGhostUnit(ctx, ghostUnit, actorColorMap, viewport, canvasWidth, canvasHeight) {
   if (!ghostUnit || !ghostUnit.cell) return;
   const { c, r } = ghostUnit.cell;
-  const { x, y } = gridToScreen(c + 0.5, r + 0.5, viewport, canvasWidth, canvasHeight);
+  const { x, y } = gridToScreen(c, r, viewport, canvasWidth, canvasHeight);
   const color = actorColorMap[ghostUnit.actorId] || "#FFF";
   const tier = getTier(viewport.cellPixels);
   const cp = viewport.cellPixels;
