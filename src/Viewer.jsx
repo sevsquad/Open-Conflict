@@ -38,6 +38,8 @@ export default function Viewer({ onBack, initialData }) {
   const [fcts, setFcts] = useState({}); // feature counts
   const [redrawTick, setRedrawTick] = useState(0);
   const [savedFiles, setSavedFiles] = useState([]);
+  const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  const [filterText, setFilterText] = useState("");
 
   const canvasRef = useRef(null);
   const mmRef = useRef(null);
@@ -174,7 +176,7 @@ export default function Viewer({ onBack, initialData }) {
   const drawMinimap = useCallback(() => {
     const mc = mmRef.current;
     if (!mc || !D) return;
-    const maxDim = 150;
+    const maxDim = 220;
     const ratio = D.rows / D.cols;
     const mw = ratio > 1 ? Math.round(maxDim / ratio) : maxDim;
     const mh = ratio > 1 ? maxDim : Math.round(maxDim * ratio);
@@ -334,6 +336,69 @@ export default function Viewer({ onBack, initialData }) {
     vp.addEventListener("wheel", handler, { passive: false });
     return () => vp.removeEventListener("wheel", handler);
   }, [handleWheel]);
+
+  // ── Zoom button helpers ──
+  const zoomIn = useCallback(() => {
+    if (!D) return;
+    const { w, h } = containerSizeRef.current;
+    const newVp = zoomAtPoint(viewportRef.current, w / 2, h / 2, w, h, ZOOM_FACTOR);
+    viewportRef.current = newVp;
+    setRedrawTick(t => t + 1);
+  }, [D]);
+
+  const zoomOut = useCallback(() => {
+    if (!D) return;
+    const { w, h } = containerSizeRef.current;
+    const newVp = zoomAtPoint(viewportRef.current, w / 2, h / 2, w, h, 1 / ZOOM_FACTOR);
+    viewportRef.current = newVp;
+    setRedrawTick(t => t + 1);
+  }, [D]);
+
+  const fitMap = useCallback(() => {
+    if (!D) return;
+    const { w, h } = containerSizeRef.current;
+    viewportRef.current = createViewport(D.cols, D.rows, w, h);
+    rendererRef.current.invalidateAll();
+    setRedrawTick(t => t + 1);
+  }, [D]);
+
+  // ── Keyboard navigation ──
+  useEffect(() => {
+    if (!D) return;
+    const handler = (e) => {
+      // Don't handle when typing in input fields
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+      const PAN_AMOUNT = 50;
+      switch (e.key) {
+        case "+": case "=":
+          e.preventDefault(); zoomIn(); break;
+        case "-": case "_":
+          e.preventDefault(); zoomOut(); break;
+        case "f": case "F":
+          e.preventDefault(); fitMap(); break;
+        case "Escape":
+          setSel(null); break;
+        case "ArrowUp":
+          e.preventDefault();
+          viewportRef.current = panViewport(viewportRef.current, 0, PAN_AMOUNT);
+          setRedrawTick(t => t + 1); break;
+        case "ArrowDown":
+          e.preventDefault();
+          viewportRef.current = panViewport(viewportRef.current, 0, -PAN_AMOUNT);
+          setRedrawTick(t => t + 1); break;
+        case "ArrowLeft":
+          e.preventDefault();
+          viewportRef.current = panViewport(viewportRef.current, PAN_AMOUNT, 0);
+          setRedrawTick(t => t + 1); break;
+        case "ArrowRight":
+          e.preventDefault();
+          viewportRef.current = panViewport(viewportRef.current, -PAN_AMOUNT, 0);
+          setRedrawTick(t => t + 1); break;
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [D, zoomIn, zoomOut, fitMap]);
 
   // ── Filter helpers ──
   const toggleFeat = useCallback((f) => { setAf(prev => { const n = new Set(prev); if (n.has(f)) n.delete(f); else n.add(f); return n; }); }, []);
@@ -571,114 +636,180 @@ export default function Viewer({ onBack, initialData }) {
         </div>
       </div>
 
-      {/* Info Panel */}
-      <Panel style={{
-        position: "absolute", top: 48, left: space[3], width: 230,
-        maxHeight: "50vh", overflowY: "auto", padding: space[2] + 2,
-        animation: "fadeIn 0.3s ease-out",
-      }}>
-        <div style={{ fontSize: typography.body.xs, fontWeight: typography.weight.bold, color: colors.text.muted, marginBottom: space[1], letterSpacing: typography.letterSpacing.wider, textTransform: "uppercase" }}>
-          Cell Info
-        </div>
-        {cellData ? (() => {
-          const [c, r] = (infoCell).split(",").map(Number);
-          const feats = getFeats(cellData);
-          const fn = cellData.feature_names || {};
-          const tc = TC[cellData.terrain] || "#333";
-          const terrainName = fn[cellData.terrain] || fn.settlement || "";
-          return (<>
-            <div style={{ fontWeight: typography.weight.bold, fontSize: typography.heading.md, marginBottom: 2 }}>{cellCoord(c, r)}</div>
-            <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: space[2] }}>
-              {cellData.elevation !== undefined ? cellData.elevation + "m" : ""} · [{c},{r}]
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: space[1], marginBottom: space[2] }}>
-              <div style={{ width: 12, height: 12, borderRadius: radius.sm, background: tc, border: "1px solid rgba(255,255,255,0.1)", flexShrink: 0 }} />
-              <span style={{ fontWeight: typography.weight.semibold, fontSize: typography.body.sm }}>{TL[cellData.terrain] || cellData.terrain}</span>
-              {terrainName && <span style={{ color: colors.accent.amber, fontWeight: typography.weight.semibold, fontSize: typography.body.sm }}> — {terrainName}</span>}
-            </div>
-            {feats.length > 0 && (
-              <div>
-                <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: space[1] }}>Features ({feats.length})</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
-                  {feats.map(f => {
-                    const col = FC[f] || "#666";
-                    const nm = fn[f];
-                    return (
-                      <span key={f} style={{
-                        fontSize: typography.body.xs, padding: "2px 5px", borderRadius: radius.sm,
-                        background: `${col}18`, color: col, border: `1px solid ${col}40`,
-                        lineHeight: 1, display: "inline-flex", alignItems: "center",
-                      }}>
-                        {FL[f] || f}{nm ? ` (${nm})` : ""}
-                      </span>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </>);
-        })() : (
-          <div style={{ color: colors.text.muted, fontSize: typography.body.sm, display: "flex", alignItems: "center", gap: space[1], padding: `${space[2]}px 0` }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.5 }}>
-              <circle cx="12" cy="12" r="10" />
-              <line x1="22" y1="2" x2="2" y2="22" />
-            </svg>
-            Hover over a cell
-          </div>
-        )}
-      </Panel>
-
-      {/* Filter Panel */}
-      <Panel style={{
-        position: "absolute", top: 48, right: space[3], width: 230,
-        maxHeight: "80vh", overflowY: "auto", padding: space[2] + 2,
-        animation: "fadeIn 0.3s ease-out 0.1s both",
-      }}>
-        <div style={{ fontSize: typography.body.xs, fontWeight: typography.weight.bold, color: colors.text.muted, marginBottom: space[1], letterSpacing: typography.letterSpacing.wider, textTransform: "uppercase" }}>
-          Features
-        </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginBottom: space[2] }}>
-          <FilterChip label="All On" onClick={() => toggleAll(true)} />
-          <FilterChip label="All Off" onClick={() => toggleAll(false)} />
-          {Object.keys(FG).map(g => <FilterChip key={g} label={g} onClick={() => toggleGroup(g)} />)}
-        </div>
-        {Object.entries(FG).map(([group, items]) => {
-          const present = items.filter(f => fcts[f]);
-          if (present.length === 0) return null;
-          return (
-            <div key={group} style={{ marginBottom: space[2] }}>
-              <div onClick={() => toggleGroup(group)} style={{
-                fontSize: typography.body.xs, fontWeight: typography.weight.bold, color: colors.text.muted,
-                cursor: "pointer", marginBottom: space[1], letterSpacing: typography.letterSpacing.wide,
-                display: "flex", alignItems: "center", gap: space[1],
-              }}>
-                <div style={{ width: 2, height: 10, borderRadius: 1, background: colors.accent.blue, flexShrink: 0 }} />
-                {group}
-              </div>
-              {present.map(f => {
-                const on = af.has(f);
-                const col = FC[f] || "#666";
-                return (
-                  <div key={f} onClick={() => toggleFeat(f)} style={{
-                    display: "flex", alignItems: "center", gap: space[1],
-                    padding: "2px 0", cursor: "pointer",
-                    opacity: on ? 1 : 0.25,
-                    transition: `opacity ${animation.fast}`,
-                  }}>
+      {/* Info Panel — auto-shows when a cell is hovered or selected */}
+      {cellData && (
+        <Panel style={{
+          position: "absolute", top: 48, left: space[3], width: 230,
+          maxHeight: "50vh", overflowY: "auto", padding: space[2] + 2,
+          animation: "fadeIn 0.2s ease-out",
+        }}>
+          {(() => {
+            // Show selected cell info pinned at top, hover info below
+            const selData = sel ? D.cells[sel] : null;
+            const hovData = hov && hov !== sel ? D.cells[hov] : null;
+            const sections = [];
+            if (selData) sections.push({ key: sel, data: selData, label: "Selected" });
+            if (hovData) sections.push({ key: hov, data: hovData, label: "Hover" });
+            if (sections.length === 0 && cellData) {
+              sections.push({ key: infoCell, data: cellData, label: null });
+            }
+            return sections.map((sec, idx) => {
+              const [c, r] = sec.key.split(",").map(Number);
+              const feats = getFeats(sec.data);
+              const fn = sec.data.feature_names || {};
+              const tc = TC[sec.data.terrain] || "#333";
+              const terrainName = fn[sec.data.terrain] || fn.settlement || "";
+              return (
+                <div key={sec.key + idx} style={{ marginBottom: idx < sections.length - 1 ? space[2] : 0 }}>
+                  {sec.label && (
                     <div style={{
-                      width: 10, height: 10, borderRadius: radius.sm,
-                      background: col, border: "1px solid rgba(255,255,255,0.1)", flexShrink: 0,
-                      boxShadow: on ? `0 0 6px ${col}40` : "none",
-                    }} />
-                    <span style={{ flex: 1, fontSize: typography.body.xs }}>{FL[f] || f}</span>
-                    <span style={{ fontSize: typography.body.xs, color: colors.text.muted, fontFamily: typography.monoFamily }}>{fcts[f]}</span>
+                      fontSize: typography.body.xs, fontWeight: typography.weight.bold, color: sec.label === "Selected" ? colors.accent.amber : colors.text.muted,
+                      marginBottom: space[1], letterSpacing: typography.letterSpacing.wider, textTransform: "uppercase",
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                    }}>
+                      {sec.label}
+                      {sec.label === "Selected" && (
+                        <span onClick={(e) => { e.stopPropagation(); setSel(null); }} style={{ cursor: "pointer", opacity: 0.6, fontSize: 10 }}>✕</span>
+                      )}
+                    </div>
+                  )}
+                  <div style={{ fontWeight: typography.weight.bold, fontSize: typography.heading.md, marginBottom: 2 }}>{cellCoord(c, r)}</div>
+                  <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: space[2] }}>
+                    {sec.data.elevation !== undefined ? sec.data.elevation + "m" : ""} · [{c},{r}]
                   </div>
-                );
-              })}
-            </div>
-          );
-        })}
-      </Panel>
+                  <div style={{ display: "flex", alignItems: "center", gap: space[1], marginBottom: space[2] }}>
+                    <div style={{ width: 12, height: 12, borderRadius: radius.sm, background: tc, border: "1px solid rgba(255,255,255,0.1)", flexShrink: 0 }} />
+                    <span style={{ fontWeight: typography.weight.semibold, fontSize: typography.body.sm }}>{TL[sec.data.terrain] || sec.data.terrain}</span>
+                    {terrainName && <span style={{ color: colors.accent.amber, fontWeight: typography.weight.semibold, fontSize: typography.body.sm }}> — {terrainName}</span>}
+                  </div>
+                  {feats.length > 0 && (
+                    <div>
+                      <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: space[1] }}>Features ({feats.length})</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                        {feats.map(f => {
+                          const col = FC[f] || "#666";
+                          const nm = fn[f];
+                          return (
+                            <span key={f} style={{
+                              fontSize: typography.body.xs, padding: "2px 5px", borderRadius: radius.sm,
+                              background: `${col}18`, color: col, border: `1px solid ${col}40`,
+                              lineHeight: 1, display: "inline-flex", alignItems: "center",
+                            }}>
+                              {FL[f] || f}{nm ? ` (${nm})` : ""}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  {idx < sections.length - 1 && <div style={{ borderTop: `1px solid ${colors.border.subtle}`, marginTop: space[2] }} />}
+                </div>
+              );
+            });
+          })()}
+        </Panel>
+      )}
+
+      {/* Filter toggle button (always visible) */}
+      {!rightPanelOpen && (
+        <div onClick={() => setRightPanelOpen(true)} style={{
+          position: "absolute", top: 48 + space[1], right: space[3],
+          width: 32, height: 32, borderRadius: radius.md,
+          background: colors.bg.overlay, backdropFilter: "blur(8px)",
+          border: `1px solid ${colors.border.subtle}`,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          cursor: "pointer", transition: `all ${animation.fast}`,
+        }}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = colors.accent.blue + "60"; }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = colors.border.subtle; }}
+          title="Feature Filters"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={colors.text.secondary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+          </svg>
+        </div>
+      )}
+
+      {/* Filter Panel — overlays map when open */}
+      {rightPanelOpen && (
+        <Panel style={{
+          position: "absolute", top: 48, right: space[3], width: 230,
+          maxHeight: "80vh", overflowY: "auto", padding: space[2] + 2,
+          zIndex: 10,
+          animation: "fadeIn 0.2s ease-out",
+        }}>
+          <div style={{
+            fontSize: typography.body.xs, fontWeight: typography.weight.bold, color: colors.text.muted,
+            marginBottom: space[1], letterSpacing: typography.letterSpacing.wider, textTransform: "uppercase",
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+          }}>
+            Features
+            <span onClick={() => setRightPanelOpen(false)} style={{ cursor: "pointer", opacity: 0.6, fontSize: 12, lineHeight: 1 }}>✕</span>
+          </div>
+          {/* Quick filter input */}
+          <input
+            type="text"
+            value={filterText}
+            onChange={e => setFilterText(e.target.value)}
+            placeholder="Filter..."
+            style={{
+              width: "100%", boxSizing: "border-box",
+              padding: "3px 6px", marginBottom: space[2],
+              fontSize: typography.body.xs, fontFamily: typography.fontFamily,
+              background: colors.bg.surface, color: colors.text.primary,
+              border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm,
+              outline: "none",
+            }}
+            onFocus={e => { e.currentTarget.style.borderColor = colors.accent.blue + "80"; }}
+            onBlur={e => { e.currentTarget.style.borderColor = colors.border.subtle; }}
+          />
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginBottom: space[2] }}>
+            <FilterChip label="All On" onClick={() => toggleAll(true)} />
+            <FilterChip label="All Off" onClick={() => toggleAll(false)} />
+            {Object.keys(FG).map(g => <FilterChip key={g} label={g} onClick={() => toggleGroup(g)} />)}
+          </div>
+          {Object.entries(FG).map(([group, items]) => {
+            const present = items.filter(f => fcts[f]);
+            if (present.length === 0) return null;
+            const filteredPresent = filterText
+              ? present.filter(f => (FL[f] || f).toLowerCase().includes(filterText.toLowerCase()))
+              : present;
+            if (filteredPresent.length === 0) return null;
+            return (
+              <div key={group} style={{ marginBottom: space[2] }}>
+                <div onClick={() => toggleGroup(group)} style={{
+                  fontSize: typography.body.xs, fontWeight: typography.weight.bold, color: colors.text.muted,
+                  cursor: "pointer", marginBottom: space[1], letterSpacing: typography.letterSpacing.wide,
+                  display: "flex", alignItems: "center", gap: space[1],
+                }}>
+                  <div style={{ width: 2, height: 10, borderRadius: 1, background: colors.accent.blue, flexShrink: 0 }} />
+                  {group}
+                </div>
+                {filteredPresent.map(f => {
+                  const on = af.has(f);
+                  const col = FC[f] || "#666";
+                  return (
+                    <div key={f} onClick={() => toggleFeat(f)} style={{
+                      display: "flex", alignItems: "center", gap: space[1],
+                      padding: "2px 0", cursor: "pointer",
+                      opacity: on ? 1 : 0.25,
+                      transition: `opacity ${animation.fast}`,
+                    }}>
+                      <div style={{
+                        width: 10, height: 10, borderRadius: radius.sm,
+                        background: col, border: "1px solid rgba(255,255,255,0.1)", flexShrink: 0,
+                        boxShadow: on ? `0 0 6px ${col}40` : "none",
+                      }} />
+                      <span style={{ flex: 1, fontSize: typography.body.xs }}>{FL[f] || f}</span>
+                      <span style={{ fontSize: typography.body.xs, color: colors.text.muted, fontFamily: typography.monoFamily }}>{fcts[f]}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </Panel>
+      )}
 
       {/* Minimap */}
       <Panel style={{ position: "absolute", bottom: space[3], right: space[3], padding: space[1], cursor: "pointer" }}>
@@ -688,20 +819,50 @@ export default function Viewer({ onBack, initialData }) {
         <canvas ref={mmRef} style={{ display: "block" }} onClick={handleMinimapClick} />
       </Panel>
 
-      {/* Zoom indicator + tier */}
+      {/* Zoom controls */}
       <div style={{
         position: "absolute", bottom: space[3], left: space[3],
-        fontSize: typography.body.xs, color: colors.text.muted,
-        fontFamily: typography.monoFamily,
-        background: colors.bg.overlay,
-        padding: "2px 6px", borderRadius: radius.sm,
-        backdropFilter: "blur(8px)",
-        display: "flex", alignItems: "center", gap: space[1],
+        display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
       }}>
-        <span>{zoomPercent}%</span>
-        <span style={{ color: colors.accent.blue, fontSize: 9 }}>{TIER_NAMES[currentTier]}</span>
-        <span style={{ color: colors.text.muted, fontSize: 9 }}>{viewportRef.current.cellPixels.toFixed(1)}px/cell</span>
+        <div style={{
+          display: "flex", gap: 2, marginBottom: 2,
+        }}>
+          <ZoomBtn label="+" onClick={zoomIn} title="Zoom in (+)" />
+          <ZoomBtn label="-" onClick={zoomOut} title="Zoom out (-)" />
+          <ZoomBtn label="Fit" onClick={fitMap} title="Fit to map (F)" wide />
+        </div>
+        <div style={{
+          fontSize: typography.body.xs, color: colors.text.muted,
+          fontFamily: typography.monoFamily,
+          background: colors.bg.overlay, backdropFilter: "blur(8px)",
+          padding: "2px 6px", borderRadius: radius.sm,
+          display: "flex", alignItems: "center", gap: space[1],
+        }}>
+          <span>{zoomPercent}%</span>
+          <span style={{ color: colors.accent.blue, fontSize: 9 }}>{TIER_NAMES[currentTier]}</span>
+          <span style={{ color: colors.text.muted, fontSize: 9 }}>{viewportRef.current.cellPixels.toFixed(1)}px/cell</span>
+        </div>
       </div>
+    </div>
+  );
+}
+
+// ── Zoom Button ──
+function ZoomBtn({ label, onClick, title, wide }) {
+  return (
+    <div onClick={onClick} title={title} style={{
+      width: wide ? 40 : 28, height: 28, borderRadius: radius.md,
+      background: colors.bg.overlay, backdropFilter: "blur(8px)",
+      border: `1px solid ${colors.border.subtle}`,
+      display: "flex", alignItems: "center", justifyContent: "center",
+      cursor: "pointer", fontSize: wide ? typography.body.xs : typography.body.md,
+      fontWeight: typography.weight.bold, color: colors.text.secondary,
+      transition: `all ${animation.fast}`, userSelect: "none",
+    }}
+      onMouseEnter={e => { e.currentTarget.style.borderColor = colors.accent.blue + "60"; e.currentTarget.style.color = colors.text.primary; }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = colors.border.subtle; e.currentTarget.style.color = colors.text.secondary; }}
+    >
+      {label}
     </div>
   );
 }

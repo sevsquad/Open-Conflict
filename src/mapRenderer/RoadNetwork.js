@@ -14,13 +14,13 @@ const LINEAR_TYPES = [...ROAD_TYPES, ...RAIL_TYPES, ...WATER_TYPES, ...PIPE_TYPE
 
 // Drawing config per type and tier
 export const LINE_CONFIG = {
-  highway:      { color: "#E6A817", width: [0, 1.5, 3, 4],   minTier: 0, dash: null },
-  major_road:   { color: "#D4D4D4", width: [0, 1, 2, 3],     minTier: 0, dash: null },
+  highway:      { color: "#E6A817", width: [0.75, 2, 3, 4],   minTier: 0, dash: null },
+  major_road:   { color: "#D4D4D4", width: [0.5, 1.5, 2, 3],  minTier: 0, dash: null },
   road:         { color: "#B0B0B0", width: [0, 0.5, 1.5, 2],  minTier: 1, dash: null },
   minor_road:   { color: "#9A9A8A", width: [0, 0, 1, 1],      minTier: 2, dash: [4, 3] },
   footpath:     { color: "#6A6A5A", width: [0, 0, 0, 0.5],    minTier: 3, dash: [2, 2] },
   trail:        { color: "#8A8A6A", width: [0, 0, 0, 0.5],    minTier: 3, dash: [2, 2] },
-  railway:      { color: "#E05050", width: [0, 1, 1.5, 2],    minTier: 1, dash: [6, 3] },
+  railway:      { color: "#E05050", width: [0.5, 1.5, 1.5, 2], minTier: 0, dash: [6, 3] },
   light_rail:   { color: "#D07070", width: [0, 0.5, 1, 1.5],  minTier: 1, dash: [4, 3] },
   navigable_waterway: { color: "#3AC4E0", width: [0, 0.5, 1.5, 2], minTier: 1, dash: null },
   pipeline:  { color: "#A070D0", width: [0, 0.5, 1, 1.5], minTier: 1, dash: [4, 2] },

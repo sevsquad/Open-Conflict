@@ -35,18 +35,29 @@ export default class TileCache {
   }
 
   // Find a fallback tile from a lower tier that covers the same area
-  getFallback(tier, chunkCol, chunkRow, chunkSize, cols, rows) {
+  getFallback(tier, chunkCol, chunkRow, chunkSize, cols, rows, getChunkSizeFn) {
+    const colStart = chunkCol * chunkSize;
+    const rowStart = chunkRow * chunkSize;
     // Try each lower tier
     for (let t = tier - 1; t >= 0; t--) {
-      // Lower-tier chunks are larger, so compute which chunk at tier t covers this area
-      // This is approximate — just look for any cached tile at the lower tier
-      // whose area overlaps the requested chunk
-      const colStart = chunkCol * chunkSize;
-      const rowStart = chunkRow * chunkSize;
-      for (const [key, entry] of this.cache) {
-        if (!key.startsWith(`${t}:`)) continue;
-        // Found a lower-tier tile — return it as a rough fallback
-        return { canvas: entry.canvas, tier: t };
+      // Lower-tier chunks are larger, so compute which lower-tier chunk
+      // contains the top-left cell of the requested chunk
+      if (getChunkSizeFn) {
+        const lowerChunkSize = getChunkSizeFn(t, cols, rows);
+        const lowerCC = Math.floor(colStart / lowerChunkSize);
+        const lowerCR = Math.floor(rowStart / lowerChunkSize);
+        const key = this._key(t, lowerCC, lowerCR);
+        const entry = this.cache.get(key);
+        if (entry) {
+          entry.lastUsed = performance.now();
+          return { canvas: entry.canvas, tier: t };
+        }
+      } else {
+        // Legacy path: scan for any tile at this tier
+        for (const [key, entry] of this.cache) {
+          if (!key.startsWith(`${t}:`)) continue;
+          return { canvas: entry.canvas, tier: t };
+        }
       }
     }
     return null;

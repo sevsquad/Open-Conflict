@@ -19,8 +19,10 @@ import { drawNameLabels, drawCoordLabels } from "./overlays/LabelOverlay.js";
 import { drawHoverHighlight, drawSelectionHighlight } from "./overlays/SelectionOverlay.js";
 import { drawUnits } from "./overlays/UnitOverlay.js";
 
-const MAX_TILE_RENDERS_PER_FRAME = 6;
-const BG_COLOR = "#0A0F1A";
+// Tier-aware tile render budgets: Tier 0/1 are cheap (pixel ops / simple hex fills),
+// Tier 2/3 are expensive (terrain blending, micro-patterns)
+const TILE_BUDGET_BY_TIER = [32, 24, 8, 4];
+const BG_COLOR = "#1A2535";
 
 // Tier-specific chunk renderers
 const TIER_RENDERERS = {
@@ -37,6 +39,7 @@ export default class MapRenderer {
     this.lastTier = -1;
     this._pendingRender = false;
     this._isAnimating = false;
+    this._lastRenderArgs = null; // saved for direct rAF re-render
   }
 
   // Invalidate all cached tiles (call when feature filters change, data reloads, etc.)
@@ -67,6 +70,9 @@ export default class MapRenderer {
       setupOptions = null, // { ghostUnit, isSetupMode, draggedUnitId } for setup mode
     } = options;
 
+    // Save render args so _requestRerender can re-invoke directly
+    this._lastRenderArgs = [ctx, canvasWidth, canvasHeight, viewport, mapData, options];
+
     const cols = mapData.cols;
     const rows = mapData.rows;
     const cells = mapData.cells;
@@ -79,6 +85,7 @@ export default class MapRenderer {
     // Get visible chunks for current tier
     const chunks = getVisibleChunks(viewport, canvasWidth, canvasHeight, cols, rows, tier);
     const chunkSize = getAdaptiveChunkSize(tier, cols, rows);
+    const maxTiles = TILE_BUDGET_BY_TIER[tier] || 8;
     let tilesRendered = 0;
 
     // Draw tile chunks
@@ -86,7 +93,7 @@ export default class MapRenderer {
       let tileCanvas = this.tileCache.get(tier, chunk.chunkCol, chunk.chunkRow);
 
       if (!tileCanvas) {
-        if (tilesRendered < MAX_TILE_RENDERS_PER_FRAME) {
+        if (tilesRendered < maxTiles) {
           // Render this tile
           const renderer = TIER_RENDERERS[tier];
           if (renderer) {
@@ -100,7 +107,7 @@ export default class MapRenderer {
 
         if (!tileCanvas) {
           // Try fallback from lower tier (scaled up)
-          const fallback = this.tileCache.getFallback(tier, chunk.chunkCol, chunk.chunkRow, chunkSize, cols, rows);
+          const fallback = this.tileCache.getFallback(tier, chunk.chunkCol, chunk.chunkRow, chunkSize, cols, rows, getAdaptiveChunkSize);
           if (fallback) {
             tileCanvas = fallback.canvas;
             // Request re-render for next frame
@@ -120,12 +127,12 @@ export default class MapRenderer {
     }
 
     // If we hit the tile render budget, request another frame to finish
-    if (tilesRendered >= MAX_TILE_RENDERS_PER_FRAME) {
+    if (tilesRendered >= maxTiles) {
       this._requestRerender();
     }
 
     // Linear features (roads, rails, waterways) — drawn as screen-space overlay
-    if (roadNetworks && tier >= 1) {
+    if (roadNetworks) {
       drawLinearFeatures(ctx, roadNetworks, viewport, canvasWidth, canvasHeight, tier, activeFeatures);
     }
 
@@ -244,15 +251,19 @@ export default class MapRenderer {
     return canvas;
   }
 
-  // Internal: request re-render on next frame (for progressive tile loading)
+  // Internal: request re-render on next animation frame.
+  // Re-renders directly from rAF using saved args to avoid React setState
+  // latency (which adds an extra frame of delay per tile batch).
   _requestRerender() {
     if (this._pendingRender) return;
     this._pendingRender = true;
     requestAnimationFrame(() => {
       this._pendingRender = false;
-      // The component using MapRenderer should call render() again
-      // This is signaled via the onNeedsRerender callback if set
-      if (this.onNeedsRerender) this.onNeedsRerender();
+      if (this._lastRenderArgs) {
+        this.render(...this._lastRenderArgs);
+      } else if (this.onNeedsRerender) {
+        this.onNeedsRerender();
+      }
     });
   }
 

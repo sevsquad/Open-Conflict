@@ -5,11 +5,11 @@
 
 // Terrain colors (grid cell base color)
 export const TC = {
-  deep_water: "#1A3A5C", coastal_water: "#2A5A7C", lake: "#2E6B8A", river: "#3478A0",
-  wetland: "#3A6B55", open_ground: "#A8B060", light_veg: "#8AA050", farmland: "#B8C468",
-  forest: "#2D6B1E", dense_forest: "#1A4A12", highland: "#8A9060", mountain_forest: "#4A6830",
-  mountain: "#7A7A6A", peak: "#B0A890", desert: "#D4C090", ice: "#D0E0F0",
-  light_urban: "#B0A890", dense_urban: "#8A8070",
+  deep_water: "#1E4D7A", coastal_water: "#3A7CA0", lake: "#3580A8", river: "#3478A0",
+  wetland: "#4A8B6A", open_ground: "#A8B060", light_veg: "#8AA050", farmland: "#B8C468",
+  forest: "#3D8530", dense_forest: "#2D6620", highland: "#98A068", mountain_forest: "#5A8040",
+  mountain: "#7A7A6A", peak: "#D0C8B0", desert: "#D4C090", ice: "#D0E0F0",
+  light_urban: "#C0B89A", dense_urban: "#8A8070",
 };
 
 // Terrain labels

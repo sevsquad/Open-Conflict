@@ -30,7 +30,9 @@ export function createViewport(cols, rows, canvasWidth, canvasHeight) {
   // Simplified: fit both axes
   const fitW = canvasWidth / (cols + 0.5);  // account for odd-row stagger
   const fitH = canvasHeight / (rows * 1.5 / SQRT3 + 0.5 / SQRT3);
-  const cellPixels = Math.min(fitW, fitH) * 0.95;
+  // Ensure we start at least in Tier 1 (Operational) where hex shapes are visible.
+  // For large maps this means the user won't see the whole map, but the minimap handles orientation.
+  const cellPixels = Math.max(Math.min(fitW, fitH) * 0.95, 6);
   return {
     centerCol: cols / 2,
     centerRow: rows / 2,
