@@ -28,40 +28,53 @@ function getTerrainRGB(terrain) {
   return COLOR_CACHE[terrain];
 }
 
-// Blend margin rules — how far into the cell the blend extends (0.0–0.25)
-// Hard natural boundaries get narrow blends, gradual transitions get wide
-const BLEND_PAIRS = {
-  "deep_water|open_ground": 0.10,
-  "deep_water|farmland": 0.10,
-  "deep_water|light_veg": 0.10,
-  "coastal_water|open_ground": 0.10,
-  "coastal_water|farmland": 0.10,
-  "lake|open_ground": 0.08,
-  "lake|farmland": 0.08,
-  "river|open_ground": 0.12,
+// Category-based blend margins — terrain types grouped by visual transition behavior
+const WATER_TYPES = new Set(["deep_water", "coastal_water", "lake", "river"]);
+const FOREST_TYPES = new Set(["forest", "dense_forest", "mountain_forest"]);
+const URBAN_TYPES = new Set(["light_urban", "dense_urban"]);
+const ELEVATION_TYPES = new Set(["highland", "mountain", "peak"]);
+const OPEN_TYPES = new Set(["open_ground", "farmland", "light_veg", "desert", "wetland", "ice"]);
 
-  "open_ground|farmland": 0.25,
-  "open_ground|light_veg": 0.25,
-  "light_veg|forest": 0.25,
-  "forest|dense_forest": 0.25,
-  "highland|mountain": 0.25,
-  "farmland|light_veg": 0.25,
-  "highland|open_ground": 0.20,
-  "mountain|peak": 0.20,
-  "mountain_forest|forest": 0.25,
-  "mountain_forest|mountain": 0.20,
-
-  "light_urban|open_ground": 0.15,
-  "light_urban|dense_urban": 0.20,
-  "light_urban|farmland": 0.15,
-  "dense_urban|open_ground": 0.12,
-};
-
-function getBlendMargin(terrainA, terrainB) {
+function getBaseBlendMargin(terrainA, terrainB) {
   if (terrainA === terrainB) return 0;
-  const k1 = `${terrainA}|${terrainB}`;
-  const k2 = `${terrainB}|${terrainA}`;
-  return BLEND_PAIRS[k1] || BLEND_PAIRS[k2] || 0.15;
+  const aWater = WATER_TYPES.has(terrainA), bWater = WATER_TYPES.has(terrainB);
+  const aForest = FOREST_TYPES.has(terrainA), bForest = FOREST_TYPES.has(terrainB);
+  const aUrban = URBAN_TYPES.has(terrainA), bUrban = URBAN_TYPES.has(terrainB);
+  const aElev = ELEVATION_TYPES.has(terrainA), bElev = ELEVATION_TYPES.has(terrainB);
+
+  // Water-land boundary: sharp edge
+  if (aWater !== bWater) return 0.10;
+  // Same category: very gradual
+  if (aForest && bForest) return 0.25;
+  if (aUrban && bUrban) return 0.20;
+  if (aElev && bElev) return 0.25;
+  // Forest-open transition: gradual
+  if ((aForest && !bWater && !bUrban) || (bForest && !aWater && !aUrban)) return 0.22;
+  // Elevation-natural: gradual
+  if ((aElev && !bWater && !bUrban) || (bElev && !aWater && !aUrban)) return 0.20;
+  // Urban-natural: moderate
+  if (aUrban || bUrban) return 0.14;
+  // Open-open (farmland↔open_ground, etc): gradual
+  return 0.18;
+}
+
+function getBlendMargin(terrainA, terrainB, cellPixels, confA, confB) {
+  let margin = getBaseBlendMargin(terrainA, terrainB);
+  if (margin === 0) return 0;
+
+  // Scale adjustment: small cells = sharper real-world transitions, large cells = more mixing
+  if (cellPixels !== undefined) {
+    if (cellPixels >= 32) margin *= 0.7;       // sub-tactical: sharper
+    else if (cellPixels < 3) margin *= 1.2;    // strategic: wider
+  }
+
+  // Confidence adjustment: widen blend for uncertain classifications
+  if (confA !== undefined && confB !== undefined) {
+    const minConf = Math.min(confA, confB);
+    margin *= (2.0 - minConf); // low confidence → wider blend (up to 2x)
+  }
+
+  return Math.min(0.30, margin); // cap at 30% of hex
 }
 
 // Smoothstep for smooth interpolation
@@ -182,7 +195,7 @@ export function renderBlendedChunk(chunk, cellPixels, cells) {
           const nCell = cells[`${nc},${nr}`];
           if (!nCell || nCell.terrain === cell.terrain) continue;
 
-          const margin = getBlendMargin(cell.terrain, nCell.terrain);
+          const margin = getBlendMargin(cell.terrain, nCell.terrain, cellPixels, cell.confidence, nCell.confidence);
           if (margin <= 0) continue;
 
           // Distance from pixel to this hex edge (signed, positive = inside)
