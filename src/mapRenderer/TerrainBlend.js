@@ -273,10 +273,16 @@ export function applyElevationShading(ctx, chunk, cellPixels, cells) {
         if (diff > 10) {
           const intensity = Math.min(0.15, diff / 500);
           ctx.fillStyle = `rgba(255,255,220,${intensity})`;
-          // Highlight top portion of hex
+          // Highlight top portion of hex — clip to upper half of hex (pointy-top)
+          const hw = SQRT3 * 0.5 * size; // hex half-width = √3/2 * s
           ctx.save();
           ctx.beginPath();
-          ctx.rect(center.x - size, center.y - size, size * 2, size * 0.5);
+          ctx.moveTo(center.x - hw, center.y);
+          ctx.lineTo(center.x - hw, center.y - size * 0.5);
+          ctx.lineTo(center.x, center.y - size);
+          ctx.lineTo(center.x + hw, center.y - size * 0.5);
+          ctx.lineTo(center.x + hw, center.y);
+          ctx.closePath();
           ctx.clip();
           ctx.beginPath();
           ctx.arc(center.x, center.y, size * 0.85, 0, Math.PI * 2);
@@ -290,10 +296,16 @@ export function applyElevationShading(ctx, chunk, cellPixels, cells) {
         if (diff > 10) {
           const intensity = Math.min(0.15, diff / 500);
           ctx.fillStyle = `rgba(0,0,0,${intensity})`;
-          // Shadow bottom portion of hex
+          // Shadow bottom portion of hex — clip to lower half of hex (pointy-top)
+          const hw = SQRT3 * 0.5 * size;
           ctx.save();
           ctx.beginPath();
-          ctx.rect(center.x - size, center.y + size * 0.5, size * 2, size * 0.5);
+          ctx.moveTo(center.x + hw, center.y);
+          ctx.lineTo(center.x + hw, center.y + size * 0.5);
+          ctx.lineTo(center.x, center.y + size);
+          ctx.lineTo(center.x - hw, center.y + size * 0.5);
+          ctx.lineTo(center.x - hw, center.y);
+          ctx.closePath();
           ctx.clip();
           ctx.beginPath();
           ctx.arc(center.x, center.y, size * 0.85, 0, Math.PI * 2);
