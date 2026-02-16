@@ -406,7 +406,7 @@ function getWCTilesForBbox(bbox) {
 async function fetchWorldCover(bbox, cols, rows, onS, onProg, log, tier) {
   const proj = createHexProjection(bbox, cols, rows);
   const tiles = getWCTilesForBbox(bbox);
-  const wcGrid = {}, wcMix = {};
+  const wcGrid = {}, wcMix = {}, wcHasData = new Set();
   const isSubTac = tier === "sub-tactical";
   const SAMPLES_PER_CELL = isSubTac ? 5 : 20; // 5×5=25 at sub-tactical, 20×20=400 at other tiers
 
@@ -491,6 +491,7 @@ async function fetchWorldCover(bbox, cols, rows, onS, onProg, log, tier) {
           }
           const k = `${c},${r}`;
           wcGrid[k] = WC_CLASSES[maxVal] || "open_ground";
+          wcHasData.add(k); // mark cell as having actual WC raster data (vs backfilled ocean)
           // Store percentage mix of all land cover classes (needed for urban detection at all tiers)
           if (total > 0) {
             const mix = {};
@@ -537,7 +538,7 @@ async function fetchWorldCover(bbox, cols, rows, onS, onProg, log, tier) {
     });
   }
 
-  return { wcGrid, wcMix };
+  return { wcGrid, wcMix, wcHasData };
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -2245,7 +2246,7 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
 // POST-PROCESSING
 // ════════════════════════════════════════════════════════════════
 
-function postProc(terrain, infra, attrs, features, featureNames, cols, rows, elevG, cellKm, elevCoverage, cellRoadCount, cellBuildingPct, tier, wcGrid) {
+function postProc(terrain, infra, attrs, features, featureNames, cols, rows, elevG, cellKm, elevCoverage, cellRoadCount, cellBuildingPct, tier, wcGrid, wcHasData) {
   let tG = { ...terrain }, iG = { ...infra }, aG = {};
   for (const k in attrs) aG[k] = [...attrs[k]];
   // Features: deep copy
@@ -2270,8 +2271,9 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
       if (t === "desert") return false; // desert at sea level is not ocean
       const wcVal = wcGrid ? wcGrid[k] : null;
       const wcIsWater = wcVal === "lake"; // WC class 80 maps to "lake"
-      const wcMissing = !wcGrid || !wcVal; // no WC data = likely ocean tile (404)
-      return (t === "open_ground" || t === "lake") && e <= 1 && (wcIsWater || wcMissing);
+      // Cell has no actual WC raster data = likely ocean tile (404 → backfilled as open_ground)
+      const wcBackfilled = wcHasData ? !wcHasData.has(k) : (!wcGrid || !wcVal);
+      return (t === "open_ground" || t === "lake") && e <= 1 && (wcIsWater || wcBackfilled);
     };
 
     // Seed BFS from map edges
@@ -3012,7 +3014,7 @@ export default function Parser({ onBack, onViewMap }) {
 
       setProgress({ phase: "Processing", current: 2, total: 2 });
       setStatus("Post-processing..."); await new Promise(r => setTimeout(r, 20));
-      const pp = postProc(res.terrain, res.infra, res.attrs, res.features, res.featureNames, cols, rows, res.elevG, cellKm, res.elevCoverage, res.cellRoadCount, res.cellBuildingPct, tier, wcData ? wcData.wcGrid : null);
+      const pp = postProc(res.terrain, res.infra, res.attrs, res.features, res.featureNames, cols, rows, res.elevG, cellKm, res.elevCoverage, res.cellRoadCount, res.cellBuildingPct, tier, wcData ? wcData.wcGrid : null, wcData ? wcData.wcHasData : null);
 
       // ── LOG TERRAIN DISTRIBUTION ──
       log.section("TERRAIN DISTRIBUTION");
