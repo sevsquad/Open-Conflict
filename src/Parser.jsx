@@ -3,7 +3,7 @@ import { fromUrl } from "geotiff";
 import { colors, typography, radius, shadows, animation, space } from "./theme.js";
 import { Button, Badge, Panel } from "./components/ui.jsx";
 import { getNeighbors, hexLine, offsetToAxial, axialToOffset,
-         offsetToPixel, pixelToOffset, SQRT3, SQRT3_2 } from "./mapRenderer/HexMath.js";
+         offsetToPixel, pixelToOffset, traceHexPath, SQRT3, SQRT3_2 } from "./mapRenderer/HexMath.js";
 
 // ════════════════════════════════════════════════════════════════
 // TERRAIN — physical character (movement, cover, LOS)
@@ -2307,10 +2307,13 @@ function CanvasMap({ grid, colorLUT, gC, gR, elevG, features, featureNames: fnG,
   const dsRef = useRef({ x: 0, y: 0 });
   const [hov, setHov] = useState(null);
 
+  // Hex layout: compute hex size from canvas width
   const CANVAS_W = Math.min(700, Math.max(400, gC * 3));
-  const CANVAS_H = Math.round(CANVAS_W * (gR / gC));
-  const cellPxW = CANVAS_W / gC;
-  const cellPxH = CANVAS_H / gR;
+  const hexSize = CANVAS_W / (SQRT3 * (gC + 0.5));
+  const CANVAS_H = Math.max(1, Math.round((1.5 * gR + 0.5) * hexSize));
+  // Padding so cell (0,0) hex doesn't clip at edges
+  const padX = SQRT3_2 * hexSize;
+  const padY = hexSize;
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -2320,98 +2323,92 @@ function CanvasMap({ grid, colorLUT, gC, gR, elevG, features, featureNames: fnG,
     const data = imgData.data;
     const alpha = Math.round((opacity / 100) * 255);
 
+    // Per-pixel terrain fill: for each pixel, determine which hex it belongs to
+    for (let py = 0; py < CANVAS_H; py++) {
+      for (let px = 0; px < CANVAS_W; px++) {
+        const { col, row } = pixelToOffset(px - padX, py - padY, hexSize);
+        if (col < 0 || col >= gC || row < 0 || row >= gR) continue;
+        const k = `${col},${row}`;
+        const val = grid[k];
+        const rgb = colorLUT[val] || [18, 24, 42];
+        const idx = (py * CANVAS_W + px) * 4;
+        data[idx] = rgb[0]; data[idx + 1] = rgb[1]; data[idx + 2] = rgb[2]; data[idx + 3] = alpha;
+      }
+    }
+
+    // Feature overlay: tint hex pixels at each cell center
     for (let r = 0; r < gR; r++) {
       for (let c = 0; c < gC; c++) {
         const k = `${c},${r}`;
-        const val = grid[k];
-        const rgb = colorLUT[val] || [18, 24, 42];
-        const px0 = Math.floor(c * cellPxW), px1 = Math.floor((c + 1) * cellPxW);
-        const py0 = Math.floor(r * cellPxH), py1 = Math.floor((r + 1) * cellPxH);
-        for (let py = py0; py < py1; py++) for (let px = px0; px < px1; px++) {
-          const idx = (py * CANVAS_W + px) * 4;
-          data[idx] = rgb[0]; data[idx + 1] = rgb[1]; data[idx + 2] = rgb[2]; data[idx + 3] = alpha;
-        }
-
-        // Feature overlay dots
         const cellFeats = features?.[k] || [];
-        const hasTown = cellFeats.includes("town") && activeFeatures?.has("town");
-        const active = cellFeats.filter(f => f !== "town" && activeFeatures?.has(f));
+        const active = cellFeats.filter(f => activeFeatures?.has(f));
+        if (active.length === 0) continue;
 
-        // Town: render as a 1px amber border ring around the cell
-        if (hasTown) {
+        const { x: hcx, y: hcy } = offsetToPixel(c, r, hexSize);
+        const cx = hcx + padX, cy = hcy + padY;
+        const dotR = hexSize * 0.45; // radius of feature dot
+
+        if (active.includes("town")) {
+          // Town: tint a ring of pixels around the hex center
           const trgb = [232, 160, 64]; // #E8A040
-          for (let px = px0; px < px1; px++) {
-            for (const py of [py0, py1 - 1]) {
-              if (px >= 0 && px < CANVAS_W && py >= 0 && py < CANVAS_H) {
-                const idx = (py * CANVAS_W + px) * 4;
-                data[idx] = trgb[0]; data[idx+1] = trgb[1]; data[idx+2] = trgb[2]; data[idx+3] = 255;
-              }
-            }
-          }
-          for (let py = py0; py < py1; py++) {
-            for (const px of [px0, px1 - 1]) {
-              if (px >= 0 && px < CANVAS_W && py >= 0 && py < CANVAS_H) {
-                const idx = (py * CANVAS_W + px) * 4;
-                data[idx] = trgb[0]; data[idx+1] = trgb[1]; data[idx+2] = trgb[2]; data[idx+3] = 255;
-              }
+          const ringOuter = hexSize * 0.85, ringInner = hexSize * 0.65;
+          const lo = Math.max(0, Math.floor(cx - ringOuter)), hi = Math.min(CANVAS_W, Math.ceil(cx + ringOuter));
+          const to = Math.max(0, Math.floor(cy - ringOuter)), bo = Math.min(CANVAS_H, Math.ceil(cy + ringOuter));
+          for (let py2 = to; py2 < bo; py2++) for (let px2 = lo; px2 < hi; px2++) {
+            const dx = px2 - cx, dy = py2 - cy, dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist >= ringInner && dist <= ringOuter) {
+              const idx = (py2 * CANVAS_W + px2) * 4;
+              data[idx] = trgb[0]; data[idx + 1] = trgb[1]; data[idx + 2] = trgb[2]; data[idx + 3] = 255;
             }
           }
         }
-        if (active.length > 0) {
-          const cw2 = px1 - px0, ch2 = py1 - py0;
-          if (active.length === 1) {
-            const fi = getFeatureInfo(active[0]);
-            const frgb = hexToRgb(fi.color);
-            const dotW = Math.max(1, Math.floor(cw2 * 0.6));
-            const dotH = Math.max(1, Math.floor(ch2 * 0.6));
-            const offX = Math.floor((cw2 - dotW) / 2), offY = Math.floor((ch2 - dotH) / 2);
-            for (let dy = 0; dy < dotH; dy++) for (let dx = 0; dx < dotW; dx++) {
-              const ppx = px0 + offX + dx, ppy = py0 + offY + dy;
-              if (ppx >= 0 && ppx < CANVAS_W && ppy >= 0 && ppy < CANVAS_H) {
-                const idx = (ppy * CANVAS_W + ppx) * 4;
-                data[idx] = Math.round(data[idx] * 0.35 + frgb[0] * 0.65);
-                data[idx + 1] = Math.round(data[idx + 1] * 0.35 + frgb[1] * 0.65);
-                data[idx + 2] = Math.round(data[idx + 2] * 0.35 + frgb[2] * 0.65);
-                data[idx + 3] = 255;
-              }
+
+        const nonTown = active.filter(f => f !== "town");
+        if (nonTown.length > 0) {
+          const fi = getFeatureInfo(nonTown[0]);
+          const frgb = hexToRgb(fi.color);
+          const lo = Math.max(0, Math.floor(cx - dotR)), hi = Math.min(CANVAS_W, Math.ceil(cx + dotR));
+          const to = Math.max(0, Math.floor(cy - dotR)), bo = Math.min(CANVAS_H, Math.ceil(cy + dotR));
+          for (let py2 = to; py2 < bo; py2++) for (let px2 = lo; px2 < hi; px2++) {
+            const dx = px2 - cx, dy = py2 - cy;
+            if (dx * dx + dy * dy <= dotR * dotR) {
+              const idx = (py2 * CANVAS_W + px2) * 4;
+              data[idx] = Math.round(data[idx] * 0.35 + frgb[0] * 0.65);
+              data[idx + 1] = Math.round(data[idx + 1] * 0.35 + frgb[1] * 0.65);
+              data[idx + 2] = Math.round(data[idx + 2] * 0.35 + frgb[2] * 0.65);
+              data[idx + 3] = 255;
             }
-          } else {
-            const segH = Math.max(1, Math.floor(ch2 / active.length));
-            const dotW = Math.max(1, Math.floor(cw2 * 0.6));
-            const offX = Math.floor((cw2 - dotW) / 2);
-            active.forEach((feat, i) => {
-              const fi = getFeatureInfo(feat);
-              const frgb = hexToRgb(fi.color);
-              const segY = py0 + i * segH;
-              const segEnd = (i === active.length - 1) ? py1 : segY + segH;
-              for (let dy = segY; dy < segEnd; dy++) for (let dx = 0; dx < dotW; dx++) {
-                const ppx = px0 + offX + dx;
-                if (ppx >= 0 && ppx < CANVAS_W && dy >= 0 && dy < CANVAS_H) {
-                  const idx = (dy * CANVAS_W + ppx) * 4;
-                  data[idx] = Math.round(data[idx] * 0.35 + frgb[0] * 0.65);
-                  data[idx + 1] = Math.round(data[idx + 1] * 0.35 + frgb[1] * 0.65);
-                  data[idx + 2] = Math.round(data[idx + 2] * 0.35 + frgb[2] * 0.65);
-                  data[idx + 3] = 255;
-                }
-              }
-            });
           }
         }
       }
     }
+
     ctx.putImageData(imgData, 0, 0);
-    if (tf.s * cellPxW > 12) {
-      ctx.strokeStyle = "rgba(0,0,0,0.15)"; ctx.lineWidth = 0.5;
-      for (let c = 0; c <= gC; c++) { const x = Math.floor(c * cellPxW); ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, CANVAS_H); ctx.stroke(); }
-      for (let r = 0; r <= gR; r++) { const y = Math.floor(r * cellPxH); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(CANVAS_W, y); ctx.stroke(); }
+
+    // Hex grid outlines at zoom
+    if (tf.s * hexSize > 6) {
+      ctx.lineWidth = 0.5;
+      for (let r = 0; r < gR; r++) for (let c = 0; c < gC; c++) {
+        const { x: hcx, y: hcy } = offsetToPixel(c, r, hexSize);
+        const isMajor = (c % 10 === 0 || r % 10 === 0);
+        ctx.strokeStyle = isMajor ? "rgba(0,0,0,0.35)" : "rgba(0,0,0,0.12)";
+        ctx.lineWidth = isMajor ? 1 : 0.5;
+        ctx.beginPath();
+        traceHexPath(ctx, hcx + padX, hcy + padY, hexSize);
+        ctx.stroke();
+      }
     }
+
+    // Hover highlight as hex outline
     if (hov) {
       const [hc, hr] = hov.split(",").map(Number);
-      const hx = Math.floor(hc * cellPxW), hy = Math.floor(hr * cellPxH);
-      const hw = Math.floor((hc + 1) * cellPxW) - hx, hh = Math.floor((hr + 1) * cellPxH) - hy;
-      ctx.strokeStyle = "rgba(255,255,255,0.7)"; ctx.lineWidth = 2; ctx.strokeRect(hx + 1, hy + 1, hw - 2, hh - 2);
+      const { x: hcx, y: hcy } = offsetToPixel(hc, hr, hexSize);
+      ctx.strokeStyle = "rgba(255,255,255,0.7)"; ctx.lineWidth = 2;
+      ctx.beginPath();
+      traceHexPath(ctx, hcx + padX, hcy + padY, hexSize);
+      ctx.stroke();
     }
-  }, [grid, colorLUT, gC, gR, CANVAS_W, CANVAS_H, cellPxW, cellPxH, opacity, features, activeFeatures, tf.s, hov]);
+  }, [grid, colorLUT, gC, gR, CANVAS_W, CANVAS_H, hexSize, padX, padY, opacity, features, activeFeatures, tf.s, hov]);
 
   useEffect(() => { draw(); }, [draw]);
 
@@ -2419,10 +2416,10 @@ function CanvasMap({ grid, colorLUT, gC, gR, elevG, features, featureNames: fnG,
     const wrap = wrapRef.current; if (!wrap) return null;
     const rect = wrap.getBoundingClientRect();
     const mx = (e.clientX - rect.left - tf.x) / tf.s, my = (e.clientY - rect.top - tf.y) / tf.s;
-    const c = Math.floor(mx / cellPxW), r = Math.floor(my / cellPxH);
-    if (c >= 0 && c < gC && r >= 0 && r < gR) return `${c},${r}`;
+    const { col, row } = pixelToOffset(mx - padX, my - padY, hexSize);
+    if (col >= 0 && col < gC && row >= 0 && row < gR) return `${col},${row}`;
     return null;
-  }, [tf, cellPxW, cellPxH, gC, gR]);
+  }, [tf, hexSize, padX, padY, gC, gR]);
 
   const onWh = useCallback(e => {
     e.preventDefault();
