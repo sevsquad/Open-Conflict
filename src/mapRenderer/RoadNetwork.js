@@ -3,7 +3,7 @@
 // ════════════════════════════════════════════════════════════════
 
 import { getNeighbors } from "./HexMath.js";
-import { gridToScreen } from "./ViewportState.js";
+import { gridToScreen, getVisibleRange } from "./ViewportState.js";
 
 const ROAD_TYPES = ["highway", "major_road", "road", "minor_road", "footpath", "trail"];
 const RAIL_TYPES = ["railway", "light_rail"];
@@ -14,13 +14,13 @@ const LINEAR_TYPES = [...ROAD_TYPES, ...RAIL_TYPES, ...WATER_TYPES, ...PIPE_TYPE
 
 // Drawing config per type and tier
 export const LINE_CONFIG = {
-  highway:      { color: "#E6A817", width: [0.75, 2, 3, 4],   minTier: 0, dash: null },
-  major_road:   { color: "#D4D4D4", width: [0.5, 1.5, 2, 3],  minTier: 0, dash: null },
+  highway:      { color: "#E6A817", width: [1.5, 2, 3, 4],   minTier: 0, dash: null },
+  major_road:   { color: "#D4D4D4", width: [0, 1.5, 2, 3],    minTier: 1, dash: null },
   road:         { color: "#B0B0B0", width: [0, 0.5, 1.5, 2],  minTier: 1, dash: null },
   minor_road:   { color: "#9A9A8A", width: [0, 0, 1, 1],      minTier: 2, dash: [4, 3] },
   footpath:     { color: "#6A6A5A", width: [0, 0, 0, 0.5],    minTier: 3, dash: [2, 2] },
   trail:        { color: "#8A8A6A", width: [0, 0, 0, 0.5],    minTier: 3, dash: [2, 2] },
-  railway:      { color: "#E05050", width: [0.5, 1.5, 1.5, 2], minTier: 0, dash: [6, 3] },
+  railway:      { color: "#E05050", width: [1.0, 1.5, 1.5, 2], minTier: 0, dash: [6, 3] },
   light_rail:   { color: "#D07070", width: [0, 0.5, 1, 1.5],  minTier: 1, dash: [4, 3] },
   navigable_waterway: { color: "#3AC4E0", width: [0, 0.5, 1.5, 2], minTier: 1, dash: null },
   pipeline:  { color: "#A070D0", width: [0, 0.5, 1, 1.5], minTier: 1, dash: [4, 2] },
@@ -79,6 +79,14 @@ export function buildLinearNetworks(cells, cols, rows) {
 
 // Draw all visible road/rail/waterway segments for a given tier
 export function drawLinearFeatures(ctx, networks, viewport, canvasWidth, canvasHeight, tier, activeFeatures) {
+  // Viewport culling: compute visible cell range with padding
+  const pad = 2;
+  const visRange = getVisibleRange(viewport, canvasWidth, canvasHeight, 999999, 999999);
+  const minC = visRange.colMin - pad;
+  const maxC = visRange.colMax + pad;
+  const minR = visRange.rowMin - pad;
+  const maxR = visRange.rowMax + pad;
+
   for (const type of LINEAR_TYPES) {
     const config = LINE_CONFIG[type];
     if (!config || tier < config.minTier) continue;
@@ -102,6 +110,12 @@ export function drawLinearFeatures(ctx, networks, viewport, canvasWidth, canvasH
 
     ctx.beginPath();
     for (const seg of segments) {
+      // Skip segments entirely outside viewport
+      if (seg.from.c < minC && seg.to.c < minC) continue;
+      if (seg.from.c > maxC && seg.to.c > maxC) continue;
+      if (seg.from.r < minR && seg.to.r < minR) continue;
+      if (seg.from.r > maxR && seg.to.r > maxR) continue;
+
       const from = gridToScreen(seg.from.c, seg.from.r, viewport, canvasWidth, canvasHeight);
       const to = gridToScreen(seg.to.c, seg.to.r, viewport, canvasWidth, canvasHeight);
       ctx.moveTo(from.x, from.y);
