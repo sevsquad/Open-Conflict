@@ -2667,7 +2667,7 @@ export default function Parser({ onBack, onViewMap }) {
 
   // Estimate generation time for user messaging
   const estimateTime = useCallback(() => {
-    const cols = Math.max(1, Math.floor(mapW / cellKm)), rows = Math.max(1, Math.floor(mapH / cellKm));
+    const cols = Math.max(1, Math.floor(mapW / cellKm)), rows = Math.max(1, Math.floor(mapH / (cellKm * SQRT3_2)));
     const tier = getQueryTier(cellKm);
     const chunkKm = getChunkSize(tier);
     const chunks = Math.ceil(mapW / chunkKm) * Math.ceil(mapH / chunkKm);
@@ -2687,7 +2687,7 @@ export default function Parser({ onBack, onViewMap }) {
     const log = new GenLog();
 
     try {
-      const cols = Math.max(1, Math.floor(mapW / cellKm)), rows = Math.max(1, Math.floor(mapH / cellKm));
+      const cols = Math.max(1, Math.floor(mapW / cellKm)), rows = Math.max(1, Math.floor(mapH / (cellKm * SQRT3_2)));
       if (cols * rows > 50000) { setError(`Too many cells: ${(cols * rows).toLocaleString()}`); setGen(false); return; }
       const bbox = getBBox(lat, lng, mapW, mapH);
 
@@ -2840,7 +2840,7 @@ export default function Parser({ onBack, onViewMap }) {
           if (pp.featureNames && pp.featureNames[k]) cell.feature_names = pp.featureNames[k];
           saveCells[k] = cell;
         }
-        const saveObj = { map: { cols, rows, cellSizeKm: cellKm, widthKm: mapW, heightKm: mapH, center: { lat, lng }, bbox: getBBox(lat, lng, mapW, mapH), cells: saveCells, labels: {} }, _meta: { generated: new Date().toISOString(), source: "WorldCover+OSM+SRTM", version: "v0.10", tier } };
+        const saveObj = { map: { cols, rows, cellSizeKm: cellKm, widthKm: mapW, heightKm: mapH, gridType: "hex", center: { lat, lng }, bbox: getBBox(lat, lng, mapW, mapH), cells: saveCells, labels: {} }, _meta: { generated: new Date().toISOString(), source: "WorldCover+OSM+SRTM", version: "v0.10", tier } };
 
         // Derive best name from feature_names — find highest-rank settlement near center
         let bestName = null;
@@ -2904,7 +2904,7 @@ export default function Parser({ onBack, onViewMap }) {
       if (fnG && fnG[k]) cell.feature_names = fnG[k];
       cells[k] = cell;
     }
-    const obj = { map: { cols: gC, rows: gR, cellSizeKm: cellKm, widthKm: mapW, heightKm: mapH, center: { lat, lng }, bbox: getBBox(lat, lng, mapW, mapH), cells, labels: {} }, _meta: { generated: new Date().toISOString(), source: "WorldCover+OSM+SRTM", version: "v0.10", tier: getQueryTier(cellKm) } };
+    const obj = { map: { cols: gC, rows: gR, cellSizeKm: cellKm, widthKm: mapW, heightKm: mapH, gridType: "hex", center: { lat, lng }, bbox: getBBox(lat, lng, mapW, mapH), cells, labels: {} }, _meta: { generated: new Date().toISOString(), source: "WorldCover+OSM+SRTM", version: "v0.10", tier: getQueryTier(cellKm) } };
     const b = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" }), u = URL.createObjectURL(b), a = document.createElement("a"); a.href = u; a.download = "open_conflict_terrain.json"; a.click(); URL.revokeObjectURL(u);
   }, [tG, iG, aG, fG, fnG, eG, gC, gR, cellKm, mapW, mapH, lat, lng]);
 
@@ -2917,7 +2917,7 @@ export default function Parser({ onBack, onViewMap }) {
       if (fnG && fnG[k]) cell.feature_names = fnG[k];
       cells[k] = cell;
     }
-    const mapData = { cols: gC, rows: gR, cellSizeKm: cellKm, widthKm: mapW, heightKm: mapH, center: { lat, lng }, bbox: getBBox(lat, lng, mapW, mapH), cells, labels: {} };
+    const mapData = { cols: gC, rows: gR, cellSizeKm: cellKm, widthKm: mapW, heightKm: mapH, gridType: "hex", center: { lat, lng }, bbox: getBBox(lat, lng, mapW, mapH), cells, labels: {} };
     onViewMap(mapData);
   }, [tG, iG, aG, fG, fnG, eG, gC, gR, cellKm, mapW, mapH, lat, lng, onViewMap]);
 
@@ -2976,7 +2976,7 @@ export default function Parser({ onBack, onViewMap }) {
               <div style={{ display: "flex", flexDirection: "column", gap: space[1], marginBottom: space[3] }}>
                 {SCALE_PRESETS.map(p => {
                   const active = activeScale === p.id;
-                  const cells = Math.floor(p.w / p.cell) * Math.floor(p.h / p.cell);
+                  const cells = Math.floor(p.w / p.cell) * Math.floor(p.h / (p.cell * SQRT3_2));
                   return (
                     <div key={p.id} onClick={() => { setActiveScale(p.id); setCellKm(p.cell); setMapW(p.w); setMapH(p.h); const locs = LOCATION_PRESETS[p.id]; if (locs && locs[0]) { setLat(locs[0].lat); setLng(locs[0].lng); } }}
                       style={{ padding: `${space[2]}px ${space[2]}px`, borderRadius: radius.md, cursor: "pointer", background: active ? `${p.color}12` : colors.bg.raised, border: `1px solid ${active ? p.color + "60" : colors.border.subtle}`, transition: `all ${animation.fast}`, borderLeft: active ? `3px solid ${p.color}` : `3px solid transparent` }}>

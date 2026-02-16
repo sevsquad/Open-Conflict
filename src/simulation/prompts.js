@@ -124,7 +124,7 @@ export function buildTerrainSummary(terrainData) {
   lines.push(`TERRAIN MAP: ${D.cols}\u00D7${D.rows} cells, ${D.cellSizeKm}km/cell`);
   if (D.center) lines.push(`Center: ${D.center.lat.toFixed(4)}, ${D.center.lng.toFixed(4)}`);
   if (D.bbox) lines.push(`Bounds: S${D.bbox.south.toFixed(4)} N${D.bbox.north.toFixed(4)} W${D.bbox.west.toFixed(4)} E${D.bbox.east.toFixed(4)}`);
-  lines.push(`Map size: ${D.widthKm || (D.cols * D.cellSizeKm)}km x ${D.heightKm || (D.rows * D.cellSizeKm)}km`);
+  lines.push(`Map size: ${D.widthKm || (D.cols * D.cellSizeKm)}km x ${D.heightKm || Math.round(D.rows * D.cellSizeKm * (Math.sqrt(3) / 2))}km`);
 
   // Terrain distribution
   const terrCt = {};
