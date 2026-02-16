@@ -205,11 +205,14 @@ export default function Viewer({ onBack, initialData }) {
     const newCellPixels = clampCellPixels(a.from + (a.to - a.from) * eased);
     const { w, h } = containerSizeRef.current;
 
-    // Keep the world pixel under the cursor at the same screen position
-    // a.wx, a.wy = world pixel coords of pivot; a.sx, a.sy = screen coords
+    // Keep the world pixel under the cursor at the same screen position.
+    // a.wx, a.wy were computed at the OLD hex size; world pixels scale
+    // linearly with size, so rescale them to the NEW size first.
     const newSize = cellPixelsToHexSize(newCellPixels);
-    const newCpx = a.wx - (a.sx - w / 2);
-    const newCpy = a.wy - (a.sy - h / 2);
+    const oldSize = cellPixelsToHexSize(a.from);
+    const scale = newSize / oldSize;
+    const newCpx = a.wx * scale - (a.sx - w / 2);
+    const newCpy = a.wy * scale - (a.sy - h / 2);
     const newCenterRow = newCpy / (newSize * 1.5);
     const parity = Math.round(newCenterRow) & 1;
     const newCenterCol = newCpx / (newSize * SQRT3) - 0.5 * parity;

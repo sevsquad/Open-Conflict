@@ -82,14 +82,13 @@ export function zoomAtPoint(viewport, screenX, screenY, canvasWidth, canvasHeigh
   const cpy = size * 1.5 * viewport.centerRow;
   const wx = screenX - canvasWidth / 2 + cpx;
   const wy = screenY - canvasHeight / 2 + cpy;
-  // Now compute what centerCol/centerRow should be so (wx, wy) maps to (screenX, screenY) at new zoom
+  // Now compute what centerCol/centerRow should be so (wx, wy) maps to (screenX, screenY) at new zoom.
+  // wx, wy were computed at the old hex size; world pixels scale linearly
+  // with size, so rescale them to the new size first.
   const newSize = cellPixelsToHexSize(newCellPixels);
-  // We need: screenX = px_of(col,row) - px_of(centerCol,centerRow) + canvasWidth/2
-  // Where px_of uses newSize. Solve for centerCol/centerRow:
-  // For simplicity, treat the panning as a continuous coordinate:
-  // newCenter_px = wx - (screenX - canvasWidth/2)
-  const newCpx = wx - (screenX - canvasWidth / 2);
-  const newCpy = wy - (screenY - canvasHeight / 2);
+  const scale = newSize / size;
+  const newCpx = wx * scale - (screenX - canvasWidth / 2);
+  const newCpy = wy * scale - (screenY - canvasHeight / 2);
   // Reverse: cpx = newSize * sqrt3 * (centerCol + 0.5*(round(centerRow)&1))
   //          cpy = newSize * 1.5 * centerRow
   const newCenterRow = newCpy / (newSize * 1.5);
