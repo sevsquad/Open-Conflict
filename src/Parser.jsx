@@ -427,6 +427,11 @@ async function fetchWorldCover(bbox, cols, rows, onS, onProg, log, tier) {
     ]);
   }
 
+  // Accumulate WC raster sample counts across ALL tiles before resolving.
+  // Previous approach resolved per-tile, so tile 2 would overwrite tile 1's
+  // correct classification for boundary cells with a partial-coverage vote.
+  const wcAccum = {}; // key → { counts: {wcClassValue: hitCount}, total: number }
+
   let tilesDone = 0;
   const WC_BASE = "/api/wc";
 
@@ -478,12 +483,13 @@ async function fetchWorldCover(bbox, cols, rows, onS, onProg, log, tier) {
       // Inverse scale: geographic → raster pixel
       const isectLonSpan = isectE - isectW, isectLatSpan = isectN - isectS;
 
-      // Majority vote per cell using hex-projected sample points
+      // Accumulate raster sample counts per cell (merged across tiles later)
       let cellsClassified = 0;
       for (let r = gridR0; r <= gridR1; r++) {
         for (let c = gridC0; c <= gridC1; c++) {
-          const counts = {};
-          let total = 0;
+          const k = `${c},${r}`;
+          if (!wcAccum[k]) wcAccum[k] = { counts: {}, total: 0 };
+          const acc = wcAccum[k];
           const samplePts = proj.cellSamplePoints(c, r, SAMPLES_PER_CELL);
           for (const pt of samplePts) {
             if (pt.lon < isectW || pt.lon > isectE || pt.lat < isectS || pt.lat > isectN) continue;
@@ -491,23 +497,10 @@ async function fetchWorldCover(bbox, cols, rows, onS, onProg, log, tier) {
             const ry = Math.floor((isectN - pt.lat) / isectLatSpan * outH);
             if (rx < 0 || rx >= outW || ry < 0 || ry >= outH) continue;
             const val = data[ry * outW + rx];
-            if (val !== undefined && val !== 0) { counts[val] = (counts[val] || 0) + 1; total++; }
-          }
-          let maxVal = 60, maxCnt = 0; // default: bare/sparse → open_ground
-          for (const [v, cnt] of Object.entries(counts)) {
-            if (cnt > maxCnt) { maxVal = Number(v); maxCnt = cnt; }
-          }
-          const k = `${c},${r}`;
-          wcGrid[k] = WC_CLASSES[maxVal] || "open_ground";
-          if (total > 0) wcHasData.add(k); // only mark as having data if we got valid raster samples
-          // Store percentage mix of all land cover classes (needed for urban detection at all tiers)
-          if (total > 0) {
-            const mix = {};
-            for (const [v, cnt] of Object.entries(counts)) {
-              const cls = WC_CLASSES[Number(v)] || "open_ground";
-              mix[cls] = (mix[cls] || 0) + cnt / total;
+            if (val !== undefined && val !== 0) {
+              acc.counts[val] = (acc.counts[val] || 0) + 1;
+              acc.total++;
             }
-            wcMix[k] = mix;
           }
           cellsClassified++;
         }
@@ -526,6 +519,24 @@ async function fetchWorldCover(bbox, cols, rows, onS, onProg, log, tier) {
 
     tilesDone++;
     if (onProg) onProg({ phase: "WorldCover", current: tilesDone, total: tiles.size });
+  }
+
+  // Resolve majority vote from accumulated cross-tile counts
+  for (const [k, acc] of Object.entries(wcAccum)) {
+    let maxVal = 60, maxCnt = 0;
+    for (const [v, cnt] of Object.entries(acc.counts)) {
+      if (cnt > maxCnt) { maxVal = Number(v); maxCnt = cnt; }
+    }
+    wcGrid[k] = WC_CLASSES[maxVal] || "open_ground";
+    if (acc.total > 0) wcHasData.add(k);
+    if (acc.total > 0) {
+      const mix = {};
+      for (const [v, cnt] of Object.entries(acc.counts)) {
+        const cls = WC_CLASSES[Number(v)] || "open_ground";
+        mix[cls] = (mix[cls] || 0) + cnt / acc.total;
+      }
+      wcMix[k] = mix;
+    }
   }
 
   // Fill any unset cells (ocean, failed tiles)
@@ -1773,18 +1784,27 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
   const cellNavName = new Map(); // cell → river name
   {
     if (feat.navigableLines) {
-      // Helper: check if an OSM way name matches any Wikidata river
+      // Helper: check if an OSM way name matches any whitelist/Wikidata river.
+      // Forward direction (OSM contains whitelist name) is always safe.
+      // Reverse direction (whitelist contains OSM name) requires word boundary
+      // to prevent false positives like "Ina" matching "Magdalena".
       const matchesWikidata = (osmName) => {
         if (!wikidataRivers || !osmName) return false;
         const lower = osmName.toLowerCase();
         for (const wdName of wikidataRivers) {
-          // For short names (≤3 chars like "Po", "Var", "Ain"), require word boundary
+          // Short whitelist names (≤3 chars like "Po"): word boundary in OSM name
           if (wdName.length <= 3) {
             const re = new RegExp(`\\b${wdName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
             if (re.test(lower)) return true;
           } else {
-            // Longer names: substring match in either direction
-            if (lower.includes(wdName) || wdName.includes(lower)) return true;
+            // OSM name contains whitelist name (e.g. "Mississippi River" contains "Mississippi")
+            if (lower.includes(wdName)) return true;
+          }
+          // Reverse: whitelist name contains OSM name — require word boundary + min 4 chars
+          // Catches "Ouse" matching "Great Ouse" but blocks "Ina" matching "Magdalena"
+          if (lower.length >= 4) {
+            const re = new RegExp(`\\b${lower.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+            if (re.test(wdName)) return true;
           }
         }
         return false;
@@ -1797,8 +1817,17 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
         const markNav = (k) => { cellNavigable.add(k); if (wName && !cellNavName.has(k)) cellNavName.set(k, wName); };
 
         if (nl.tagged) {
-          // Ship=yes, boat=yes — always navigable
-          wayCells.forEach(k => { markNav(k); cellNavTagged.add(k); });
+          // Ship/boat tagged — always navigable at tactical/sub-tactical.
+          // At strategic/operational, ship=yes tagging varies in OSM quality,
+          // so require whitelist match OR substantial map span (≥3 cells).
+          if (tier === "strategic" || tier === "operational") {
+            const passesWhitelist = wikidataRivers && matchesWikidata(nl.actualName);
+            if (passesWhitelist || wayCells.size >= 3) {
+              wayCells.forEach(k => { markNav(k); cellNavTagged.add(k); });
+            }
+          } else {
+            wayCells.forEach(k => { markNav(k); cellNavTagged.add(k); });
+          }
         } else if (wikidataRivers) {
           // Wikidata available — name matching is primary filter
           if (matchesWikidata(nl.actualName)) {
