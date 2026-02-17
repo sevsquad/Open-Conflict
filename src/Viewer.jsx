@@ -2,13 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { colors, typography, radius, shadows, animation, space } from "./theme.js";
 import { Button, Badge, Panel } from "./components/ui.jsx";
 import { TC, TL, FC, FL, FG, DEFAULT_FEATURES } from "./terrainColors.js";
-import MapRenderer from "./mapRenderer/MapRenderer.js";
-import { buildLinearNetworks } from "./mapRenderer/RoadNetwork.js";
-import { buildNameGroups } from "./mapRenderer/overlays/LabelOverlay.js";
-import {
-  createViewport, screenToCell, zoomAtPoint, panViewport,
-  clampCellPixels, ZOOM_FACTOR, MIN_CELL_PIXELS, MAX_CELL_PIXELS, getTier,
-} from "./mapRenderer/ViewportState.js";
+import MapView from "./mapRenderer/MapView.jsx";
 import { cellPixelsToHexSize, SQRT3 } from "./mapRenderer/HexMath.js";
 
 // ═══════════════════════════════════════════════════════════════
@@ -24,8 +18,6 @@ function getFeats(cell){
   return [];
 }
 
-const TIER_NAMES = ["Strategic", "Operational", "Tactical", "Close-up"];
-
 // ═══════════════════════════════════════════════════════════════
 // VIEWER COMPONENT
 // ═══════════════════════════════════════════════════════════════
@@ -36,22 +28,12 @@ export default function Viewer({ onBack, initialData }) {
   const [hov, setHov] = useState(null); // "c,r"
   const [af, setAf] = useState(new Set()); // active features
   const [fcts, setFcts] = useState({}); // feature counts
-  const [redrawTick, setRedrawTick] = useState(0);
   const [savedFiles, setSavedFiles] = useState([]);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [filterText, setFilterText] = useState("");
 
-  const canvasRef = useRef(null);
+  const mapViewRef = useRef(null);
   const mmRef = useRef(null);
-  const vpRef = useRef(null); // viewport DOM container
-  const viewportRef = useRef({ centerCol: 0, centerRow: 0, cellPixels: 16 }); // viewport state
-  const dragRef = useRef({ active: false, lastX: 0, lastY: 0 });
-  const rendererRef = useRef(new MapRenderer());
-  const preprocessedRef = useRef({ roadNetworks: null, nameGroups: null });
-  const containerSizeRef = useRef({ w: 800, h: 600 });
-
-  // Zoom animation state
-  const animRef = useRef({ active: false, from: 0, to: 0, pivotCol: 0, pivotRow: 0, startTime: 0, duration: 150 });
 
   // ── Load data ──
   const loadMapData = useCallback((mapData) => {
@@ -64,25 +46,6 @@ export default function Viewer({ onBack, initialData }) {
     setD(mapData);
     setSel(null);
     setHov(null);
-
-    // Preprocess road networks and name groups
-    preprocessedRef.current = {
-      roadNetworks: buildLinearNetworks(mapData.cells, mapData.cols, mapData.rows),
-      nameGroups: buildNameGroups(mapData.cells, mapData.cols, mapData.rows),
-    };
-
-    // Invalidate tile cache
-    rendererRef.current.invalidateAll();
-
-    // Auto-fit viewport
-    const vp = vpRef.current;
-    if (vp) {
-      const w = vp.clientWidth || 800;
-      const h = vp.clientHeight || 600;
-      containerSizeRef.current = { w, h };
-      viewportRef.current = createViewport(mapData.cols, mapData.rows, w, h);
-    }
-    setRedrawTick(t => t + 1);
   }, []);
 
   // Load initialData on mount
@@ -121,284 +84,69 @@ export default function Viewer({ onBack, initialData }) {
     reader.readAsText(file);
   }, [loadMapData]);
 
-  // ── Observe container resize ──
-  useEffect(() => {
-    const el = vpRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(entries => {
-      for (const entry of entries) {
-        containerSizeRef.current = { w: Math.round(entry.contentRect.width), h: Math.round(entry.contentRect.height) };
-        setRedrawTick(t => t + 1);
-      }
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
+  // ── Cell interaction handlers ──
+  const handleCellClick = useCallback((cell) => {
+    if (!D) return;
+    const k = `${cell.c},${cell.r}`;
+    if (D.cells[k]) setSel(prev => prev === k ? null : k);
+  }, [D]);
+
+  const handleCellHover = useCallback((cell) => {
+    const k = cell ? `${cell.c},${cell.r}` : null;
+    setHov(k);
   }, []);
 
-  // ── Invalidate tiles when feature filters change ──
-  useEffect(() => {
-    rendererRef.current.invalidateAll();
-  }, [af]);
-
-  // ── Drawing ──
-  const draw = useCallback(() => {
-    const cv = canvasRef.current;
-    if (!cv || !D) return;
-    const { w, h } = containerSizeRef.current;
-    if (w <= 0 || h <= 0) return;
-
-    // Size canvas to container
-    if (cv.width !== Math.round(w) || cv.height !== Math.round(h)) {
-      cv.width = Math.round(w);
-      cv.height = Math.round(h);
-    }
-    const ctx = cv.getContext("2d");
-    const viewport = viewportRef.current;
-
-    // Parse hover/selection to {c,r} objects
-    const hovCell = hov ? (() => { const [c, r] = hov.split(",").map(Number); return { c, r }; })() : null;
-    const selCell = sel ? (() => { const [c, r] = sel.split(",").map(Number); return { c, r }; })() : null;
-
-    // Render via MapRenderer
-    rendererRef.current.render(ctx, cv.width, cv.height, viewport, D, {
-      activeFeatures: af,
-      roadNetworks: preprocessedRef.current.roadNetworks,
-      nameGroups: preprocessedRef.current.nameGroups,
-      hovCell,
-      selCell,
-      skipLabels: animRef.current.active,
-    });
-
-    // Minimap
-    drawMinimap();
-  }, [D, af, hov, sel, redrawTick]);
-
-  const drawMinimap = useCallback(() => {
-    const mc = mmRef.current;
-    if (!mc || !D) return;
-    const maxDim = 220;
-    const ratio = D.rows / D.cols;
-    const mw = ratio > 1 ? Math.round(maxDim / ratio) : maxDim;
-    const mh = ratio > 1 ? maxDim : Math.round(maxDim * ratio);
-    if (mc.width !== mw || mc.height !== mh) {
-      mc.width = mw; mc.height = mh;
-    }
-    const ctx = mc.getContext("2d");
-    const { w, h } = containerSizeRef.current;
-    rendererRef.current.renderMinimap(ctx, mw, mh, viewportRef.current, D, w, h);
-  }, [D]);
-
-  // Set up re-render callback for progressive tile loading
-  useEffect(() => {
-    rendererRef.current.onNeedsRerender = () => setRedrawTick(t => t + 1);
-    return () => { rendererRef.current.onNeedsRerender = null; };
-  }, []);
-
-  useEffect(() => { draw(); }, [draw]);
-
-  // ── Zoom animation loop (hex-aware) ──
-  const animateZoom = useCallback(() => {
-    const a = animRef.current;
-    if (!a.active) return;
-    const now = performance.now();
-    const t = Math.min(1, (now - a.startTime) / a.duration);
-    const eased = t * (2 - t); // ease-out quadratic
-
-    const newCellPixels = clampCellPixels(a.from + (a.to - a.from) * eased);
-    const { w, h } = containerSizeRef.current;
-
-    // Keep the world pixel under the cursor at the same screen position.
-    // a.wx, a.wy were computed at the OLD hex size; world pixels scale
-    // linearly with size, so rescale them to the NEW size first.
-    const newSize = cellPixelsToHexSize(newCellPixels);
-    const oldSize = cellPixelsToHexSize(a.from);
-    const scale = newSize / oldSize;
-    const newCpx = a.wx * scale - (a.sx - w / 2);
-    const newCpy = a.wy * scale - (a.sy - h / 2);
-    const newCenterRow = newCpy / (newSize * 1.5);
-    const parity = Math.round(newCenterRow) & 1;
-    const newCenterCol = newCpx / (newSize * SQRT3) - 0.5 * parity;
-
-    viewportRef.current = {
-      centerCol: newCenterCol,
-      centerRow: newCenterRow,
-      cellPixels: newCellPixels,
-    };
-
-    setRedrawTick(tick => tick + 1);
-
-    if (t < 1) {
-      requestAnimationFrame(animateZoom);
-    } else {
-      a.active = false;
-      setRedrawTick(tick => tick + 1); // final render with labels
-    }
-  }, []);
-
-  // ── Event handlers ──
-  const handleWheel = useCallback((e) => {
-    e.preventDefault();
-    if (!D) return;
-    const vp = vpRef.current;
-    if (!vp) return;
-    const rect = vp.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
-    const { w, h } = containerSizeRef.current;
-    const factor = e.deltaY < 0 ? ZOOM_FACTOR : 1 / ZOOM_FACTOR;
-
-    const viewport = viewportRef.current;
-    const targetCellPixels = clampCellPixels(viewport.cellPixels * factor);
-
-    // Compute world pixel under cursor for pivot (hex-aware)
-    const size = cellPixelsToHexSize(viewport.cellPixels);
-    const cpx = size * SQRT3 * (viewport.centerCol + 0.5 * (Math.round(viewport.centerRow) & 1));
-    const cpy = size * 1.5 * viewport.centerRow;
-    const wx = mx - w / 2 + cpx;
-    const wy = my - h / 2 + cpy;
-
-    // Start or update zoom animation
-    const a = animRef.current;
-    a.from = viewport.cellPixels;
-    a.to = targetCellPixels;
-    a.wx = wx;
-    a.wy = wy;
-    a.sx = mx;
-    a.sy = my;
-    a.startTime = performance.now();
-    a.duration = 120;
-    if (!a.active) {
-      a.active = true;
-      requestAnimationFrame(animateZoom);
-    }
-  }, [D, animateZoom]);
-
-  const handleMouseDown = useCallback((e) => {
-    dragRef.current = { active: true, lastX: e.clientX, lastY: e.clientY };
-  }, []);
-
-  const handleMouseMove = useCallback((e) => {
-    if (!D) return;
-    if (dragRef.current.active) {
-      const dx = e.clientX - dragRef.current.lastX;
-      const dy = e.clientY - dragRef.current.lastY;
-      dragRef.current.lastX = e.clientX;
-      dragRef.current.lastY = e.clientY;
-      viewportRef.current = panViewport(viewportRef.current, dx, dy);
-      setRedrawTick(t => t + 1);
-    } else {
-      const rect = vpRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const mx = e.clientX - rect.left;
-      const my = e.clientY - rect.top;
-      const { w, h } = containerSizeRef.current;
-      const cell = screenToCell(mx, my, viewportRef.current, w, h, D.cols, D.rows);
-      const k = cell ? `${cell.c},${cell.r}` : null;
-      if (k !== hov) setHov(k);
-    }
-  }, [D, hov]);
-
-  const handleMouseUp = useCallback(() => { dragRef.current.active = false; }, []);
-
-  const handleClick = useCallback((e) => {
-    if (!D) return;
-    const rect = vpRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
-    const { w, h } = containerSizeRef.current;
-    const cell = screenToCell(mx, my, viewportRef.current, w, h, D.cols, D.rows);
-    if (cell) {
-      const k = `${cell.c},${cell.r}`;
-      if (D.cells[k]) setSel(prev => prev === k ? null : k);
-    }
-  }, [D]);
-
-  // Minimap click-to-navigate
-  const handleMinimapClick = useCallback((e) => {
-    if (!D) return;
-    const mc = mmRef.current;
-    if (!mc) return;
-    const rect = mc.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
-    const col = (mx / mc.width) * D.cols;
-    const row = (my / mc.height) * D.rows;
-    viewportRef.current = { ...viewportRef.current, centerCol: col, centerRow: row };
-    setRedrawTick(t => t + 1);
-  }, [D]);
-
-  // Wheel event listener (passive: false for preventDefault)
-  useEffect(() => {
-    const vp = vpRef.current;
-    if (!vp) return;
-    const handler = (e) => { e.preventDefault(); handleWheel(e); };
-    vp.addEventListener("wheel", handler, { passive: false });
-    return () => vp.removeEventListener("wheel", handler);
-  }, [handleWheel]);
-
-  // ── Zoom button helpers ──
-  const zoomIn = useCallback(() => {
-    if (!D) return;
-    const { w, h } = containerSizeRef.current;
-    const newVp = zoomAtPoint(viewportRef.current, w / 2, h / 2, w, h, ZOOM_FACTOR);
-    viewportRef.current = newVp;
-    setRedrawTick(t => t + 1);
-  }, [D]);
-
-  const zoomOut = useCallback(() => {
-    if (!D) return;
-    const { w, h } = containerSizeRef.current;
-    const newVp = zoomAtPoint(viewportRef.current, w / 2, h / 2, w, h, 1 / ZOOM_FACTOR);
-    viewportRef.current = newVp;
-    setRedrawTick(t => t + 1);
-  }, [D]);
-
-  const fitMap = useCallback(() => {
-    if (!D) return;
-    const { w, h } = containerSizeRef.current;
-    viewportRef.current = createViewport(D.cols, D.rows, w, h);
-    rendererRef.current.invalidateAll();
-    setRedrawTick(t => t + 1);
-  }, [D]);
+  // ── Zoom button helpers (delegate to MapView) ──
+  const zoomIn = useCallback(() => { mapViewRef.current?.zoomIn(); }, []);
+  const zoomOut = useCallback(() => { mapViewRef.current?.zoomOut(); }, []);
+  const fitMap = useCallback(() => { mapViewRef.current?.fitMap(); }, []);
 
   // ── Keyboard navigation ──
   useEffect(() => {
     if (!D) return;
     const handler = (e) => {
-      // Don't handle when typing in input fields
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
       const PAN_AMOUNT = 50;
+      const mv = mapViewRef.current;
+      if (!mv) return;
       switch (e.key) {
         case "+": case "=":
-          e.preventDefault(); zoomIn(); break;
+          e.preventDefault(); mv.zoomIn(); break;
         case "-": case "_":
-          e.preventDefault(); zoomOut(); break;
+          e.preventDefault(); mv.zoomOut(); break;
         case "f": case "F":
-          e.preventDefault(); fitMap(); break;
+          e.preventDefault(); mv.fitMap(); break;
         case "Escape":
           setSel(null); break;
-        case "ArrowUp":
+        case "ArrowUp": {
           e.preventDefault();
-          viewportRef.current = panViewport(viewportRef.current, 0, PAN_AMOUNT);
-          setRedrawTick(t => t + 1); break;
-        case "ArrowDown":
+          const vp = mv.getViewport();
+          mv.setViewport({ ...vp, centerRow: vp.centerRow - PAN_AMOUNT / (cellPixelsToHexSize(vp.cellPixels) * 1.5) });
+          break;
+        }
+        case "ArrowDown": {
           e.preventDefault();
-          viewportRef.current = panViewport(viewportRef.current, 0, -PAN_AMOUNT);
-          setRedrawTick(t => t + 1); break;
-        case "ArrowLeft":
+          const vp = mv.getViewport();
+          mv.setViewport({ ...vp, centerRow: vp.centerRow + PAN_AMOUNT / (cellPixelsToHexSize(vp.cellPixels) * 1.5) });
+          break;
+        }
+        case "ArrowLeft": {
           e.preventDefault();
-          viewportRef.current = panViewport(viewportRef.current, PAN_AMOUNT, 0);
-          setRedrawTick(t => t + 1); break;
-        case "ArrowRight":
+          const vp = mv.getViewport();
+          mv.setViewport({ ...vp, centerCol: vp.centerCol - PAN_AMOUNT / (cellPixelsToHexSize(vp.cellPixels) * SQRT3) });
+          break;
+        }
+        case "ArrowRight": {
           e.preventDefault();
-          viewportRef.current = panViewport(viewportRef.current, -PAN_AMOUNT, 0);
-          setRedrawTick(t => t + 1); break;
+          const vp = mv.getViewport();
+          mv.setViewport({ ...vp, centerCol: vp.centerCol + PAN_AMOUNT / (cellPixelsToHexSize(vp.cellPixels) * SQRT3) });
+          break;
+        }
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [D, zoomIn, zoomOut, fitMap]);
+  }, [D]);
 
   // ── Filter helpers ──
   const toggleFeat = useCallback((f) => { setAf(prev => { const n = new Set(prev); if (n.has(f)) n.delete(f); else n.add(f); return n; }); }, []);
@@ -415,19 +163,23 @@ export default function Viewer({ onBack, initialData }) {
 
   // ── Export PNG ──
   const exportPNG = useCallback(() => {
-    if (!D) return;
-    const renderer = rendererRef.current;
-    const offscreen = renderer.renderExport(D, af, preprocessedRef.current.roadNetworks, preprocessedRef.current.nameGroups);
-    // Convert OffscreenCanvas to downloadable PNG
+    if (!D || !mapViewRef.current) return;
+    const exportCellSize = 28;
+    const exportW = Math.ceil((D.cols + 0.5) * exportCellSize);
+    const exportH = Math.ceil(D.rows * exportCellSize * 1.5 / SQRT3 + exportCellSize);
+    const glCanvas = mapViewRef.current.renderExport(exportW, exportH);
+    if (!glCanvas) return;
+
+    // Composite to downloadable canvas
     const cv = document.createElement("canvas");
-    cv.width = offscreen.width;
-    cv.height = offscreen.height;
-    cv.getContext("2d").drawImage(offscreen, 0, 0);
+    cv.width = exportW;
+    cv.height = exportH;
+    cv.getContext("2d").drawImage(glCanvas, 0, 0);
     const a = document.createElement("a");
     a.download = `oc_map_${D.cols}x${D.rows}.png`;
     a.href = cv.toDataURL("image/png");
     a.click();
-  }, [D, af]);
+  }, [D]);
 
   // ── Export LLM text ──
   const exportLLM = useCallback(() => {
@@ -471,7 +223,6 @@ export default function Viewer({ onBack, initialData }) {
     Object.entries(terrCt).sort((a, b) => b[1] - a[1]).forEach(([t, n]) => lines.push(`# ${(TL[t] || t).padEnd(16)} ${n} cells (${((n / total) * 100).toFixed(1)}%)`));
     lines.push(""); lines.push("## FEATURE COUNTS");
     Object.entries(fcts).sort((a, b) => b[1] - a[1]).forEach(([f, n]) => lines.push(`# ${(FL[f] || f).padEnd(20)} ${n} cells`));
-    // Named features summary
     const nameIdx = {};
     for (const k in D.cells) { const fn = D.cells[k].feature_names; if (!fn) continue; for (const [type, name] of Object.entries(fn)) { if (!nameIdx[type]) nameIdx[type] = {}; if (!nameIdx[type][name]) nameIdx[type][name] = []; nameIdx[type][name].push(k); } }
     if (Object.keys(nameIdx).length > 0) {
@@ -485,13 +236,44 @@ export default function Viewer({ onBack, initialData }) {
     const a = document.createElement("a"); a.download = `oc_map_${D.cols}x${D.rows}_llm.txt`; a.href = URL.createObjectURL(blob); a.click(); URL.revokeObjectURL(a.href);
   }, [D, fcts]);
 
+  // ── Minimap drawing ──
+  const drawMinimap = useCallback(() => {
+    const mc = mmRef.current;
+    if (!mc || !D || !mapViewRef.current) return;
+    const maxDim = 220;
+    const ratio = D.rows / D.cols;
+    const mw = ratio > 1 ? Math.round(maxDim / ratio) : maxDim;
+    const mh = ratio > 1 ? maxDim : Math.round(maxDim * ratio);
+    if (mc.width !== mw || mc.height !== mh) {
+      mc.width = mw; mc.height = mh;
+    }
+    const ctx = mc.getContext("2d");
+    mapViewRef.current.renderMinimap(ctx, mw, mh);
+  }, [D]);
+
+  // Redraw minimap when data or viewport changes
+  useEffect(() => { drawMinimap(); });
+
+  // Minimap click-to-navigate
+  const handleMinimapClick = useCallback((e) => {
+    if (!D || !mapViewRef.current) return;
+    const mc = mmRef.current;
+    if (!mc) return;
+    const rect = mc.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const col = (mx / mc.width) * D.cols;
+    const row = (my / mc.height) * D.rows;
+    mapViewRef.current.panTo(col, row);
+  }, [D]);
+
   // ── Cell info ──
   const infoCell = sel || hov;
   const cellData = infoCell && D ? D.cells[infoCell] : null;
 
-  // Current tier name for display
-  const currentTier = D ? getTier(viewportRef.current.cellPixels) : 0;
-  const zoomPercent = D ? Math.round(viewportRef.current.cellPixels / 28 * 100) : 100;
+  // Current viewport info for display
+  const currentVp = mapViewRef.current?.getViewport();
+  const zoomPercent = D && currentVp ? Math.round(currentVp.cellPixels / 28 * 100) : 100;
 
   // ═══════════════════════════════════════════════════════════════
   // RENDER
@@ -602,12 +384,14 @@ export default function Viewer({ onBack, initialData }) {
       fontFamily: typography.fontFamily,
       color: colors.text.primary,
     }}>
-      {/* Viewport */}
-      <div ref={vpRef} style={{ width: "100%", height: "100%", cursor: dragRef.current.active ? "grabbing" : "grab" }}
-        onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}
-        onClick={handleClick}>
-        <canvas ref={canvasRef} style={{ display: "block", width: "100%", height: "100%" }} />
-      </div>
+      {/* Map rendering — WebGL terrain + Canvas 2D overlays */}
+      <MapView
+        ref={mapViewRef}
+        mapData={D}
+        activeFeatures={af}
+        onCellClick={handleCellClick}
+        onCellHover={handleCellHover}
+      />
 
       {/* Top bar */}
       <div style={{
@@ -644,7 +428,6 @@ export default function Viewer({ onBack, initialData }) {
           animation: "fadeIn 0.2s ease-out",
         }}>
           {(() => {
-            // Show selected cell info pinned at top, hover info below
             const selData = sel ? D.cells[sel] : null;
             const hovData = hov && hov !== sel ? D.cells[hov] : null;
             const sections = [];
@@ -839,8 +622,7 @@ export default function Viewer({ onBack, initialData }) {
           display: "flex", alignItems: "center", gap: space[1],
         }}>
           <span>{zoomPercent}%</span>
-          <span style={{ color: colors.accent.blue, fontSize: 9 }}>{TIER_NAMES[currentTier]}</span>
-          <span style={{ color: colors.text.muted, fontSize: 9 }}>{viewportRef.current.cellPixels.toFixed(1)}px/cell</span>
+          <span style={{ color: colors.text.muted, fontSize: 9 }}>{currentVp ? currentVp.cellPixels.toFixed(1) : "—"}px/cell</span>
         </div>
       </div>
     </div>

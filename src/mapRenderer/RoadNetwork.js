@@ -3,7 +3,6 @@
 // ════════════════════════════════════════════════════════════════
 
 import { getNeighbors } from "./HexMath.js";
-import { gridToScreen, getVisibleRange } from "./ViewportState.js";
 
 const ROAD_TYPES = ["highway", "major_road", "road", "minor_road", "footpath", "trail"];
 const RAIL_TYPES = ["railway", "light_rail"];
@@ -75,56 +74,6 @@ export function buildLinearNetworks(cells, cols, rows) {
     }
   }
   return networks;
-}
-
-// Draw all visible road/rail/waterway segments for a given tier
-export function drawLinearFeatures(ctx, networks, viewport, canvasWidth, canvasHeight, tier, activeFeatures) {
-  // Viewport culling: compute visible cell range with padding
-  const pad = 2;
-  const visRange = getVisibleRange(viewport, canvasWidth, canvasHeight, 999999, 999999);
-  const minC = visRange.colMin - pad;
-  const maxC = visRange.colMax + pad;
-  const minR = visRange.rowMin - pad;
-  const maxR = visRange.rowMax + pad;
-
-  for (const type of LINEAR_TYPES) {
-    const config = LINE_CONFIG[type];
-    if (!config || tier < config.minTier) continue;
-    if (activeFeatures && !activeFeatures.has(type)) continue;
-    const segments = networks[type];
-    if (!segments || segments.length === 0) continue;
-
-    const width = config.width[tier] || 0;
-    if (width <= 0) continue;
-
-    ctx.strokeStyle = config.color;
-    ctx.lineWidth = width;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    if (config.dash) {
-      ctx.setLineDash(config.dash.map(d => d * (viewport.cellPixels / 16)));
-    } else {
-      ctx.setLineDash([]);
-    }
-    ctx.globalAlpha = 0.85;
-
-    ctx.beginPath();
-    for (const seg of segments) {
-      // Skip segments entirely outside viewport
-      if (seg.from.c < minC && seg.to.c < minC) continue;
-      if (seg.from.c > maxC && seg.to.c > maxC) continue;
-      if (seg.from.r < minR && seg.to.r < minR) continue;
-      if (seg.from.r > maxR && seg.to.r > maxR) continue;
-
-      const from = gridToScreen(seg.from.c, seg.from.r, viewport, canvasWidth, canvasHeight);
-      const to = gridToScreen(seg.to.c, seg.to.r, viewport, canvasWidth, canvasHeight);
-      ctx.moveTo(from.x, from.y);
-      ctx.lineTo(to.x, to.y);
-    }
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-  }
-  ctx.setLineDash([]);
 }
 
 // Get all linear feature types
