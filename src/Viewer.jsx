@@ -22,7 +22,7 @@ function getFeats(cell){
 // VIEWER COMPONENT
 // ═══════════════════════════════════════════════════════════════
 
-export default function Viewer({ onBack, initialData }) {
+export default function Viewer({ onBack, onParser, initialData }) {
   const [D, setD] = useState(null); // map data
   const [sel, setSel] = useState(null); // "c,r"
   const [hov, setHov] = useState(null); // "c,r"
@@ -424,6 +424,7 @@ export default function Viewer({ onBack, initialData }) {
             </Button>
             <input type="file" accept=".json" onChange={handleFile} style={{ display: "none" }} />
           </label>
+          {onParser && <Button variant="secondary" size="sm" onClick={onParser}>Parser</Button>}
         </div>
       </div>
 
