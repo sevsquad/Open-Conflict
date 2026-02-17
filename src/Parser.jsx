@@ -1188,7 +1188,7 @@ function parseFeatures(elements, tier) {
         if (tags.natural === "wetland") { tt = "wetland"; tp = 12; }
         if (tags.natural === "sand") { tt = "desert"; tp = 9; }
         if (tags.natural === "glacier") { tt = "ice"; tp = 14; }
-        if (tags.landuse === "residential") { if (tier !== "sub-tactical") { tt = "light_urban"; tp = 18; } }
+        if (tags.landuse === "residential") { if (tier === "operational" || tier === "strategic") { tt = "light_urban"; tp = 18; } }
         if (tags.landuse === "commercial" || tags.landuse === "retail") { tt = "light_urban"; tp = 18; }
         if (tags.landuse === "industrial") { tt = "light_urban"; tp = 18; }
         if (tags.landuse === "quarry") { tt = "open_ground"; tp = 5; }
@@ -1297,8 +1297,8 @@ function parseFeatures(elements, tier) {
         tp = 15;
       }
       if (tags.natural === "wood" || tags.landuse === "forest") { tt = "forest"; tp = 10; }
-      if (tags.landuse === "residential") { if (tier !== "sub-tactical") { tt = "light_urban"; tp = 18; } }
-      if (tags.landuse === "commercial" || tags.landuse === "industrial") { tt = "dense_urban"; tp = 20; }
+      if (tags.landuse === "residential") { if (tier === "operational" || tier === "strategic") { tt = "light_urban"; tp = 18; } }
+      if (tags.landuse === "commercial" || tags.landuse === "industrial") { tt = "light_urban"; tp = 18; }
       for (const m of el.members) {
         if (m.role === "outer" && m.geometry) { if (tt) terrAreas.push({ type: tt, pri: tp, ring: m.geometry }); }
       }
@@ -2058,7 +2058,9 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
         // OSM says urban but WC shows minimal built-up? Likely zoning, not actual city
         if (["light_urban", "dense_urban"].includes(tt) && wcMixCell) {
           const builtUp = wcMixCell["light_urban"] || 0;
-          const revertThreshold = 0.05 * Math.min(1.5, Math.max(0.5, cellKm / 4));
+          // Stricter at small scales: require more satellite confirmation for OSM urban claims
+          const revertScale = cellKm >= 4 ? cellKm / 4 : cellKm >= 2 ? 1.0 : cellKm >= 1 ? 1.5 : 2.0;
+          const revertThreshold = 0.08 * revertScale;
           if (builtUp < revertThreshold) tt = wcBase;
         }
       } else {
@@ -2071,9 +2073,9 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       if (wcMixCell && tier !== "sub-tactical") {
         const builtUp = wcMixCell["light_urban"] || 0;
         const isAlreadyUrban = ["light_urban", "dense_urban"].includes(tt);
-        const urbanScale = Math.min(1.5, Math.max(0.5, cellKm / 4));
+        const urbanScale = Math.min(1.5, Math.max(0.75, cellKm / 4));
         const denseThreshold = 0.45 * urbanScale;
-        const lightThreshold = 0.20 * urbanScale;
+        const lightThreshold = 0.25 * urbanScale;
         const revertThreshold = 0.05 * urbanScale;
         // Promote based on WC built-up density — applies even if OSM already set light_urban
         if (builtUp >= denseThreshold) tt = "dense_urban";
@@ -2081,7 +2083,7 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
         // Below lightThreshold and not already urban: "town" feature added later, terrain stays natural
         // OSM says urban AND WC agrees at lower threshold
         const osmDenseThreshold = 0.15 * urbanScale;
-        const osmLightThreshold = 0.10 * urbanScale;
+        const osmLightThreshold = 0.12 * urbanScale;
         if (!isAlreadyUrban && osmVotes["dense_urban"] && builtUp >= osmDenseThreshold) tt = "dense_urban";
         else if (!isAlreadyUrban && osmVotes["light_urban"] && builtUp >= osmLightThreshold) tt = "light_urban";
       }
@@ -2271,7 +2273,7 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       if (wcMixCell && tier !== "sub-tactical") {
         const builtUp = wcMixCell["light_urban"] || 0;
         const isUrbanTerrain = ["light_urban", "dense_urban"].includes(terrain[k]);
-        if (!isUrbanTerrain && builtUp >= 0.05 && builtUp < 0.20) ft.add("town");
+        if (!isUrbanTerrain && builtUp >= 0.05 && builtUp < 0.30) ft.add("town");
       }
       // Sub-tactical extras
       if (tier === "sub-tactical") {
@@ -2429,12 +2431,12 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
   // Highway interchanges alone generate 8-16 distinct ways per 10km cell,
   // so thresholds must be high enough to require genuine urban road networks.
   if (cellRoadCount) {
-    const roadThresh = tier === "strategic" ? 20 : tier === "operational" ? 10 : Math.max(2, Math.round(3.5 * Math.pow(cellKm, 1.4)));
+    const roadThresh = tier === "strategic" ? 20 : tier === "operational" ? 10 : Math.max(3, Math.round(3.5 * Math.pow(cellKm, 1.4)));
     const denseThresh = tier === "strategic" ? 40 : tier === "operational" ? 20 : roadThresh * 2;
-    const denseNeighborReq = tier === "strategic" ? 4 : tier === "operational" ? 3 : 1;
-    const lightNeighborReq = tier === "strategic" ? 3 : tier === "operational" ? 2 : 1;
-    // At strategic/operational scale, require WC built-up signal to prevent highway corridor false positives
-    const wcGateThreshold = tier === "strategic" ? 0.08 : tier === "operational" ? 0.05 : 0;
+    const denseNeighborReq = tier === "strategic" ? 4 : tier === "operational" ? 3 : 2;
+    const lightNeighborReq = tier === "strategic" ? 3 : tier === "operational" ? 2 : 2;
+    // Require WC built-up signal at all tiers to prevent highway corridor / rural road false positives
+    const wcGateThreshold = tier === "strategic" ? 0.08 : tier === "operational" ? 0.05 : 0.03;
 
     for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
       const k = `${c},${r}`;
