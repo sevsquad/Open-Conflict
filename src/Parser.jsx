@@ -100,8 +100,6 @@ const FEATURE_TYPES = {
   // Military
   military_base: { label: "Military Base", color: "#BF5050", group: "Military" },
   // Strategic
-  chokepoint:    { label: "Chokepoint",    color: "#FF4040", group: "Strategic" },
-  landing_zone:  { label: "Landing Zone",  color: "#40E080", group: "Strategic" },
   beach:         { label: "Beach",         color: "#E0D0A0", group: "Strategic" },
   town:          { label: "Town",          color: "#E8A040", group: "Strategic" },
   // Structures
@@ -259,7 +257,8 @@ function createHexProjection(bbox, cols, rows) {
           const dx = Math.abs(hx - cx);
           const dy = Math.abs(hy - cy);
           // Pointy-top hex (size=1): dx ≤ √3/2 and dy ≤ 1 - dx/√3
-          if (dy > 1.01 - dx / SQRT3) continue;
+          // Inset by 2% to avoid sampling neighboring cells at hex edges
+          if (dy > 0.98 - dx / SQRT3) continue;
           pts.push({ lat, lon });
         }
       }
@@ -1179,8 +1178,8 @@ function parseFeatures(elements, tier) {
         if (tags.natural === "sand") { tt = "desert"; tp = 9; }
         if (tags.natural === "glacier") { tt = "ice"; tp = 14; }
         if (tags.landuse === "residential") { if (tier !== "sub-tactical") { tt = "light_urban"; tp = 18; } }
-        if (tags.landuse === "commercial" || tags.landuse === "retail") { tt = "dense_urban"; tp = 20; }
-        if (tags.landuse === "industrial") { tt = "dense_urban"; tp = 19; }
+        if (tags.landuse === "commercial" || tags.landuse === "retail") { tt = "light_urban"; tp = 18; }
+        if (tags.landuse === "industrial") { tt = "light_urban"; tp = 18; }
         if (tags.landuse === "quarry") { tt = "open_ground"; tp = 5; }
         // Sub-tactical specific terrain
         if (tier === "sub-tactical") {
@@ -2001,7 +2000,7 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
           // Skip samples in bbox corners that fall outside the hex
           const { hx: shx, hy: shy } = proj.geoToHexPixel(tLng, tLat);
           const sdx = Math.abs(shx - hcx), sdy = Math.abs(shy - hcy);
-          if (sdy > 1.01 - sdx / SQRT3) continue;
+          if (sdy > 0.98 - sdx / SQRT3) continue;
           let best = null, bestPri = -1;
           for (const ai of tCandidates) {
             const a = feat.terrAreas[ai];
@@ -2047,11 +2046,10 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
         const denseThreshold = 0.45 * urbanScale;
         const lightThreshold = 0.20 * urbanScale;
         const revertThreshold = 0.05 * urbanScale;
-        if (!isAlreadyUrban) {
-          if (builtUp >= denseThreshold) tt = "dense_urban";
-          else if (builtUp >= lightThreshold) tt = "light_urban";
-          // Below lightThreshold: "town" feature added later, terrain stays natural
-        }
+        // Promote based on WC built-up density — applies even if OSM already set light_urban
+        if (builtUp >= denseThreshold) tt = "dense_urban";
+        else if (!isAlreadyUrban && builtUp >= lightThreshold) tt = "light_urban";
+        // Below lightThreshold and not already urban: "town" feature added later, terrain stays natural
         // OSM says urban AND WC agrees at lower threshold
         const osmDenseThreshold = 0.15 * urbanScale;
         const osmLightThreshold = 0.10 * urbanScale;
@@ -2148,7 +2146,7 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
           // Skip samples in bbox corners that fall outside the hex
           const { hx: ihx, hy: ihy } = proj.geoToHexPixel(tLng, tLat);
           const idx2 = Math.abs(ihx - hcx), idy2 = Math.abs(ihy - hcy);
-          if (idy2 > 1.01 - idx2 / SQRT3) continue;
+          if (idy2 > 0.98 - idx2 / SQRT3) continue;
           for (const ai of iaCandidates) {
             const a = feat.infraAreas[ai];
             if (["military_base", "airfield", "port"].includes(a.type)) continue;
@@ -2194,7 +2192,7 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
           // Skip samples in bbox corners that fall outside the hex
           const { hx: fhx, hy: fhy } = proj.geoToHexPixel(tLng, tLat);
           const fdx = Math.abs(fhx - hcx), fdy = Math.abs(fhy - hcy);
-          if (fdy > 1.01 - fdx / SQRT3) continue;
+          if (fdy > 0.98 - fdx / SQRT3) continue;
           for (const ai of iaCandidates) {
             const a = feat.infraAreas[ai];
             if (["military_base", "airfield", "port"].includes(a.type)) continue;
@@ -2429,69 +2427,6 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
 
       if (rc >= denseThresh && neighborUrbanRoads >= denseNeighborReq) tG[k] = "dense_urban";
       else if (neighborUrbanRoads >= lightNeighborReq) tG[k] = "light_urban";
-    }
-  }
-
-  // ── CHOKEPOINT — passable terrain narrows between deep impassable barriers ──
-  // Uses proper hex neighbor directions (3 opposite pairs) instead of cardinal offsets
-  const isImpass = t => ["deep_water", "coastal_water", "lake", "mountain", "peak"].includes(t);
-  const isPass = t => !isImpass(t) && !isW(t);
-  const hexDeepImpass = (c, r, dirIdx) => {
-    // Check 2 cells deep in a hex direction — both must be impassable (or off-map)
-    const [c1, r1] = getNeighbors(c, r)[dirIdx];
-    const k1 = `${c1},${r1}`;
-    const t1 = tG[k1];
-    if (t1 && !isImpass(t1)) return false;
-    const [c2, r2] = getNeighbors(c1, r1)[dirIdx];
-    const k2 = `${c2},${r2}`;
-    const t2 = tG[k2];
-    return (!t1 || isImpass(t1)) && (!t2 || isImpass(t2));
-  };
-  for (let r = 1; r < rows - 1; r++) for (let c = 1; c < cols - 1; c++) {
-    const k = `${c},${r}`;
-    if (!isPass(tG[k])) continue;
-    // 3 opposite hex direction pairs: E(0)↔W(3), NE(1)↔SW(4), NW(2)↔SE(5)
-    const isChoke =
-      (hexDeepImpass(c, r, 0) && hexDeepImpass(c, r, 3)) ||
-      (hexDeepImpass(c, r, 1) && hexDeepImpass(c, r, 4)) ||
-      (hexDeepImpass(c, r, 2) && hexDeepImpass(c, r, 5));
-    if (isChoke) {
-      if (!fG[k]) fG[k] = [];
-      if (!fG[k].includes("chokepoint")) fG[k].push("chokepoint");
-    }
-  }
-
-  // ── LANDING ZONE — open, flat, non-urban, non-forest, non-water ──
-  {
-    const lzTerrain = ["open_ground", "light_veg", "farmland", "desert"];
-    const slopeKm = cellKm > 0 ? cellKm : 0.01;
-    // Pass 1: identify all candidate LZ cells
-    const lzCandidates = new Set();
-    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
-      const k = `${c},${r}`;
-      if (!lzTerrain.includes(tG[k])) continue;
-      const e = elevG[k] || 0;
-      let maxD = 0;
-      for (const [nc, nr] of getNeighbors(c, r)) {
-        const nk = `${nc},${nr}`;
-        if (elevG[nk] !== undefined) { const d = Math.abs(e - (elevG[nk] || 0)); if (d > maxD) maxD = d; }
-      }
-      const slopeDeg = Math.atan(maxD / (slopeKm * 1000)) * (180 / Math.PI);
-      if (slopeDeg < 5) lzCandidates.add(k);
-    }
-    // Pass 2: at tactical, require adjacent LZ candidate (cluster of 2+)
-    const needCluster = (tier === "tactical" || tier === "sub-tactical");
-    for (const k of lzCandidates) {
-      if (needCluster) {
-        const [c, r] = k.split(",").map(Number);
-        let hasNeighborLZ = false;
-        for (const [nc, nr] of getNeighbors(c, r)) {
-          if (lzCandidates.has(`${nc},${nr}`)) { hasNeighborLZ = true; break; }
-        }
-        if (!hasNeighborLZ) continue;
-      }
-      if (!fG[k]) fG[k] = [];
-      fG[k].push("landing_zone");
     }
   }
 
@@ -2988,7 +2923,7 @@ export default function Parser({ onBack, onViewMap }) {
   const [gC, setGC] = useState(0), [gR, setGR] = useState(0);
   const [status, setStatus] = useState(""), [error, setError] = useState(null), [gen, setGen] = useState(false);
   const [pt, setPt] = useState(null), [op, setOp] = useState(90);
-  const [activeFeatures, setActiveFeatures] = useState(new Set(["highway","major_road","railway","military_base","airfield","port","dam","river","chokepoint","landing_zone","beach","power_plant","pipeline","town"]));
+  const [activeFeatures, setActiveFeatures] = useState(new Set(["highway","major_road","railway","military_base","airfield","port","dam","river","beach","power_plant","pipeline","town"]));
   const [elevInfo, setElevInfo] = useState("");
   const [progress, setProgress] = useState(null);
   const [startTime, setStartTime] = useState(null);
