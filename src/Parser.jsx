@@ -1334,15 +1334,34 @@ function parseFeatures(elements, tier) {
 // ════════════════════════════════════════════════════════════════
 
 // ════════════════════════════════════════════════════════════════
+// MAJOR CANALS — canals with strategic/military significance.
+// At operational/strategic/theater, ALL canals are filtered out except these.
+// Canals still render as water features (blue lines); only navigability is suppressed.
+// ════════════════════════════════════════════════════════════════
+const MAJOR_CANALS = new Set([
+  // The world's most strategically significant canals
+  "suez", "panama", "kiel", "grand canal", "corinth",
+  "volga-don", "volga–don",
+  "white sea-baltic", "white sea–baltic", "belomorkanal",
+  // Common OSM alternate names / translations
+  "canal de suez", "suezkanal", "canale di suez",
+  "canal de panamá", "panamakanal",
+  "nord-ostsee-kanal", "kaiser-wilhelm-kanal",
+  "canal de corinthe",
+  "beijing-hangzhou grand canal", "jing-hang grand canal",
+  "京杭大运河", "大运河",
+]);
+
+// ════════════════════════════════════════════════════════════════
 // RIVER WHITELIST — curated list of significant rivers for strategic/operational
 // Returns a Set of lowercase river names (same shape as fetchWikidataRivers).
 // ════════════════════════════════════════════════════════════════
 function getRiverWhitelistNames(tier, cellKm) {
   const names = new Set();
-  // Theater (≥15km cells): scalerank 0-3 (high confidence only — continental-scale rivers)
-  // Strategic: scalerank 0-5 (high + medium confidence)
+  // Theater (≥15km cells): scalerank 0-5 (continental rivers + significant crossings)
+  // Strategic: scalerank 0-6 (adds medium-scale rivers)
   // Operational: scalerank 0-7 (all included rivers)
-  const maxScalerank = cellKm >= 15 ? 3 : tier === "strategic" ? 5 : 7;
+  const maxScalerank = cellKm >= 15 ? 5 : tier === "strategic" ? 6 : 7;
   for (const r of riverWhitelistData.rivers) {
     if (!r.include) continue;
     if (r.scalerank > maxScalerank) continue;
@@ -1359,8 +1378,8 @@ function getRiverWhitelistNames(tier, cellKm) {
 // ════════════════════════════════════════════════════════════════
 async function fetchWikidataRivers(bbox, tier, log, cellKm) {
   // Length thresholds by tier (km)
-  // Theater (≥15km cells): 200km — only continental-scale rivers
-  const minLength = cellKm >= 15 ? 200 : tier === "strategic" ? 100 : tier === "operational" ? 40 : 15;
+  // Theater (≥15km cells): 100km — matches strategic (scalerank ≤5 aligns with ≥100km rivers)
+  const minLength = cellKm >= 15 ? 100 : tier === "strategic" ? 100 : tier === "operational" ? 40 : 15;
 
   // Expand bbox by 5° to catch rivers whose coordinate is outside but path goes through
   const expand = 5;
@@ -1518,6 +1537,10 @@ LIMIT 10000`.trim();
       "flinders", "fitzroy", "burdekin", "mitchell", "diamantina",
       "thomson", "barcoo", "gascoyne", "ashburton", "fortescue",
       "ord", "victoria", "daly",
+      // ── MAJOR CANALS (strategic chokepoints) ──
+      "suez", "panama", "kiel", "grand canal", "corinth",
+      "volga-don", "white sea-baltic", "belomorkanal",
+      "nord-ostsee-kanal",
     ]);
 
     let filtered = 0;
@@ -1816,6 +1839,18 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       };
 
       for (const nl of feat.navigableLines) {
+        // Canal filter: at operational/strategic/theater, only major strategic canals pass.
+        // All other canals are suppressed — they still render as water, just not as navigable.
+        if (nl.isCanal && (tier === "strategic" || tier === "operational")) {
+          if (!nl.actualName) continue; // unnamed canals always filtered at these tiers
+          const canalLower = nl.actualName.toLowerCase();
+          let isMajor = false;
+          for (const mc of MAJOR_CANALS) {
+            if (canalLower.includes(mc) || mc.includes(canalLower)) { isMajor = true; break; }
+          }
+          if (!isMajor) continue;
+        }
+
         const wayCells = new Set();
         for (const [c, r] of rasterizeWay(nl.nodes)) wayCells.add(`${c},${r}`);
         const wName = nl.actualName || null;
