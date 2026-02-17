@@ -1616,7 +1616,7 @@ LIMIT 2000`.trim();
   }
 }
 
-function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellKm, wikidataRivers, aridityGrid) {
+function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellKm, wikidataRivers, aridityGrid, metroCities) {
   const { south, north, west, east } = bbox;
   const proj = createHexProjection(bbox, cols, rows);
   const elev = elevData.elevations;
@@ -1979,6 +1979,73 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
     }
   }
 
+  // ── Metro area boost — population-scaled urban boost for large-scale maps ──
+  // At operational/strategic scale, WorldCover pixel dilution causes cities to
+  // vanish because urban pixels are a minority in large hex cells. This uses the
+  // bundled metro dataset to inject a population-proportional boost with gaussian
+  // decay from each city center outward. The boost is additive to the composite
+  // urban score computed later — it doesn't replace any existing signal.
+  const metroBoost = {};
+  if (metroCities && (tier === "operational" || tier === "strategic")) {
+    const METRO_K = 0.0025;        // power-law coefficient for area estimation
+    const METRO_BETA = 0.78;       // power-law exponent (sub-linear: bigger cities are denser)
+    const METRO_EXPANSION = 1.5;   // BFS extends to 1.5x estimated radius for suburban fringe
+    const MIN_POP = tier === "strategic" ? 300000 : 100000;
+
+    // Quick bbox filter with generous margin for decay radius
+    const marginKm = 50;
+    const marginLat = marginKm / 111.32;
+    const midLat = (bbox.south + bbox.north) / 2;
+    const marginLon = marginKm / (111.32 * Math.cos(midLat * Math.PI / 180));
+
+    let metroCount = 0;
+    for (const city of metroCities) {
+      if (city.p < MIN_POP) continue;
+      if (city.lat < south - marginLat || city.lat > north + marginLat) continue;
+      if (city.lng < west - marginLon || city.lng > east + marginLon) continue;
+
+      // Estimate built-up footprint from population (empirical urban scaling law)
+      // Calibrated: Delhi (33M) → ~1800 km², London (9.5M) → ~700 km², 1M city → ~120 km²
+      const builtUpKm2 = METRO_K * Math.pow(city.p, METRO_BETA);
+      const radiusKm = Math.sqrt(builtUpKm2 / Math.PI);
+      const radiusHex = Math.max(1, Math.round(radiusKm / cellKm));
+      // Gaussian sigma: half the radius gives natural dense-core → suburban → rural gradient
+      const sigma = Math.max(1, radiusHex / 2);
+      const maxBFS = Math.ceil(radiusHex * METRO_EXPANSION);
+
+      const centerCell = geoToCell(city.lng, city.lat);
+      if (!centerCell) continue;
+      metroCount++;
+
+      const seedK = `${centerCell[0]},${centerCell[1]}`;
+      const queue = [seedK];
+      const visited = new Set([seedK]);
+      const dist = { [seedK]: 0 };
+      let qi = 0;
+
+      while (qi < queue.length) {
+        const ck = queue[qi++];
+        const d = dist[ck];
+        // Gaussian decay: 1.0 at center, ~0.13 at radiusHex, ~0.01 at 1.5x radiusHex
+        const boost = Math.exp(-((d * d) / (sigma * sigma)));
+        metroBoost[ck] = Math.max(metroBoost[ck] || 0, boost);
+
+        if (d < maxBFS) {
+          const [cc, cr] = ck.split(",").map(Number);
+          for (const [nc, nr] of getNeighbors(cc, cr)) {
+            const nk = `${nc},${nr}`;
+            if (nc >= 0 && nc < cols && nr >= 0 && nr < rows && !visited.has(nk)) {
+              visited.add(nk); queue.push(nk); dist[nk] = d + 1;
+            }
+          }
+        }
+      }
+    }
+    if (onS && metroCount > 0) {
+      onS(`Metro boost: ${metroCount} cities, ${Object.keys(metroBoost).length} cells boosted`);
+    }
+  }
+
   // Airfield, port, military_base — centroid flagging with area filter at strategic
   const cellAirfield = new Set(), cellPort = new Set(), cellMilitaryBase = new Set();
   if (feat.infraAreas) {
@@ -2121,6 +2188,12 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       const roadFrac = Math.min(1.0, (cellRoadCount[k] || 0) / roadCeiling);
       const settBoost = settlementInfluence[k] || 0;
       urbanScore[k] = Math.min(1.0, 0.50 * wcBU + 0.20 * osmUrbanFrac + 0.15 * roadFrac + 0.15 * settBoost);
+
+      // Metro whitelist boost — additive, only nonzero at operational/strategic
+      // where WorldCover dilution makes cities invisible
+      if (metroBoost[k]) {
+        urbanScore[k] = Math.min(1.0, urbanScore[k] + metroBoost[k]);
+      }
 
       // Force non-urban terrain during this loop so elevation modifiers apply.
       // Urban terrain is assigned in the cluster phase after the main loop.
@@ -2399,6 +2472,8 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       if (size < MIN_CLUSTER && !cluster.hasSettlement) continue;
 
       for (const k of cluster.cells) {
+        // Don't urbanize water cells (metro boost can push coastal cells over threshold)
+        if (["deep_water", "coastal_water", "lake"].includes(terrain[k])) continue;
         const score = urbanScore[k] || 0;
         if (score >= DENSE_SCORE && size >= MIN_CLUSTER_DENSE) {
           terrain[k] = "dense_urban";
@@ -3207,6 +3282,10 @@ export default function Parser({ onBack, onViewMap }) {
         ? fetchWikidataRivers(bbox, tier, log, cellKm).catch(() => null)
         : Promise.resolve(null);
       const aridityPromise = fetchAridityData(bbox, cols, rows, setStatus, log);
+      // Metro whitelist: load bundled cities dataset for urban boost at large scales
+      const metroCitiesPromise = (tier === "operational" || tier === "strategic")
+        ? import("./data/cities.json").then(m => m.default || m)
+        : Promise.resolve(null);
 
       const els = await fetchOSM(bbox, setStatus, setProgress, mapW, mapH, cellKm, elevData.elevations, cols, rows, log);
       const feat = parseFeatures(els, tier);
@@ -3220,6 +3299,7 @@ export default function Parser({ onBack, onViewMap }) {
         ? new Set([...whitelistNames, ...(wikidataNames || [])])
         : wikidataNames;
       const aridityGrid = await aridityPromise;
+      const metroCities = await metroCitiesPromise;
       log.section("PARSED FEATURES");
       const navNamed = feat.navigableLines.filter(nl => nl.named).length;
       const navTagged = feat.navigableLines.filter(nl => nl.tagged).length;
@@ -3239,10 +3319,16 @@ export default function Parser({ onBack, onViewMap }) {
       ]);
       setStatus(`${feat.terrAreas.length} terrain, ${feat.infraAreas.length} installs, ${feat.infraLines.length} lines`);
 
+      if (metroCities) {
+        const minPop = tier === "strategic" ? 300000 : 100000;
+        const eligible = metroCities.filter(c => c.p >= minPop).length;
+        log.info(`Metro whitelist: ${metroCities.length} cities loaded, ${eligible} eligible (pop ≥ ${(minPop/1000).toFixed(0)}k for ${tier})`);
+      }
+
       // ── PHASE 4: CLASSIFY (WorldCover base + OSM overrides + elevation) ──
       setProgress({ phase: "Processing", current: 1, total: 2 });
       setStatus("Classifying..."); await new Promise(r => setTimeout(r, 20));
-      const res = classifyGrid(bbox, cols, rows, feat, elevData, setStatus, wcData, tier, cellKm, wikidataRivers, aridityGrid);
+      const res = classifyGrid(bbox, cols, rows, feat, elevData, setStatus, wcData, tier, cellKm, wikidataRivers, aridityGrid, metroCities);
 
       setProgress({ phase: "Processing", current: 2, total: 2 });
       setStatus("Post-processing..."); await new Promise(r => setTimeout(r, 20));
