@@ -2275,7 +2275,7 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
 // POST-PROCESSING
 // ════════════════════════════════════════════════════════════════
 
-function postProc(terrain, infra, attrs, features, featureNames, cols, rows, elevG, cellKm, elevCoverage, cellRoadCount, cellBuildingPct, tier, wcGrid, wcHasData) {
+function postProc(terrain, infra, attrs, features, featureNames, cols, rows, elevG, cellKm, elevCoverage, cellRoadCount, cellBuildingPct, tier, wcGrid, wcHasData, wcMix) {
   let tG = { ...terrain }, iG = { ...infra }, aG = {};
   for (const k in attrs) aG[k] = [...attrs[k]];
   // Features: deep copy
@@ -2378,17 +2378,28 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
   }
 
   // ── DENSE URBAN — road density clustering ──
+  // At strategic scale, only major roads (motorway/trunk/primary) are queried.
+  // Highway interchanges alone generate 8-16 distinct ways per 10km cell,
+  // so thresholds must be high enough to require genuine urban road networks.
   if (cellRoadCount) {
-    const roadThresh = tier === "strategic" ? 8 : tier === "operational" ? 10 : Math.max(2, Math.round(3.5 * Math.pow(cellKm, 1.4)));
-    const denseThresh = tier === "strategic" ? 16 : tier === "operational" ? 20 : roadThresh * 2;
+    const roadThresh = tier === "strategic" ? 20 : tier === "operational" ? 10 : Math.max(2, Math.round(3.5 * Math.pow(cellKm, 1.4)));
+    const denseThresh = tier === "strategic" ? 40 : tier === "operational" ? 20 : roadThresh * 2;
     const denseNeighborReq = tier === "strategic" ? 4 : tier === "operational" ? 3 : 1;
-    const lightNeighborReq = 1;
+    const lightNeighborReq = tier === "strategic" ? 3 : tier === "operational" ? 2 : 1;
+    // At strategic/operational scale, require WC built-up signal to prevent highway corridor false positives
+    const wcGateThreshold = tier === "strategic" ? 0.08 : tier === "operational" ? 0.05 : 0;
 
     for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
       const k = `${c},${r}`;
       if (!["open_ground", "light_veg", "farmland"].includes(tG[k])) continue;
       const rc = cellRoadCount[k] || 0;
       if (rc < roadThresh) continue;
+
+      // WC cross-validation: skip if satellite shows negligible built-up
+      if (wcGateThreshold > 0 && wcMix) {
+        const builtUp = wcMix[k] ? (wcMix[k]["light_urban"] || 0) : 0;
+        if (builtUp < wcGateThreshold) continue;
+      }
 
       let neighborUrbanRoads = 0;
       for (const [nc, nr] of getNeighbors(c, r)) {
@@ -3060,7 +3071,7 @@ export default function Parser({ onBack, onViewMap }) {
 
       setProgress({ phase: "Processing", current: 2, total: 2 });
       setStatus("Post-processing..."); await new Promise(r => setTimeout(r, 20));
-      const pp = postProc(res.terrain, res.infra, res.attrs, res.features, res.featureNames, cols, rows, res.elevG, cellKm, res.elevCoverage, res.cellRoadCount, res.cellBuildingPct, tier, wcData ? wcData.wcGrid : null, wcData ? wcData.wcHasData : null);
+      const pp = postProc(res.terrain, res.infra, res.attrs, res.features, res.featureNames, cols, rows, res.elevG, cellKm, res.elevCoverage, res.cellRoadCount, res.cellBuildingPct, tier, wcData ? wcData.wcGrid : null, wcData ? wcData.wcHasData : null, wcData ? wcData.wcMix : null);
 
       // ── LOG TERRAIN DISTRIBUTION ──
       log.section("TERRAIN DISTRIBUTION");
