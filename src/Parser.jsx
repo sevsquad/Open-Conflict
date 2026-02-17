@@ -1939,12 +1939,14 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
   // to known human settlements and prevent false positives from highway interchanges.
   const settlementInfluence = {};
   if (feat.placeNodes && tier !== "sub-tactical") {
-    const influenceScale = Math.max(1, Math.round(cellKm / 1.5));
-    const INFLUENCE_RADIUS = { city: 4 * influenceScale, town: 2 * influenceScale, village: 1 * influenceScale };
+    // Fixed ground-distance targets (km) — prevents quadratic blowup at strategic scale
+    // where old formula (cellKm²/1.5) gave city=160km at 8km cells
+    const INFLUENCE_KM = { city: 30, town: 15, village: 5 };
+    const influenceScale = Math.max(1, Math.round(cellKm / 1.5)); // reused for MIN_CLUSTER
     for (const pn of feat.placeNodes) {
       const pc = geoToCell(pn.lon, pn.lat);
       if (!pc) continue;
-      const maxDist = INFLUENCE_RADIUS[pn.place] || 1;
+      const maxDist = Math.max(1, Math.round((INFLUENCE_KM[pn.place] || 5) / cellKm));
       const seedK = `${pc[0]},${pc[1]}`;
       const queue = [seedK];
       const visited = new Set([seedK]);
@@ -2100,7 +2102,10 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       }
 
       // Compute per-cell urban score (0..1) — stored for cluster phase
-      const wcBU = wcMixCell ? (wcMixCell["light_urban"] || 0) : 0;
+      const wcBU_raw = wcMixCell ? (wcMixCell["light_urban"] || 0) : 0;
+      // Below 20% built-up, halve contribution — scattered farmhouses/infrastructure
+      // should not drive urban classification
+      const wcBU = wcBU_raw >= 0.20 ? wcBU_raw : wcBU_raw * 0.5;
       const osmUrbanPts = (osmVotes["light_urban"] || 0) + (osmVotes["dense_urban"] || 0);
       const osmUrbanFrac = (PTS * PTS) > 0 ? osmUrbanPts / (PTS * PTS) : 0;
       const roadCeiling = tier === "strategic" ? 60 : tier === "operational" ? 30 : 15;
@@ -2330,8 +2335,9 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
   // This prevents isolated false positives (highway interchanges, scattered rural buildings)
   // from appearing as urban on the map.
   if (tier !== "sub-tactical") {
-    const SEED_THRESHOLD = 0.25;   // minimum score to start a cluster
-    const EXPAND_THRESHOLD = 0.15; // minimum score to join an adjacent cluster
+    // Strategic cells cover 64km² — require stronger urban signal to qualify
+    const SEED_THRESHOLD = tier === "strategic" ? 0.35 : 0.25;
+    const EXPAND_THRESHOLD = tier === "strategic" ? 0.20 : 0.15;
     const DENSE_SCORE = 0.55;      // within-cluster threshold for dense_urban
     const influenceScale = Math.max(1, Math.round(cellKm / 1.5));
     const MIN_CLUSTER = Math.max(2, Math.round(1.5 * influenceScale));
@@ -2566,7 +2572,7 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
   // from the cluster phase — e.g. cluster edge cells that barely qualified).
   // Dilation: fill non-urban gaps surrounded by urban (parks/plazas inside cities).
   if (tier !== "sub-tactical") {
-    const EROSION_MIN = tier === "strategic" ? 3 : 2; // minimum urban neighbors to survive
+    const EROSION_MIN = tier === "strategic" ? 4 : 2; // strategic: 4 of 6 neighbors must be urban
     const DILATION_MIN = 4; // minimum urban neighbors to fill a gap
 
     // Erosion pass — revert isolated urban cells to their natural WC class
