@@ -1932,6 +1932,41 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
     }
   }
 
+  // ── Settlement influence field — BFS decay from place nodes ──
+  // Each settlement radiates an influence score that decays linearly with distance.
+  // Used as one factor in the composite urban score to anchor urban classification
+  // to known human settlements and prevent false positives from highway interchanges.
+  const settlementInfluence = {};
+  if (feat.placeNodes && tier !== "sub-tactical") {
+    const influenceScale = Math.max(1, Math.round(cellKm / 1.5));
+    const INFLUENCE_RADIUS = { city: 4 * influenceScale, town: 2 * influenceScale, village: 1 * influenceScale };
+    for (const pn of feat.placeNodes) {
+      const pc = geoToCell(pn.lon, pn.lat);
+      if (!pc) continue;
+      const maxDist = INFLUENCE_RADIUS[pn.place] || 1;
+      const seedK = `${pc[0]},${pc[1]}`;
+      const queue = [seedK];
+      const visited = new Set([seedK]);
+      const dist = { [seedK]: 0 };
+      let qi = 0;
+      while (qi < queue.length) {
+        const ck = queue[qi++];
+        const d = dist[ck];
+        const influence = 1.0 - (d / (maxDist + 1));
+        settlementInfluence[ck] = Math.max(settlementInfluence[ck] || 0, influence);
+        if (d < maxDist) {
+          const [cc, cr] = ck.split(",").map(Number);
+          for (const [nc, nr] of getNeighbors(cc, cr)) {
+            const nk = `${nc},${nr}`;
+            if (nc >= 0 && nc < cols && nr >= 0 && nr < rows && !visited.has(nk)) {
+              visited.add(nk); queue.push(nk); dist[nk] = d + 1;
+            }
+          }
+        }
+      }
+    }
+  }
+
   // Airfield, port, military_base — centroid flagging with area filter at strategic
   const cellAirfield = new Set(), cellPort = new Set(), cellMilitaryBase = new Set();
   if (feat.infraAreas) {
@@ -2002,6 +2037,7 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
 
   onS("Classifying cells...");
   const terrain = {}, infra = {}, attrs = {}, elevG = {}, features = {}, featureNames = {}, cellConfidence = {};
+  const urbanScore = {}; // per-cell composite urbanization score (0..1), used in cluster phase
 
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
@@ -2051,38 +2087,30 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       const wcBase = wcGrid ? (wcGrid[k] || "open_ground") : "open_ground";
       const wcMixCell = wcMix ? wcMix[k] : null;
 
+      // ── Composite urban score ──
+      // Instead of binary thresholds, compute a weighted urbanization score from
+      // four signals. Terrain assignment is deferred to the cluster phase after
+      // this loop — only spatially coherent groups of high-score cells become urban.
       let tt;
       if (osmBestCnt >= PTS * PTS * 0.2) {
-        // OSM covers 20%+ of cell — use it, but validate urban claims against WC
         tt = osmBest;
-        // OSM says urban but WC shows minimal built-up? Likely zoning, not actual city
-        if (["light_urban", "dense_urban"].includes(tt) && wcMixCell) {
-          const builtUp = wcMixCell["light_urban"] || 0;
-          // Stricter at small scales: require more satellite confirmation for OSM urban claims
-          const revertScale = cellKm >= 4 ? cellKm / 4 : cellKm >= 2 ? 1.0 : cellKm >= 1 ? 1.5 : 2.0;
-          const revertThreshold = 0.08 * revertScale;
-          if (builtUp < revertThreshold) tt = wcBase;
-        }
       } else {
         tt = wcBase;
       }
 
-      // Urban classification from WorldCover mix — scale-aware thresholds
-      // WC majority vote uses plurality, so class 50 can "win" at 20-25% when natural
-      // classes fragment. This block promotes, demotes, and cross-validates against OSM.
-      if (wcMixCell && tier !== "sub-tactical") {
-        const builtUp = wcMixCell["light_urban"] || 0;
-        const isAlreadyUrban = ["light_urban", "dense_urban"].includes(tt);
-        const urbanScale = Math.min(1.5, Math.max(0.75, cellKm / 4));
-        const denseThreshold = 0.45 * urbanScale;
-        const lightThreshold = 0.25 * urbanScale;
+      // Compute per-cell urban score (0..1) — stored for cluster phase
+      const wcBU = wcMixCell ? (wcMixCell["light_urban"] || 0) : 0;
+      const osmUrbanPts = (osmVotes["light_urban"] || 0) + (osmVotes["dense_urban"] || 0);
+      const osmUrbanFrac = (PTS * PTS) > 0 ? osmUrbanPts / (PTS * PTS) : 0;
+      const roadCeiling = tier === "strategic" ? 60 : tier === "operational" ? 30 : 15;
+      const roadFrac = Math.min(1.0, (cellRoadCount[k] || 0) / roadCeiling);
+      const settBoost = settlementInfluence[k] || 0;
+      urbanScore[k] = Math.min(1.0, 0.50 * wcBU + 0.20 * osmUrbanFrac + 0.15 * roadFrac + 0.15 * settBoost);
 
-        // Promote or demote based on WC built-up fraction
-        if (builtUp >= denseThreshold) tt = "dense_urban";
-        else if (builtUp >= lightThreshold) tt = "light_urban";
-        else if (isAlreadyUrban) {
-          // Demote: WC majority vote assigned urban via plurality, but actual built-up
-          // fraction is below lightThreshold. Use the dominant natural WC class instead.
+      // Force non-urban terrain during this loop so elevation modifiers apply.
+      // Urban terrain is assigned in the cluster phase after the main loop.
+      if (["light_urban", "dense_urban"].includes(tt)) {
+        if (wcMixCell) {
           let bestNat = "open_ground", bestNatPct = 0;
           for (const [cls, pct] of Object.entries(wcMixCell)) {
             if (cls !== "light_urban" && cls !== "dense_urban" && pct > bestNatPct) {
@@ -2090,15 +2118,9 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
             }
           }
           tt = bestNat;
+        } else {
+          tt = "open_ground";
         }
-        // Below lightThreshold and not urban: "town" feature added later, terrain stays natural
-
-        // OSM dual-signal: OSM says urban AND WC agrees at lower threshold
-        const isNowUrban = ["light_urban", "dense_urban"].includes(tt);
-        const osmDenseThreshold = 0.15 * urbanScale;
-        const osmLightThreshold = 0.12 * urbanScale;
-        if (!isNowUrban && osmVotes["dense_urban"] && builtUp >= osmDenseThreshold) tt = "dense_urban";
-        else if (!isNowUrban && osmVotes["light_urban"] && builtUp >= osmLightThreshold) tt = "light_urban";
       }
 
       // Sub-tactical: WC built-up is too uniform — let OSM landuse/buildings provide urban detail
@@ -2282,12 +2304,7 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       if (cellPipeline.has(k)) ft.add("pipeline");
       // Power plant
       if (cellPowerPlant.has(k)) ft.add("power_plant");
-      // Town — settlement that doesn't dominate the cell (5-20% built-up)
-      if (wcMixCell && tier !== "sub-tactical") {
-        const builtUp = wcMixCell["light_urban"] || 0;
-        const isUrbanTerrain = ["light_urban", "dense_urban"].includes(terrain[k]);
-        if (!isUrbanTerrain && builtUp >= 0.05 && builtUp < 0.30) ft.add("town");
-      }
+      // Town feature — deferred to post-cluster phase (needs to know which cells are urban)
       // Sub-tactical extras
       if (tier === "sub-tactical") {
         if (cellBuildingPct[k] && cellBuildingPct[k] > 0.05) ft.add("building");
@@ -2300,13 +2317,117 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       if (cellNavName.has(k) && ft.has("river")) fn.river = cellNavName.get(k);
       const sett = cellSettlement.get(k);
       if (sett) {
-        // Assign settlement name to the appropriate terrain/feature
-        if (ft.has("town")) fn.town = sett.name;
-        else if (terrain[k] === "dense_urban") fn.dense_urban = sett.name;
-        else if (terrain[k] === "light_urban") fn.light_urban = sett.name;
-        else fn.settlement = sett.name; // settlement in non-urban cell
+        // Store as generic settlement; urban/town names are fixed up in cluster phase
+        fn.settlement = sett.name;
       }
       if (Object.keys(fn).length > 0) featureNames[k] = fn;
+    }
+  }
+
+  // ── Urban cluster detection — connected-component analysis of urbanScore ──
+  // Cells only become urban terrain if they belong to a spatially coherent cluster.
+  // This prevents isolated false positives (highway interchanges, scattered rural buildings)
+  // from appearing as urban on the map.
+  if (tier !== "sub-tactical") {
+    const SEED_THRESHOLD = 0.25;   // minimum score to start a cluster
+    const EXPAND_THRESHOLD = 0.15; // minimum score to join an adjacent cluster
+    const DENSE_SCORE = 0.55;      // within-cluster threshold for dense_urban
+    const influenceScale = Math.max(1, Math.round(cellKm / 1.5));
+    const MIN_CLUSTER = Math.max(2, Math.round(1.5 * influenceScale));
+    const MIN_CLUSTER_DENSE = Math.max(5, Math.round(3 * influenceScale));
+    const TOWN_SCORE = 0.08;       // minimum score for town feature
+
+    const clusterOf = {};  // k -> clusterId
+    const clusters = [];   // [{cells: Set, maxScore, hasSettlement}]
+    const clusterVisited = new Set();
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const k = `${c},${r}`;
+        if (clusterVisited.has(k) || (urbanScore[k] || 0) < SEED_THRESHOLD) continue;
+
+        // BFS expansion from this seed cell
+        const cid = clusters.length;
+        const clusterCells = new Set();
+        const cQueue = [k];
+        clusterVisited.add(k);
+        let qi = 0, maxScore = 0, hasSettlement = false;
+
+        while (qi < cQueue.length) {
+          const ck = cQueue[qi++];
+          clusterCells.add(ck);
+          clusterOf[ck] = cid;
+          const sc = urbanScore[ck] || 0;
+          if (sc > maxScore) maxScore = sc;
+          if (cellSettlement.has(ck)) hasSettlement = true;
+
+          const [cc, cr] = ck.split(",").map(Number);
+          for (const [nc, nr] of getNeighbors(cc, cr)) {
+            const nk = `${nc},${nr}`;
+            if (nc >= 0 && nc < cols && nr >= 0 && nr < rows
+                && !clusterVisited.has(nk) && (urbanScore[nk] || 0) >= EXPAND_THRESHOLD) {
+              clusterVisited.add(nk);
+              cQueue.push(nk);
+            }
+          }
+        }
+
+        clusters.push({ cells: clusterCells, maxScore, hasSettlement });
+      }
+    }
+
+    // Assign urban terrain based on cluster membership and score
+    for (const cluster of clusters) {
+      const size = cluster.cells.size;
+      // Small clusters without a settlement node stay non-urban
+      if (size < MIN_CLUSTER && !cluster.hasSettlement) continue;
+
+      for (const k of cluster.cells) {
+        const score = urbanScore[k] || 0;
+        if (score >= DENSE_SCORE && size >= MIN_CLUSTER_DENSE) {
+          terrain[k] = "dense_urban";
+        } else if (score >= SEED_THRESHOLD) {
+          terrain[k] = "light_urban";
+        }
+      }
+    }
+
+    // Town feature + settlement name fixup — now that urban terrain is assigned
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const k = `${c},${r}`;
+        const isUrban = ["light_urban", "dense_urban"].includes(terrain[k]);
+
+        // Town: cells with meaningful urban score that aren't urban terrain,
+        // but are adjacent to an urban cluster or have a settlement node.
+        if (!isUrban && (urbanScore[k] || 0) >= TOWN_SCORE) {
+          let nearUrban = false;
+          for (const [nc, nr] of getNeighbors(c, r)) {
+            const nk = `${nc},${nr}`;
+            if (["light_urban", "dense_urban"].includes(terrain[nk])) { nearUrban = true; break; }
+          }
+          if (nearUrban || cellSettlement.has(k)) {
+            if (!features[k]) features[k] = [];
+            if (!features[k].includes("town")) features[k].push("town");
+          }
+        }
+
+        // Reassign settlement names to match final terrain/feature
+        const sett = cellSettlement.get(k);
+        if (sett) {
+          if (!featureNames[k]) featureNames[k] = {};
+          // Remove the generic settlement key if we can be more specific
+          const fn = featureNames[k];
+          if (features[k] && features[k].includes("town")) {
+            delete fn.settlement; fn.town = sett.name;
+          } else if (terrain[k] === "dense_urban") {
+            delete fn.settlement; fn.dense_urban = sett.name;
+          } else if (terrain[k] === "light_urban") {
+            delete fn.settlement; fn.light_urban = sett.name;
+          }
+          // else: keep fn.settlement as-is
+        }
+      }
     }
   }
 
@@ -2330,14 +2451,14 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
     }
   }
 
-  return { terrain, infra, attrs, features, featureNames, elevG, elevCoverage: elevData.coverage, cellRoadCount, cellBuildingPct, cellStream, cellBarrier, cellConfidence };
+  return { terrain, infra, attrs, features, featureNames, elevG, elevCoverage: elevData.coverage, cellRoadCount, cellBuildingPct, cellStream, cellBarrier, cellConfidence, urbanScore };
 }
 
 // ════════════════════════════════════════════════════════════════
 // POST-PROCESSING
 // ════════════════════════════════════════════════════════════════
 
-function postProc(terrain, infra, attrs, features, featureNames, cols, rows, elevG, cellKm, elevCoverage, cellRoadCount, cellBuildingPct, tier, wcGrid, wcHasData, wcMix) {
+function postProc(terrain, infra, attrs, features, featureNames, cols, rows, elevG, cellKm, elevCoverage, cellRoadCount, cellBuildingPct, tier, wcGrid, wcHasData, wcMix, urbanScore) {
   let tG = { ...terrain }, iG = { ...infra }, aG = {};
   for (const k in attrs) aG[k] = [...attrs[k]];
   // Features: deep copy
@@ -2439,38 +2560,69 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
     for (const k of ocean) tG[k] = (ld[k] || 0) > 3 ? "deep_water" : "coastal_water";
   }
 
-  // ── DENSE URBAN — road density clustering ──
-  // At strategic scale, only major roads (motorway/trunk/primary) are queried.
-  // Highway interchanges alone generate 8-16 distinct ways per 10km cell,
-  // so thresholds must be high enough to require genuine urban road networks.
-  if (cellRoadCount) {
-    const roadThresh = tier === "strategic" ? 20 : tier === "operational" ? 10 : Math.max(3, Math.round(3.5 * Math.pow(cellKm, 1.4)));
-    const denseThresh = tier === "strategic" ? 40 : tier === "operational" ? 20 : roadThresh * 2;
-    const denseNeighborReq = tier === "strategic" ? 4 : tier === "operational" ? 3 : 2;
-    const lightNeighborReq = tier === "strategic" ? 3 : tier === "operational" ? 2 : 2;
-    // Require WC built-up signal at all tiers to prevent highway corridor / rural road false positives
-    const wcGateThreshold = tier === "strategic" ? 0.08 : tier === "operational" ? 0.05 : 0.03;
+  // ── URBAN MORPHOLOGICAL CLEANUP ──
+  // Erosion: remove urban cells with too few urban neighbors (catches remaining speckle
+  // from the cluster phase — e.g. cluster edge cells that barely qualified).
+  // Dilation: fill non-urban gaps surrounded by urban (parks/plazas inside cities).
+  if (tier !== "sub-tactical") {
+    const EROSION_MIN = tier === "strategic" ? 3 : 2; // minimum urban neighbors to survive
+    const DILATION_MIN = 4; // minimum urban neighbors to fill a gap
 
-    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
-      const k = `${c},${r}`;
-      if (!["open_ground", "light_veg", "farmland"].includes(tG[k])) continue;
-      const rc = cellRoadCount[k] || 0;
-      if (rc < roadThresh) continue;
-
-      // WC cross-validation: skip if satellite shows negligible built-up
-      if (wcGateThreshold > 0 && wcMix) {
-        const builtUp = wcMix[k] ? (wcMix[k]["light_urban"] || 0) : 0;
-        if (builtUp < wcGateThreshold) continue;
+    // Erosion pass — revert isolated urban cells to their natural WC class
+    const toErode = [];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const k = `${c},${r}`;
+        if (!["light_urban", "dense_urban"].includes(tG[k])) continue;
+        let urbanNeighbors = 0;
+        for (const [nc, nr] of getNeighbors(c, r)) {
+          const nk = `${nc},${nr}`;
+          if (tG[nk] && ["light_urban", "dense_urban"].includes(tG[nk])) urbanNeighbors++;
+        }
+        if (urbanNeighbors < EROSION_MIN) toErode.push(k);
       }
-
-      let neighborUrbanRoads = 0;
-      for (const [nc, nr] of getNeighbors(c, r)) {
-        const nk = `${nc},${nr}`;
-        if ((cellRoadCount[nk] || 0) >= roadThresh * 0.5) neighborUrbanRoads++;
+    }
+    for (const k of toErode) {
+      if (wcMix && wcMix[k]) {
+        let bestNat = "open_ground", bestPct = 0;
+        for (const [cls, pct] of Object.entries(wcMix[k])) {
+          if (cls !== "light_urban" && cls !== "dense_urban" && pct > bestPct) {
+            bestNat = cls; bestPct = pct;
+          }
+        }
+        tG[k] = bestNat;
+      } else {
+        tG[k] = "open_ground";
       }
+      // Eroded cell with town-level signal becomes a town feature
+      if ((urbanScore[k] || 0) >= 0.08) {
+        if (!fG[k]) fG[k] = [];
+        if (!fG[k].includes("town")) fG[k].push("town");
+      }
+    }
 
-      if (rc >= denseThresh && neighborUrbanRoads >= denseNeighborReq) tG[k] = "dense_urban";
-      else if (neighborUrbanRoads >= lightNeighborReq) tG[k] = "light_urban";
+    // Dilation pass — fill single-cell holes inside urban clusters
+    const toDilate = [];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const k = `${c},${r}`;
+        if (["light_urban", "dense_urban"].includes(tG[k])) continue;
+        if (isW(tG[k])) continue; // don't fill water cells
+        let urbanNeighbors = 0;
+        for (const [nc, nr] of getNeighbors(c, r)) {
+          const nk = `${nc},${nr}`;
+          if (tG[nk] && ["light_urban", "dense_urban"].includes(tG[nk])) urbanNeighbors++;
+        }
+        if (urbanNeighbors >= DILATION_MIN) toDilate.push(k);
+      }
+    }
+    for (const k of toDilate) {
+      tG[k] = "light_urban";
+      // Remove town feature — cell is now urban terrain
+      if (fG[k]) {
+        const idx = fG[k].indexOf("town");
+        if (idx !== -1) fG[k].splice(idx, 1);
+      }
     }
   }
 
@@ -3078,7 +3230,7 @@ export default function Parser({ onBack, onViewMap }) {
 
       setProgress({ phase: "Processing", current: 2, total: 2 });
       setStatus("Post-processing..."); await new Promise(r => setTimeout(r, 20));
-      const pp = postProc(res.terrain, res.infra, res.attrs, res.features, res.featureNames, cols, rows, res.elevG, cellKm, res.elevCoverage, res.cellRoadCount, res.cellBuildingPct, tier, wcData ? wcData.wcGrid : null, wcData ? wcData.wcHasData : null, wcData ? wcData.wcMix : null);
+      const pp = postProc(res.terrain, res.infra, res.attrs, res.features, res.featureNames, cols, rows, res.elevG, cellKm, res.elevCoverage, res.cellRoadCount, res.cellBuildingPct, tier, wcData ? wcData.wcGrid : null, wcData ? wcData.wcHasData : null, wcData ? wcData.wcMix : null, res.urbanScore || {});
 
       // ── LOG TERRAIN DISTRIBUTION ──
       log.section("TERRAIN DISTRIBUTION");
