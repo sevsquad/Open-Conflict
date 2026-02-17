@@ -2067,25 +2067,38 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
         tt = wcBase;
       }
 
-      // Urban upgrade from WorldCover mix — scale-aware thresholds
-      // Larger cells mix urban with parks/roads, so lower thresholds are needed.
-      // Smaller cells have higher spatial precision, so higher thresholds apply.
+      // Urban classification from WorldCover mix — scale-aware thresholds
+      // WC majority vote uses plurality, so class 50 can "win" at 20-25% when natural
+      // classes fragment. This block promotes, demotes, and cross-validates against OSM.
       if (wcMixCell && tier !== "sub-tactical") {
         const builtUp = wcMixCell["light_urban"] || 0;
         const isAlreadyUrban = ["light_urban", "dense_urban"].includes(tt);
         const urbanScale = Math.min(1.5, Math.max(0.75, cellKm / 4));
         const denseThreshold = 0.45 * urbanScale;
         const lightThreshold = 0.25 * urbanScale;
-        const revertThreshold = 0.05 * urbanScale;
-        // Promote based on WC built-up density — applies even if OSM already set light_urban
+
+        // Promote or demote based on WC built-up fraction
         if (builtUp >= denseThreshold) tt = "dense_urban";
-        else if (!isAlreadyUrban && builtUp >= lightThreshold) tt = "light_urban";
-        // Below lightThreshold and not already urban: "town" feature added later, terrain stays natural
-        // OSM says urban AND WC agrees at lower threshold
+        else if (builtUp >= lightThreshold) tt = "light_urban";
+        else if (isAlreadyUrban) {
+          // Demote: WC majority vote assigned urban via plurality, but actual built-up
+          // fraction is below lightThreshold. Use the dominant natural WC class instead.
+          let bestNat = "open_ground", bestNatPct = 0;
+          for (const [cls, pct] of Object.entries(wcMixCell)) {
+            if (cls !== "light_urban" && cls !== "dense_urban" && pct > bestNatPct) {
+              bestNat = cls; bestNatPct = pct;
+            }
+          }
+          tt = bestNat;
+        }
+        // Below lightThreshold and not urban: "town" feature added later, terrain stays natural
+
+        // OSM dual-signal: OSM says urban AND WC agrees at lower threshold
+        const isNowUrban = ["light_urban", "dense_urban"].includes(tt);
         const osmDenseThreshold = 0.15 * urbanScale;
         const osmLightThreshold = 0.12 * urbanScale;
-        if (!isAlreadyUrban && osmVotes["dense_urban"] && builtUp >= osmDenseThreshold) tt = "dense_urban";
-        else if (!isAlreadyUrban && osmVotes["light_urban"] && builtUp >= osmLightThreshold) tt = "light_urban";
+        if (!isNowUrban && osmVotes["dense_urban"] && builtUp >= osmDenseThreshold) tt = "dense_urban";
+        else if (!isNowUrban && osmVotes["light_urban"] && builtUp >= osmLightThreshold) tt = "light_urban";
       }
 
       // Sub-tactical: WC built-up is too uniform — let OSM landuse/buildings provide urban detail
