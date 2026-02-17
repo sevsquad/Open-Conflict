@@ -26,7 +26,7 @@ export const FC = {
   highway: "#E6A817", major_road: "#D4D4D4", road: "#B0B0B0", minor_road: "#9A9A8A",
   footpath: "#6A6A5A", trail: "#8A8A6A",
   railway: "#E05050", light_rail: "#D07070",
-  dam: "#5A8ABF", navigable_waterway: "#3AC4E0", tunnel: "#7070A0",
+  dam: "#5A8ABF", river: "#3AC4E0", tunnel: "#7070A0",
   port: "#4ABFBF", airfield: "#9090D0", helipad: "#70A070", pipeline: "#A070D0",
   power_plant: "#E0D040",
   military_base: "#BF5050",
@@ -44,13 +44,13 @@ export const FL = {};
 Object.keys(FC).forEach(k => {
   FL[k] = k.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
 });
-FL.navigable_waterway = "Nav. Waterway";
+FL.river = "River";
 
 // Feature groups
 export const FG = {
   "Roads": ["highway", "major_road", "road", "minor_road", "footpath", "trail"],
   "Rail": ["railway", "light_rail"],
-  "Water": ["dam", "navigable_waterway", "tunnel"],
+  "Water": ["dam", "river", "tunnel"],
   "Transport": ["port", "airfield", "helipad", "pipeline"],
   "Energy": ["power_plant"],
   "Military": ["military_base"],
@@ -60,7 +60,7 @@ export const FG = {
 };
 
 // Default active features for viewer/parser
-export const DEFAULT_FEATURES = ["highway", "major_road", "railway", "military_base", "airfield", "port", "dam", "navigable_waterway", "chokepoint", "landing_zone", "beach", "power_plant", "pipeline", "town", "hedgerow"];
+export const DEFAULT_FEATURES = ["highway", "major_road", "railway", "military_base", "airfield", "port", "dam", "river", "chokepoint", "landing_zone", "beach", "power_plant", "pipeline", "town", "hedgerow"];
 
 // Actor colors for unit markers in simulation
 export const ACTOR_COLORS = ["#3B82F6", "#EF4444", "#22C55E", "#F59E0B", "#A855F7", "#EC4899"];

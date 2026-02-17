@@ -11,7 +11,7 @@ const LABEL_CONFIG = {
   light_urban:        { priority: 8,  minCellPx: 8,  fontScale: 0.40, color: "#E0E0E0", minSpan: 3 },
   town:               { priority: 6,  minCellPx: 16, fontScale: 0.35, color: "#E8A040", minSpan: 2 },
   settlement:         { priority: 5,  minCellPx: 24, fontScale: 0.35, color: "#D0D0D0", minSpan: 3 },
-  navigable_waterway: { priority: 4,  minCellPx: 14, fontScale: 0.30, color: "#60C8E8", italic: true, minSpan: 4 },
+  river: { priority: 4,  minCellPx: 14, fontScale: 0.30, color: "#60C8E8", italic: true, minSpan: 4 },
   military_base:      { priority: 7,  minCellPx: 10, fontScale: 0.30, color: "#EF4444", minSpan: 1 },
   airfield:           { priority: 5,  minCellPx: 24, fontScale: 0.28, color: "#9090D0", minSpan: 2 },
 };

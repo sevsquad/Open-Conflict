@@ -12,7 +12,7 @@ import { LINE_CONFIG } from "../RoadNetwork.js";
 const LINE_TYPES = [
   "highway", "major_road", "road", "minor_road", "footpath", "trail",
   "railway", "light_rail",
-  "navigable_waterway", "pipeline",
+  "river", "pipeline",
   "dam", "tunnel",
 ];
 

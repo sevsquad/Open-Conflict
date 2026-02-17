@@ -6,7 +6,7 @@ import { getNeighbors } from "./HexMath.js";
 
 const ROAD_TYPES = ["highway", "major_road", "road", "minor_road", "footpath", "trail"];
 const RAIL_TYPES = ["railway", "light_rail"];
-const WATER_TYPES = ["navigable_waterway"];
+const WATER_TYPES = ["river"];
 const PIPE_TYPES = ["pipeline"];
 
 const LINEAR_TYPES = [...ROAD_TYPES, ...RAIL_TYPES, ...WATER_TYPES, ...PIPE_TYPES];
@@ -21,7 +21,7 @@ export const LINE_CONFIG = {
   trail:        { color: "#8A8A6A", width: [0, 0, 0, 0.5],    minTier: 3, dash: [2, 2] },
   railway:      { color: "#E05050", width: [1.0, 1.5, 1.5, 2], minTier: 0, dash: [6, 3] },
   light_rail:   { color: "#D07070", width: [0, 0.5, 1, 1.5],  minTier: 1, dash: [4, 3] },
-  navigable_waterway: { color: "#3AC4E0", width: [0, 0.5, 1.5, 2], minTier: 1, dash: null },
+  river: { color: "#3AC4E0", width: [1.0, 1.5, 2, 3], minTier: 0, dash: null },
   pipeline:  { color: "#A070D0", width: [0, 0.5, 1, 1.5], minTier: 1, dash: [4, 2] },
 };
 

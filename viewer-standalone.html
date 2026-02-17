@@ -268,7 +268,7 @@ const TL = {
 const FC = {
   highway:"#E6A817", major_road:"#D4D4D4", road:"#B0B0B0", minor_road:"#9A9A8A", footpath:"#6A6A5A", trail:"#8A8A6A",
   railway:"#E05050", light_rail:"#D07070",
-  dam:"#5A8ABF", navigable_waterway:"#3AC4E0", tunnel:"#7070A0",
+  dam:"#5A8ABF", river:"#3AC4E0", tunnel:"#7070A0",
   port:"#4ABFBF", airfield:"#9090D0", helipad:"#70A070", pipeline:"#A070D0",
   power_plant:"#E0D040",
   military_base:"#BF5050",
@@ -283,12 +283,12 @@ const FC = {
 };
 const FL = {};
 Object.keys(FC).forEach(k => { FL[k] = k.replace(/_/g," ").replace(/\b\w/g,c=>c.toUpperCase()); });
-FL.navigable_waterway = "Nav. Waterway";
+FL.river = "River";
 
 const FG = {
   "Roads":["highway","major_road","road","minor_road","footpath","trail"],
   "Rail":["railway","light_rail"],
-  "Water":["dam","navigable_waterway","tunnel"],
+  "Water":["dam","river","tunnel"],
   "Transport":["port","airfield","helipad","pipeline"],
   "Energy":["power_plant"],
   "Military":["military_base"],
@@ -444,7 +444,7 @@ function draw(){
         fontSize = Math.max(9, CELL_BASE*0.35); minZoom = 0.5; color = "#E8A040"; priority = 6;
       } else if(g.type === "settlement"){
         fontSize = Math.max(9, CELL_BASE*0.35); minZoom = 0.5; color = "#D0D0D0"; priority = 5;
-      } else if(g.type === "navigable_waterway"){
+      } else if(g.type === "river"){
         fontSize = Math.max(9, CELL_BASE*0.30); minZoom = 0.35; color = "#60C8E8"; priority = 4;
       } else {
         fontSize = Math.max(8, CELL_BASE*0.25); minZoom = 0.6; color = "#AAA"; priority = 2;
@@ -481,7 +481,7 @@ function draw(){
       placed.push(box);
 
       // River names: italic
-      if(lb.type === "navigable_waterway"){
+      if(lb.type === "river"){
         ctx.font = `italic 600 ${lb.fontSize}px 'Inter', 'Share Tech Mono', sans-serif`;
       }
 
@@ -852,7 +852,7 @@ function exportPNG(){
     else if(g.type === "light_urban"){ fontSize = Math.max(10, CELL_BASE*0.4); color = "#E0E0E0"; priority = 8; }
     else if(g.type === "town"){ fontSize = Math.max(9, CELL_BASE*0.35); color = "#E8A040"; priority = 6; }
     else if(g.type === "settlement"){ fontSize = Math.max(9, CELL_BASE*0.35); color = "#D0D0D0"; priority = 5; }
-    else if(g.type === "navigable_waterway"){ fontSize = Math.max(9, CELL_BASE*0.30); color = "#60C8E8"; priority = 4; }
+    else if(g.type === "river"){ fontSize = Math.max(9, CELL_BASE*0.30); color = "#60C8E8"; priority = 4; }
     else { fontSize = Math.max(8, CELL_BASE*0.25); color = "#AAA"; priority = 2; }
     labels.push({ name: g.name, x: (cx+0.5)*CELL_BASE, y: (cy+0.5)*CELL_BASE, fontSize, color, priority, type: g.type, spanCells: g.cells.length });
   }
@@ -861,7 +861,7 @@ function exportPNG(){
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
   for(const lb of labels){
     ctx.font = `600 ${lb.fontSize}px sans-serif`;
-    if(lb.type === "navigable_waterway") ctx.font = `italic 600 ${lb.fontSize}px sans-serif`;
+    if(lb.type === "river") ctx.font = `italic 600 ${lb.fontSize}px sans-serif`;
     const tw = ctx.measureText(lb.name.toUpperCase()).width;
     const th = lb.fontSize;
     const box = { x: lb.x-tw/2-4, y: lb.y-th/2-4, w: tw+8, h: th+8 };
@@ -1013,13 +1013,20 @@ function exportLLM(){
 // ═══════════════════════════════════════════════════════════════
 function loadData(json){
   D = json.map;
+  // Migrate old "navigable_waterway" feature key → "river"
+  for(const k in D.cells){
+    const cell = D.cells[k];
+    if(cell.features){ const i = cell.features.indexOf("navigable_waterway"); if(i!==-1) cell.features[i]="river"; }
+    if(cell.attributes){ const i = cell.attributes.indexOf("navigable_waterway"); if(i!==-1) cell.attributes[i]="river"; }
+    if(cell.feature_names && cell.feature_names.navigable_waterway){ cell.feature_names.river = cell.feature_names.navigable_waterway; delete cell.feature_names.navigable_waterway; }
+  }
   // Count features
   FCTS = {};
   for(const k in D.cells){
     getFeats(D.cells[k]).forEach(f => { FCTS[f]=(FCTS[f]||0)+1; });
   }
   // Default active features
-  const defaults = ["highway","major_road","railway","military_base","airfield","port","dam","navigable_waterway","chokepoint","landing_zone","beach","power_plant","pipeline","town","hedgerow"];
+  const defaults = ["highway","major_road","railway","military_base","airfield","port","dam","river","chokepoint","landing_zone","beach","power_plant","pipeline","town","hedgerow"];
   AF = new Set(defaults.filter(f => FCTS[f]));
 
   // Show UI

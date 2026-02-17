@@ -22,7 +22,7 @@ TERRAIN_TYPES.forEach((t, i) => { TERRAIN_INDEX[t] = i; });
 const FEATURE_TYPES = [
   "highway", "major_road", "road", "minor_road", "footpath", "trail",
   "railway", "light_rail",
-  "dam", "navigable_waterway", "tunnel",
+  "dam", "river", "tunnel",
   "port", "airfield", "helipad", "pipeline",
   "power_plant",
   "military_base",
