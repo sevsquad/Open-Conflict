@@ -4,6 +4,7 @@ import { colors, typography, radius, shadows, animation, space } from "./theme.j
 import { Button, Badge, Panel } from "./components/ui.jsx";
 import { getNeighbors, hexLine, offsetToAxial, axialToOffset,
          offsetToPixel, pixelToOffset, traceHexPath, SQRT3, SQRT3_2 } from "./mapRenderer/HexMath.js";
+import riverWhitelistData from "../river-whitelist.json";
 
 // ════════════════════════════════════════════════════════════════
 // TERRAIN — physical character (movement, cover, LOS)
@@ -87,7 +88,7 @@ const FEATURE_TYPES = {
   light_rail:    { label: "Light Rail",    color: "#D07070", group: "Rail" },
   // Water
   dam:           { label: "Dam",           color: "#5A8ABF", group: "Water" },
-  navigable_waterway:{ label: "Navigable Waterway", color: "#3AC4E0", group: "Water" },
+  river:{ label: "River", color: "#3AC4E0", group: "Water" },
   tunnel:        { label: "Tunnel",        color: "#7070A0", group: "Water" },
   // Transport
   port:          { label: "Port",          color: "#4ABFBF", group: "Transport" },
@@ -1320,6 +1321,24 @@ function parseFeatures(elements, tier) {
 // ════════════════════════════════════════════════════════════════
 
 // ════════════════════════════════════════════════════════════════
+// RIVER WHITELIST — curated list of significant rivers for strategic/operational
+// Returns a Set of lowercase river names (same shape as fetchWikidataRivers).
+// ════════════════════════════════════════════════════════════════
+function getRiverWhitelistNames(tier) {
+  const names = new Set();
+  // Strategic: scalerank 0-5 (high + medium confidence)
+  // Operational: scalerank 0-7 (all included rivers)
+  const maxScalerank = tier === "strategic" ? 5 : 7;
+  for (const r of riverWhitelistData.rivers) {
+    if (!r.include) continue;
+    if (r.scalerank > maxScalerank) continue;
+    if (r.name) names.add(r.name.toLowerCase());
+    if (r.name_alt) names.add(r.name_alt.toLowerCase());
+  }
+  return names;
+}
+
+// ════════════════════════════════════════════════════════════════
 // WIKIDATA RIVER LOOKUP
 // Queries Wikidata for major rivers (by length) in/near the bbox.
 // Returns a Set of normalized river names for matching against OSM.
@@ -2197,21 +2216,22 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       });
       // Dam (tier-filtered)
       if (cellDam.has(k)) ft.add("dam");
-      // Navigable waterway
-      // Navigable waterway — skip on desert terrain unless ship-tagged (wadis are seasonal/dry)
-      // Also skip on peak/mountain/ice at strategic/operational — Alpine gorges aren't navigable for military movement
+      // River — skip on water terrain (redundant), desert (wadis), high-mountain at strategic/operational (Alpine gorges)
       if (cellNavigable.has(k)) {
+        const isWaterTerrain = ["deep_water", "coastal_water", "lake"].includes(terrain[k]);
         const isDesert = ["desert", "open_ground"].includes(terrain[k]);
         const isHighMountain = ["peak", "mountain", "ice"].includes(terrain[k]);
         const isStrategicOp = tier === "strategic" || tier === "operational";
-        if (cellNavTagged.has(k)) {
-          ft.add("navigable_waterway"); // ship=yes always passes
+        if (isWaterTerrain) {
+          // lake/ocean: skip — cell terrain is already water, river feature is redundant
+        } else if (cellNavTagged.has(k)) {
+          ft.add("river"); // ship=yes always passes
         } else if (isDesert) {
           // desert: skip (wadis)
         } else if (isHighMountain && isStrategicOp) {
           // peak/mountain/ice at strategic/operational: skip (Alpine gorges)
         } else {
-          ft.add("navigable_waterway");
+          ft.add("river");
         }
       }
       // Beach
@@ -2235,7 +2255,7 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       features[k] = [...ft];
       // Build feature_names: feature → name for named features
       const fn = {};
-      if (cellNavName.has(k) && ft.has("navigable_waterway")) fn.navigable_waterway = cellNavName.get(k);
+      if (cellNavName.has(k) && ft.has("river")) fn.river = cellNavName.get(k);
       const sett = cellSettlement.get(k);
       if (sett) {
         // Assign settlement name to the appropriate terrain/feature
@@ -2968,7 +2988,7 @@ export default function Parser({ onBack, onViewMap }) {
   const [gC, setGC] = useState(0), [gR, setGR] = useState(0);
   const [status, setStatus] = useState(""), [error, setError] = useState(null), [gen, setGen] = useState(false);
   const [pt, setPt] = useState(null), [op, setOp] = useState(90);
-  const [activeFeatures, setActiveFeatures] = useState(new Set(["highway","major_road","railway","military_base","airfield","port","dam","navigable_waterway","chokepoint","landing_zone","beach","power_plant","pipeline","town"]));
+  const [activeFeatures, setActiveFeatures] = useState(new Set(["highway","major_road","railway","military_base","airfield","port","dam","river","chokepoint","landing_zone","beach","power_plant","pipeline","town"]));
   const [elevInfo, setElevInfo] = useState("");
   const [progress, setProgress] = useState(null);
   const [startTime, setStartTime] = useState(null);
@@ -3034,8 +3054,10 @@ export default function Parser({ onBack, onViewMap }) {
       // ── PHASE 3: OSM (infrastructure + terrain refinement) ──
       setStatus("Phase 3: Fetching map features...");
       // Start Wikidata river lookup and aridity data in parallel with OSM
+      // Strategic/operational: whitelist (primary) + Wikidata (fallback for multi-language names)
+      // Tactical/sub-tactical: no river name filtering (null → span-based fallback)
       const wikidataPromise = (tier === "strategic" || tier === "operational")
-        ? fetchWikidataRivers(bbox, tier, log)
+        ? fetchWikidataRivers(bbox, tier, log).catch(() => null)
         : Promise.resolve(null);
       const aridityPromise = fetchAridityData(bbox, cols, rows, setStatus, log);
 
@@ -3043,7 +3065,13 @@ export default function Parser({ onBack, onViewMap }) {
       const feat = parseFeatures(els, tier);
 
       // Await Wikidata and aridity results (should be done by now, they're fast)
-      const wikidataRivers = await wikidataPromise;
+      const wikidataNames = await wikidataPromise;
+      // Whitelist is guaranteed (bundled); Wikidata adds multi-language name variants
+      const whitelistNames = (tier === "strategic" || tier === "operational")
+        ? getRiverWhitelistNames(tier) : null;
+      const wikidataRivers = whitelistNames
+        ? new Set([...whitelistNames, ...(wikidataNames || [])])
+        : wikidataNames;
       const aridityGrid = await aridityPromise;
       log.section("PARSED FEATURES");
       const navNamed = feat.navigableLines.filter(nl => nl.named).length;
@@ -3054,7 +3082,7 @@ export default function Parser({ onBack, onViewMap }) {
         ["Infra areas", `${feat.infraAreas.length}`],
         ["Infra lines", `${feat.infraLines.length}`],
         ["Water lines", `${feat.waterLines.length}`],
-        ["Navigable lines", `${feat.navigableLines.length} (${navNamed} named, ${navTagged} ship/boat-tagged, ${navRelation} from relations)`],
+        ["River lines", `${feat.navigableLines.length} (${navNamed} named, ${navTagged} ship/boat-tagged, ${navRelation} from relations)`],
         ["Stream lines", `${feat.streamLines.length}`],
         ["Dam nodes", `${feat.damNodes.length}`],
         ["Building areas", `${feat.buildingAreas.length}`],
@@ -3172,13 +3200,13 @@ export default function Parser({ onBack, onViewMap }) {
               }
             }
           }
-          // Fallback to first named waterway near center
+          // Fallback to first named river near center
           if (!bestName) {
             for (const [k, fn] of Object.entries(pp.featureNames)) {
-              if (fn.navigable_waterway) {
+              if (fn.river) {
                 const [c, r] = k.split(",").map(Number);
                 const dist = Math.abs(c - cx) + Math.abs(r - cy);
-                if (dist < bestDist) { bestName = fn.navigable_waterway; bestDist = dist; }
+                if (dist < bestDist) { bestName = fn.river; bestDist = dist; }
               }
             }
           }

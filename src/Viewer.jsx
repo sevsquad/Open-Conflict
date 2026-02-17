@@ -37,6 +37,13 @@ export default function Viewer({ onBack, initialData }) {
 
   // ── Load data ──
   const loadMapData = useCallback((mapData) => {
+    // Migrate old "navigable_waterway" feature key → "river"
+    for (const k in mapData.cells) {
+      const cell = mapData.cells[k];
+      if (cell.features) { const i = cell.features.indexOf("navigable_waterway"); if (i !== -1) cell.features[i] = "river"; }
+      if (cell.attributes) { const i = cell.attributes.indexOf("navigable_waterway"); if (i !== -1) cell.attributes[i] = "river"; }
+      if (cell.feature_names?.navigable_waterway) { cell.feature_names.river = cell.feature_names.navigable_waterway; delete cell.feature_names.navigable_waterway; }
+    }
     const counts = {};
     for (const k in mapData.cells) {
       getFeats(mapData.cells[k]).forEach(f => { counts[f] = (counts[f] || 0) + 1; });
