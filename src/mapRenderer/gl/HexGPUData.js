@@ -26,7 +26,7 @@ const FEATURE_TYPES = [
   "port", "airfield", "helipad", "pipeline",
   "power_plant",
   "military_base",
-  "chokepoint", "landing_zone", "beach", "town",
+  "beach", "town",
   "building", "parking", "tower", "wall", "fence",
   "cliffs", "ridgeline", "treeline",
   "slope_steep", "slope_extreme",

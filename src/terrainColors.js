@@ -30,7 +30,7 @@ export const FC = {
   port: "#4ABFBF", airfield: "#9090D0", helipad: "#70A070", pipeline: "#A070D0",
   power_plant: "#E0D040",
   military_base: "#BF5050",
-  chokepoint: "#FF4040", landing_zone: "#40E080", beach: "#E0D0A0", town: "#E8A040",
+  beach: "#E0D0A0", town: "#E8A040",
   building: "#A08060", parking: "#6A6A7A", tower: "#C07050", wall: "#8A6A5A", fence: "#7A6050",
   cliffs: "#C48060", ridgeline: "#D4A860", treeline: "#88C060",
   slope_steep: "#D49040", slope_extreme: "#D45040",
@@ -54,13 +54,13 @@ export const FG = {
   "Transport": ["port", "airfield", "helipad", "pipeline"],
   "Energy": ["power_plant"],
   "Military": ["military_base"],
-  "Strategic": ["chokepoint", "landing_zone", "beach", "town"],
+  "Strategic": ["beach", "town"],
   "Structures": ["building", "parking", "tower", "wall", "fence"],
   "Terrain": ["cliffs", "ridgeline", "treeline", "slope_steep", "slope_extreme", "building_dense", "building_sparse", "hedgerow", "walled", "elevation_advantage"],
 };
 
 // Default active features for viewer/parser
-export const DEFAULT_FEATURES = ["highway", "major_road", "railway", "military_base", "airfield", "port", "dam", "river", "chokepoint", "landing_zone", "beach", "power_plant", "pipeline", "town", "hedgerow"];
+export const DEFAULT_FEATURES = ["highway", "major_road", "railway", "military_base", "airfield", "port", "dam", "river", "beach", "power_plant", "pipeline", "town", "hedgerow"];
 
 // Actor colors for unit markers in simulation
 export const ACTOR_COLORS = ["#3B82F6", "#EF4444", "#22C55E", "#F59E0B", "#A855F7", "#EC4899"];
