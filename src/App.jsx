@@ -10,13 +10,18 @@ export default function App() {
   const [mode, setMode] = useState("menu"); // "menu" | "parser" | "viewer" | "simulation"
   const [viewerData, setViewerData] = useState(null);
   const [recentMaps, setRecentMaps] = useState([]);
+  const [parserMounted, setParserMounted] = useState(false);
 
   const handleViewMap = useCallback((data) => {
     setViewerData(data);
     setMode("viewer");
   }, []);
 
-  const goMenu = useCallback(() => setMode("menu"), []);
+  // Keep Parser mounted once opened so state survives Viewer round-trips
+  useEffect(() => { if (mode === "parser") setParserMounted(true); }, [mode]);
+
+  const goMenu = useCallback(() => { setMode("menu"); setParserMounted(false); }, []);
+  const goParser = useCallback(() => setMode("parser"), []);
 
   // Fetch recent maps for launcher
   useEffect(() => {
@@ -47,8 +52,12 @@ export default function App() {
       <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: colors.bg.base }}>
         <AppHeader mode={mode} onBack={goMenu} />
         <div style={{ flex: 1, overflow: "hidden" }}>
-          {mode === "parser" && <Parser onBack={goMenu} onViewMap={handleViewMap} />}
-          {mode === "viewer" && <Viewer onBack={goMenu} initialData={viewerData} />}
+          {parserMounted && (
+            <div style={{ display: mode === "parser" ? "contents" : "none" }}>
+              <Parser onBack={goMenu} onViewMap={handleViewMap} />
+            </div>
+          )}
+          {mode === "viewer" && <Viewer onBack={goMenu} onParser={goParser} initialData={viewerData} />}
           {mode === "simulation" && <Simulation onBack={goMenu} />}
         </div>
       </div>

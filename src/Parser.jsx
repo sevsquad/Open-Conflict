@@ -5,6 +5,7 @@ import { Button, Badge, Panel } from "./components/ui.jsx";
 import { getNeighbors, hexLine, offsetToAxial, axialToOffset,
          offsetToPixel, pixelToOffset, traceHexPath, SQRT3, SQRT3_2 } from "./mapRenderer/HexMath.js";
 import riverWhitelistData from "../river-whitelist.json";
+import CitySearch from "./components/CitySearch.jsx";
 
 // ════════════════════════════════════════════════════════════════
 // TERRAIN — physical character (movement, cover, LOS)
@@ -3473,6 +3474,7 @@ export default function Parser({ onBack, onViewMap }) {
               </div>
 
               <div style={{ fontSize: typography.heading.sm, fontWeight: typography.weight.bold, marginBottom: space[2] }}>Location</div>
+              <CitySearch inputStyle={iS} onSelect={(lat, lng) => { setLat(lat); setLng(lng); }} />
               <div style={{ marginBottom: space[2] }}>
                 <div style={{ display: "flex", gap: space[1], flexWrap: "wrap", marginBottom: space[2] }}>
                   {(LOCATION_PRESETS[activeScale] || LOCATION_PRESETS.custom).map(p => {
