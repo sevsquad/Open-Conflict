@@ -1274,11 +1274,13 @@ function parseFeatures(elements, tier) {
           const actualName = tags.name || "";
           if (hasShip) {
             navigableLines.push({ nodes: ring, tagged: true, named: hasName, actualName, isCanal });
-          } else if ((isCanal || hasBoat) && tier !== "strategic") {
+          } else if ((isCanal || hasBoat) && (tier === "sub-tactical" || tier === "tactical")) {
+            // Canals and boat-tagged ways auto-navigable at small scales only
             navigableLines.push({ nodes: ring, tagged: true, named: hasName, actualName, isCanal });
           } else if (tags.waterway === "river") {
             navigableLines.push({ nodes: ring, tagged: false, named: hasName, actualName, isCanal: false });
-          } else if (isCanal && tier === "strategic") {
+          } else if (isCanal) {
+            // Canals at operational/strategic/theater: need whitelist name match
             navigableLines.push({ nodes: ring, tagged: false, named: hasName, actualName, isCanal: true });
           }
         }
@@ -1335,11 +1337,12 @@ function parseFeatures(elements, tier) {
 // RIVER WHITELIST — curated list of significant rivers for strategic/operational
 // Returns a Set of lowercase river names (same shape as fetchWikidataRivers).
 // ════════════════════════════════════════════════════════════════
-function getRiverWhitelistNames(tier) {
+function getRiverWhitelistNames(tier, cellKm) {
   const names = new Set();
+  // Theater (≥15km cells): scalerank 0-3 (high confidence only — continental-scale rivers)
   // Strategic: scalerank 0-5 (high + medium confidence)
   // Operational: scalerank 0-7 (all included rivers)
-  const maxScalerank = tier === "strategic" ? 5 : 7;
+  const maxScalerank = cellKm >= 15 ? 3 : tier === "strategic" ? 5 : 7;
   for (const r of riverWhitelistData.rivers) {
     if (!r.include) continue;
     if (r.scalerank > maxScalerank) continue;
@@ -1354,9 +1357,10 @@ function getRiverWhitelistNames(tier) {
 // Queries Wikidata for major rivers (by length) in/near the bbox.
 // Returns a Set of normalized river names for matching against OSM.
 // ════════════════════════════════════════════════════════════════
-async function fetchWikidataRivers(bbox, tier, log) {
+async function fetchWikidataRivers(bbox, tier, log, cellKm) {
   // Length thresholds by tier (km)
-  const minLength = tier === "strategic" ? 100 : tier === "operational" ? 40 : 15;
+  // Theater (≥15km cells): 200km — only continental-scale rivers
+  const minLength = cellKm >= 15 ? 200 : tier === "strategic" ? 100 : tier === "operational" ? 40 : 15;
 
   // Expand bbox by 5° to catch rivers whose coordinate is outside but path goes through
   const expand = 5;
@@ -1820,10 +1824,13 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
         if (nl.tagged) {
           // Ship/boat tagged — always navigable at tactical/sub-tactical.
           // At strategic/operational, ship=yes tagging varies in OSM quality,
-          // so require whitelist match OR substantial map span (≥3 cells).
+          // so require whitelist match OR substantial map span.
+          // Theater (≥15km cells): 5 cells (100km) — only major waterways
+          // Strategic/operational: 3 cells (30km / 15km)
           if (tier === "strategic" || tier === "operational") {
             const passesWhitelist = wikidataRivers && matchesWikidata(nl.actualName);
-            if (passesWhitelist || wayCells.size >= 3) {
+            const minTaggedCells = cellKm >= 15 ? 5 : 3;
+            if (passesWhitelist || wayCells.size >= minTaggedCells) {
               wayCells.forEach(k => { markNav(k); cellNavTagged.add(k); });
             }
           } else {
@@ -1834,8 +1841,10 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
           if (matchesWikidata(nl.actualName)) {
             // Cross-validate: canals without ship tags need substantial map span
             // to filter Wikidata entries with erroneous lengths (meter/km confusion)
+            // Theater: 100km min span, strategic/operational: 50km
             const spanKm = wayCells.size * cellKm;
-            if (nl.isCanal && !nl.tagged && spanKm < 50 && (tier === "strategic" || tier === "operational")) {
+            const canalMinSpanKm = cellKm >= 15 ? 100 : 50;
+            if (nl.isCanal && !nl.tagged && spanKm < canalMinSpanKm && (tier === "strategic" || tier === "operational")) {
               // Canal is too short on map to be confidently navigable at this scale — skip
             } else {
               wayCells.forEach(k => markNav(k));
@@ -3195,7 +3204,7 @@ export default function Parser({ onBack, onViewMap }) {
       // Strategic/operational: whitelist (primary) + Wikidata (fallback for multi-language names)
       // Tactical/sub-tactical: no river name filtering (null → span-based fallback)
       const wikidataPromise = (tier === "strategic" || tier === "operational")
-        ? fetchWikidataRivers(bbox, tier, log).catch(() => null)
+        ? fetchWikidataRivers(bbox, tier, log, cellKm).catch(() => null)
         : Promise.resolve(null);
       const aridityPromise = fetchAridityData(bbox, cols, rows, setStatus, log);
 
@@ -3206,7 +3215,7 @@ export default function Parser({ onBack, onViewMap }) {
       const wikidataNames = await wikidataPromise;
       // Whitelist is guaranteed (bundled); Wikidata adds multi-language name variants
       const whitelistNames = (tier === "strategic" || tier === "operational")
-        ? getRiverWhitelistNames(tier) : null;
+        ? getRiverWhitelistNames(tier, cellKm) : null;
       const wikidataRivers = whitelistNames
         ? new Set([...whitelistNames, ...(wikidataNames || [])])
         : wikidataNames;
