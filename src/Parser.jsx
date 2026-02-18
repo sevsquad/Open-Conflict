@@ -3327,12 +3327,12 @@ export default function Parser({ onBack, onViewMap }) {
 
       // Await Wikidata and aridity results (should be done by now, they're fast)
       const wikidataNames = await wikidataPromise;
-      // Whitelist is guaranteed (bundled); Wikidata adds multi-language name variants
+      // Strategic/operational/theater: use curated whitelist only.
+      // Wikidata added too many secondary rivers (e.g. 20+ in France alone at ≥100km).
+      // Tactical/sub-tactical: use Wikidata for broader coverage at smaller scales.
       const whitelistNames = (tier === "strategic" || tier === "operational")
         ? getRiverWhitelistNames(tier, cellKm) : null;
-      const wikidataRivers = whitelistNames
-        ? new Set([...whitelistNames, ...(wikidataNames || [])])
-        : wikidataNames;
+      const wikidataRivers = whitelistNames || wikidataNames;
       const aridityGrid = await aridityPromise;
       const metroCities = await metroCitiesPromise;
       log.section("PARSED FEATURES");
