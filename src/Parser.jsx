@@ -2872,6 +2872,102 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
 }
 
 // ════════════════════════════════════════════════════════════════
+// BATCH SCAN — pipeline entry point for world scanner
+// Runs the full terrain pipeline for a single geographic patch.
+// Returns cell array suitable for binary encoding and storage.
+// ════════════════════════════════════════════════════════════════
+
+export async function scanSinglePatch(bbox, cellKm, callbacks = {}) {
+  const { onStatus = () => {}, onProgress = () => {}, log = null } = callbacks;
+  const tier = getQueryTier(cellKm);
+  const cols = Math.max(1, Math.round((bbox.east - bbox.west) * 111.32 * Math.cos(((bbox.north + bbox.south) / 2) * Math.PI / 180) / cellKm));
+  const rows = Math.max(1, Math.round((bbox.north - bbox.south) * 111.32 / (cellKm * SQRT3_2)));
+
+  if (cols * rows > 50000) throw new Error(`Patch too large: ${cols}×${rows} = ${cols * rows} cells`);
+
+  const proj = createHexProjection(bbox, cols, rows);
+
+  // Phase 1: Elevation
+  onStatus("Elevation...");
+  const elevData = await fetchElevSmart(bbox, cols, rows, onStatus, onProgress, log);
+
+  // Phase 2: WorldCover
+  onStatus("WorldCover...");
+  let wcData = null;
+  try {
+    wcData = await fetchWorldCover(bbox, cols, rows, onStatus, onProgress, log, tier);
+  } catch (e) {
+    if (log) log.warn(`WorldCover failed: ${e.message}`);
+  }
+
+  // Phase 3: OSM + parallel data
+  onStatus("OSM features...");
+  const mapWKm = (bbox.east - bbox.west) * 111.32 * Math.cos(((bbox.north + bbox.south) / 2) * Math.PI / 180);
+  const mapHKm = (bbox.north - bbox.south) * 111.32;
+
+  const wikidataPromise = (tier === "strategic" || tier === "operational")
+    ? fetchWikidataRivers(bbox, tier, log, cellKm).catch(() => null)
+    : Promise.resolve(null);
+  const aridityPromise = fetchAridityData(bbox, cols, rows, onStatus, log);
+  const metroCitiesPromise = (tier === "operational" || tier === "strategic")
+    ? import("./data/cities.json").then(m => m.default || m).catch(() => null)
+    : Promise.resolve(null);
+
+  const els = await fetchOSM(bbox, onStatus, onProgress, mapWKm, mapHKm, cellKm, elevData.elevations, cols, rows, log);
+  const feat = parseFeatures(els, tier);
+
+  const wikidataNames = await wikidataPromise;
+  const whitelistNames = (tier === "strategic" || tier === "operational")
+    ? getRiverWhitelistNames(tier, cellKm) : null;
+  const wikidataRivers = whitelistNames
+    ? new Set([...whitelistNames, ...(wikidataNames || [])])
+    : wikidataNames;
+  const aridityGrid = await aridityPromise;
+  const metroCities = await metroCitiesPromise;
+
+  // Phase 4: Classify
+  onStatus("Classifying...");
+  const res = classifyGrid(bbox, cols, rows, feat, elevData, onStatus, wcData, tier, cellKm, wikidataRivers, aridityGrid, metroCities);
+
+  // Phase 5: Post-process
+  onStatus("Post-processing...");
+  const pp = postProc(res.terrain, res.infra, res.attrs, res.features, res.featureNames,
+    cols, rows, res.elevG, cellKm, res.elevCoverage, res.cellRoadCount, res.cellBuildingPct,
+    tier, wcData ? wcData.wcGrid : null, wcData ? wcData.wcHasData : null,
+    wcData ? wcData.wcMix : null, res.urbanScore || {});
+
+  // Build cell array with lat/lng for binary encoding
+  const cells = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const k = `${c},${r}`;
+      const { lon, lat } = proj.cellCenter(c, r);
+      const cell = {
+        terrain: pp.terrain[k] || "open_ground",
+        infrastructure: pp.infra[k] || "none",
+        elevation: res.elevG[k] || 0,
+        features: pp.features[k] || [],
+        attributes: pp.attrs[k] || [],
+        lat,
+        lng: lon,
+      };
+      if (res.cellConfidence && res.cellConfidence[k] !== undefined) {
+        cell.confidence = res.cellConfidence[k];
+      }
+      if (pp.featureNames && pp.featureNames[k]) {
+        cell.feature_names = pp.featureNames[k];
+      }
+      cells.push(cell);
+    }
+  }
+
+  return { cells, cols, rows, tier, bbox };
+}
+
+// Also export key utility functions for the world scanner
+export { getBBox, getWCTilesForBbox, getQueryTier, getChunkSize };
+
+// ════════════════════════════════════════════════════════════════
 // CANVAS MAP
 // ════════════════════════════════════════════════════════════════
 

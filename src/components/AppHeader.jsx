@@ -5,6 +5,7 @@ const MODE_META = {
   parser: { label: "Terrain Parser", accent: colors.accent.green },
   viewer: { label: "Map Viewer", accent: colors.accent.blue },
   simulation: { label: "Simulation", accent: colors.accent.amber },
+  worldscan: { label: "World Scanner", accent: colors.accent.cyan },
 };
 
 export default function AppHeader({ mode, onBack, children }) {
