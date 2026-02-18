@@ -2,12 +2,13 @@ import { useState, useCallback, useEffect } from "react";
 import Parser from "./Parser.jsx";
 import Viewer from "./Viewer.jsx";
 import Simulation from "./simulation/Simulation.jsx";
+import WorldScanner from "./WorldScanner.jsx";
 import { colors, typography, radius, shadows, animation, space } from "./theme.js";
 import { Badge } from "./components/ui.jsx";
 import AppHeader from "./components/AppHeader.jsx";
 
 export default function App() {
-  const [mode, setMode] = useState("menu"); // "menu" | "parser" | "viewer" | "simulation"
+  const [mode, setMode] = useState("menu"); // "menu" | "parser" | "viewer" | "simulation" | "worldscan"
   const [viewerData, setViewerData] = useState(null);
   const [recentMaps, setRecentMaps] = useState([]);
   const [parserMounted, setParserMounted] = useState(false);
@@ -41,6 +42,7 @@ export default function App() {
       if (e.key === "1" || e.key === "p") setMode("parser");
       if (e.key === "2" || e.key === "v") setMode("viewer");
       if (e.key === "3" || e.key === "s") setMode("simulation");
+      if (e.key === "4" || e.key === "w") setMode("worldscan");
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -59,6 +61,7 @@ export default function App() {
           )}
           {mode === "viewer" && <Viewer onBack={goMenu} onParser={goParser} initialData={viewerData} />}
           {mode === "simulation" && <Simulation onBack={goMenu} />}
+          {mode === "worldscan" && <WorldScanner onBack={goMenu} />}
         </div>
       </div>
     );
@@ -103,6 +106,18 @@ export default function App() {
           <line x1="12" y1="12" x2="15" y2="14" />
           <path d="M4.93 4.93l2.83 2.83" />
           <path d="M16.24 16.24l2.83 2.83" />
+        </svg>
+      ),
+    },
+    {
+      id: "worldscan", label: "World Scanner", accent: colors.accent.cyan, key: "4",
+      desc: "Pre-scan the entire planet at strategic (10km) or tactical (0.5km) resolution. Cached data enables instant map generation anywhere.",
+      tags: ["Global", "10km", "0.5km", "Offline Cache"],
+      icon: (
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <path d="M2 12h20" />
+          <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
         </svg>
       ),
     },
