@@ -13,6 +13,7 @@ const TERRAIN_TYPES = [
   "forest", "dense_forest", "highland", "mountain_forest",
   "mountain", "peak", "desert", "ice",
   "light_urban", "dense_urban",
+  "forested_hills",
 ];
 
 const TERRAIN_INDEX = {};

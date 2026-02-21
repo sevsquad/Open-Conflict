@@ -35,6 +35,7 @@ const TERRAIN_TYPES = [
   "open_ground", "light_veg", "farmland", "forest", "dense_forest",
   "highland", "mountain_forest", "mountain", "peak", "desert",
   "ice", "light_urban", "dense_urban",
+  "forested_hills",
 ];
 const TERRAIN_TO_IDX = Object.fromEntries(TERRAIN_TYPES.map((t, i) => [t, i]));
 

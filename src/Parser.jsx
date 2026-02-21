@@ -23,6 +23,7 @@ const TERRAIN_TYPES = [
   { id: "forest",          label: "Forest",          color: "#2D6B1E" },
   { id: "dense_forest",    label: "Dense Forest",    color: "#1A4D10" },
   { id: "highland",        label: "Highland",        color: "#A89570" },
+  { id: "forested_hills",  label: "Forested Hills",   color: "#4D7838" },
   { id: "mountain_forest", label: "Mtn Forest",      color: "#3D6B30" },
   { id: "mountain",        label: "Mountain",        color: "#8B7355" },
   { id: "peak",            label: "Peak/Alpine",     color: "#C8C0B0" },
@@ -2288,8 +2289,9 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
             if (tt === "forest" || tt === "dense_forest") tt = "mountain_forest";
             else if (!["wetland", "desert", "ice", "farmland"].includes(tt)) tt = (e > 800 && prom > 300) ? "mountain" : "highland";
           } else if (e > 500 && tt !== "ice" && tt !== "farmland") {
-            if (tt === "forest" || tt === "dense_forest") tt = "mountain_forest";
-            else if (!["wetland", "desert", "ice", "farmland"].includes(tt)) tt = "highland";
+            // Require some local relief — flat plateau tops (prom ≤ 50) stay as-is
+            if ((tt === "forest" || tt === "dense_forest") && prom > 50) tt = "forested_hills";
+            else if (!["forest", "dense_forest", "wetland", "desert", "ice", "farmland"].includes(tt)) tt = "highland";
           }
         }
       }
@@ -2394,7 +2396,7 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
         if (t === "bridge") return; // removed as feature type
         if (t === "tunnel") {
           // Only significant tunnels: through mountains/hills or underwater
-          const elevTerrain = ["mountain", "mountain_forest", "highland", "peak"];
+          const elevTerrain = ["mountain", "mountain_forest", "forested_hills", "highland", "peak"];
           const waterTerrain = ["deep_water", "coastal_water", "lake", "river"];
           if (elevTerrain.includes(terrain[k]) || waterTerrain.includes(terrain[k])) ft.add(t);
           return;
@@ -2595,7 +2597,7 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
   for (const k in featureNames) fnG[k] = { ...featureNames[k] };
 
   const isW = t => ["deep_water", "coastal_water", "lake", "river"].includes(t);
-  const isForest = t => ["forest", "dense_forest", "mountain_forest"].includes(t);
+  const isForest = t => ["forest", "dense_forest", "forested_hills", "mountain_forest"].includes(t);
   const isOpen = t => ["open_ground", "light_veg", "highland", "desert", "farmland"].includes(t);
 
   // ── OCEAN ──
@@ -2610,7 +2612,7 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
     //  - cells with real WC data showing specific land types (farmland, forest, urban, wetland)
     //    These are genuinely land even if at sea level (e.g. Netherlands polders)
     //  - only open_ground/lake terrain types can become ocean
-    const WC_DEFINITE_LAND = new Set(["farmland", "forest", "dense_forest", "light_veg", "wetland", "light_urban", "dense_urban", "ice"]);
+    const WC_DEFINITE_LAND = new Set(["farmland", "forest", "dense_forest", "forested_hills", "light_veg", "wetland", "light_urban", "dense_urban", "ice"]);
     const isCand = k => {
       const t = tG[k], e = elevG[k] || 0;
       if (t === "desert") return false;
@@ -2818,6 +2820,17 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
         if (tier === "sub-tactical" && slopeDeg > 30) aG[k].push("slope_extreme");
         else if (slopeDeg > 15) aG[k].push("slope_steep");
       }
+    }
+  }
+
+  // ── SLOPE-BASED FOREST RECLASSIFICATION ──
+  // Steep forested slopes become forested_hills regardless of absolute elevation.
+  // Catches ravine walls and river valley sides that are tactically difficult terrain.
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const k = `${c},${r}`;
+    const t = tG[k];
+    if ((t === "forest" || t === "dense_forest") && slopeGrid[k] > 15) {
+      tG[k] = "forested_hills";
     }
   }
 
@@ -3547,7 +3560,7 @@ export default function Parser({ onBack, onViewMap }) {
         ["Total cells", `${total}`],
         ["Open ground", `${((tCounts.open_ground || 0) / total * 100).toFixed(1)}%`],
         ["Water (all)", `${(((tCounts.deep_water || 0) + (tCounts.coastal_water || 0) + (tCounts.lake || 0) + (tCounts.river || 0)) / total * 100).toFixed(1)}%`],
-        ["Forest (all)", `${(((tCounts.forest || 0) + (tCounts.dense_forest || 0) + (tCounts.mountain_forest || 0)) / total * 100).toFixed(1)}%`],
+        ["Forest (all)", `${(((tCounts.forest || 0) + (tCounts.dense_forest || 0) + (tCounts.forested_hills || 0) + (tCounts.mountain_forest || 0)) / total * 100).toFixed(1)}%`],
         ["Urban (all)", `${(((tCounts.light_urban || 0) + (tCounts.dense_urban || 0)) / total * 100).toFixed(1)}%`],
         ["Elevation coverage", `${(elevData.coverage * 100).toFixed(0)}%`],
       ]);

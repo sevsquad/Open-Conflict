@@ -106,7 +106,7 @@ Assess the feasibility and likely outcomes of these orders based on current game
 const TERRAIN_LABELS = {
   deep_water: "Deep Water", coastal_water: "Coastal", lake: "Lake", river: "River",
   wetland: "Wetland", open_ground: "Open Ground", light_veg: "Light Veg", farmland: "Farmland",
-  forest: "Forest", dense_forest: "Dense Forest", highland: "Highland", mountain_forest: "Mtn Forest",
+  forest: "Forest", dense_forest: "Dense Forest", highland: "Highland", forested_hills: "Forested Hills", mountain_forest: "Mtn Forest",
   mountain: "Mountain", peak: "Peak/Alpine", desert: "Desert", ice: "Ice/Glacier",
   light_urban: "Light Urban", dense_urban: "Dense Urban",
 };
