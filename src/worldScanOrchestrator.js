@@ -121,6 +121,7 @@ export async function runWorldScan(cellKm, callbacks = {}) {
   onStatus(`Scan: ${allPatches.length} patches at ${resolution}`);
 
   // Initialize manifest entries for new patches
+  const now = Date.now();
   for (const patch of allPatches) {
     if (!manifest.patches[patch.id]) {
       manifest.patches[patch.id] = {
@@ -133,6 +134,18 @@ export async function runWorldScan(cellKm, callbacks = {}) {
       };
     }
   }
+
+  // Reset stale in_progress patches (stuck > 1 hour, e.g., from a crash)
+  for (const [id, entry] of Object.entries(manifest.patches)) {
+    if (entry.status === "in_progress" && entry.timestamp) {
+      const age = now - new Date(entry.timestamp).getTime();
+      if (age > 3600000) {
+        entry.status = "pending";
+        onStatus(`Reset stale patch ${id} (stuck ${Math.round(age / 60000)}min)`);
+      }
+    }
+  }
+
   await saveManifest(resolution, manifest);
 
   // Build scan queue: pending and failed patches first, skip completed
@@ -198,16 +211,20 @@ export async function runWorldScan(cellKm, callbacks = {}) {
     await updatePatchManifest(resolution, patch.id, { status: "in_progress" });
 
     try {
+      // Phase tracking: update manifest as each pipeline phase completes
+      const phases = {};
       const result = await scanSinglePatch(patch.bbox, cellKm, {
         onStatus: (msg) => onStatus(`[${patch.id}] ${msg}`),
         onProgress: () => {},
+        onPhaseComplete: (phase) => { phases[phase] = true; },
       });
 
       // Store the scanned cells
       await savePatch(resolution, patch.id, result.cells);
 
-      // Update manifest
+      // Update manifest with phase completion data
       entry.status = "complete";
+      entry.phases = phases;
       entry.cellCount = result.cells.length;
       entry.timestamp = new Date().toISOString();
       entry.lastError = null;

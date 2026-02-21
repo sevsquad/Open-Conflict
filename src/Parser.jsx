@@ -1971,7 +1971,7 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
         const k = `${pc[0]},${pc[1]}`;
         const existing = cellSettlement.get(k);
         if (!existing || pn.rank > existing.rank || (pn.rank === existing.rank && pn.population > existing.population)) {
-          cellSettlement.set(k, { name: pn.name, place: pn.place, rank: pn.rank });
+          cellSettlement.set(k, { name: pn.name, place: pn.place, rank: pn.rank, population: pn.population });
         }
       }
     }
@@ -2577,7 +2577,7 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
     }
   }
 
-  return { terrain, infra, attrs, features, featureNames, elevG, elevCoverage: elevData.coverage, cellRoadCount, cellBuildingPct, cellStream, cellBarrier, cellConfidence, urbanScore };
+  return { terrain, infra, attrs, features, featureNames, elevG, elevCoverage: elevData.coverage, cellRoadCount, cellBuildingPct, cellStream, cellBarrier, cellConfidence, urbanScore, cellSettlement };
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -2798,8 +2798,9 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
     }
   }
 
-  // ── SLOPE (sub-tactical + tactical) ──
-  if (tier === "sub-tactical" || tier === "tactical") {
+  // ── SLOPE (all tiers — angle stored for game use; feature flags at sub-tactical/tactical only) ──
+  const slopeGrid = {};
+  {
     const slopeKm = cellKm > 0 ? cellKm : 0.01;
     for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
       const k = `${c},${r}`;
@@ -2810,9 +2811,13 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
         if (elevG[nk] !== undefined) { const d = Math.abs(e - (elevG[nk] || 0)); if (d > maxD) maxD = d; }
       }
       const slopeDeg = Math.atan(maxD / (slopeKm * 1000)) * (180 / Math.PI);
-      if (!aG[k]) aG[k] = [];
-      if (tier === "sub-tactical" && slopeDeg > 30) aG[k].push("slope_extreme");
-      else if (slopeDeg > 15) aG[k].push("slope_steep");
+      slopeGrid[k] = slopeDeg;
+      // Feature flags only at fine tiers (visual markers on map)
+      if (tier === "sub-tactical" || tier === "tactical") {
+        if (!aG[k]) aG[k] = [];
+        if (tier === "sub-tactical" && slopeDeg > 30) aG[k].push("slope_extreme");
+        else if (slopeDeg > 15) aG[k].push("slope_steep");
+      }
     }
   }
 
@@ -2868,7 +2873,7 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
     }
   }
 
-  return { terrain: tG, infra: iG, attrs: aG, features: fG, featureNames: fnG };
+  return { terrain: tG, infra: iG, attrs: aG, features: fG, featureNames: fnG, slopeGrid };
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -2877,8 +2882,18 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
 // Returns cell array suitable for binary encoding and storage.
 // ════════════════════════════════════════════════════════════════
 
+// Map annual precipitation (mm) to climate zone for binary storage
+function precipToClimateZone(mm) {
+  if (mm == null) return "unknown";
+  if (mm < 250) return "arid";
+  if (mm < 500) return "semi_arid";
+  if (mm < 800) return "dry_subhumid";
+  if (mm < 1500) return "humid";
+  return "wet";
+}
+
 export async function scanSinglePatch(bbox, cellKm, callbacks = {}) {
-  const { onStatus = () => {}, onProgress = () => {}, log = null } = callbacks;
+  const { onStatus = () => {}, onProgress = () => {}, log = null, onPhaseComplete = () => {} } = callbacks;
   const tier = getQueryTier(cellKm);
   const cols = Math.max(1, Math.round((bbox.east - bbox.west) * 111.32 * Math.cos(((bbox.north + bbox.south) / 2) * Math.PI / 180) / cellKm));
   const rows = Math.max(1, Math.round((bbox.north - bbox.south) * 111.32 / (cellKm * SQRT3_2)));
@@ -2890,6 +2905,7 @@ export async function scanSinglePatch(bbox, cellKm, callbacks = {}) {
   // Phase 1: Elevation
   onStatus("Elevation...");
   const elevData = await fetchElevSmart(bbox, cols, rows, onStatus, onProgress, log);
+  onPhaseComplete("elevation");
 
   // Phase 2: WorldCover
   onStatus("WorldCover...");
@@ -2899,6 +2915,7 @@ export async function scanSinglePatch(bbox, cellKm, callbacks = {}) {
   } catch (e) {
     if (log) log.warn(`WorldCover failed: ${e.message}`);
   }
+  onPhaseComplete("worldcover");
 
   // Phase 3: OSM + parallel data
   onStatus("OSM features...");
@@ -2925,6 +2942,8 @@ export async function scanSinglePatch(bbox, cellKm, callbacks = {}) {
   const aridityGrid = await aridityPromise;
   const metroCities = await metroCitiesPromise;
 
+  onPhaseComplete("osm");
+
   // Phase 4: Classify
   onStatus("Classifying...");
   const res = classifyGrid(bbox, cols, rows, feat, elevData, onStatus, wcData, tier, cellKm, wikidataRivers, aridityGrid, metroCities);
@@ -2936,7 +2955,9 @@ export async function scanSinglePatch(bbox, cellKm, callbacks = {}) {
     tier, wcData ? wcData.wcGrid : null, wcData ? wcData.wcHasData : null,
     wcData ? wcData.wcMix : null, res.urbanScore || {});
 
-  // Build cell array with lat/lng for binary encoding
+  onPhaseComplete("classified");
+
+  // Build cell array with lat/lng for binary encoding (v1 format)
   const cells = [];
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
@@ -2950,6 +2971,10 @@ export async function scanSinglePatch(bbox, cellKm, callbacks = {}) {
         attributes: pp.attrs[k] || [],
         lat,
         lng: lon,
+        // v1 fields: slope, climate, population
+        slope_angle: pp.slopeGrid[k] || 0,
+        climate_zone: precipToClimateZone(aridityGrid ? aridityGrid[k] : null),
+        population: res.cellSettlement?.get(k)?.population || 0,
       };
       if (res.cellConfidence && res.cellConfidence[k] !== undefined) {
         cell.confidence = res.cellConfidence[k];
