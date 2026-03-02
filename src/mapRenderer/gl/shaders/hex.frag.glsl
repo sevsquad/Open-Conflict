@@ -14,13 +14,23 @@ flat in float v_featureMask;
 flat in float v_infraIndex;
 flat in vec4 v_neighbors03;
 flat in vec2 v_neighbors45;
+flat in vec4 v_neighborElev03;
+flat in vec2 v_neighborElev45;
 
 // Uniforms
-uniform vec3 u_terrainColors[18];   // RGB for each terrain type
+// NOTE: when adding terrain types, update BOTH this array size AND the bounds check in terrainColor()
+uniform vec3 u_terrainColors[29];   // RGB for each terrain type
 uniform float u_cellPixels;         // current zoom level
 uniform uint u_activeFeatures;      // bitmask of enabled features
 uniform vec3 u_featureColor;        // tint color for active features (simplified)
 uniform float u_gridOpacity;        // 0.0 = no grid, 1.0 = full grid
+
+// Elevation visualization uniforms
+uniform bool u_showElevBands;
+uniform float u_elevMin;
+uniform float u_elevMax;
+uniform float u_contourInterval;    // meters between contour lines
+uniform float u_hillshadeStrength;  // 0.0 to 1.0
 
 out vec4 fragColor;
 
@@ -67,7 +77,7 @@ float getNeighborTerrain(int i) {
 // Terrain color lookup (index -1 = no neighbor / out of bounds)
 vec3 terrainColor(float idx) {
     int i = int(idx + 0.5);
-    if (i < 0 || i >= 18) return vec3(0.1, 0.1, 0.1);
+    if (i < 0 || i >= 29) return vec3(0.1, 0.1, 0.1);
     return u_terrainColors[i];
 }
 
@@ -85,6 +95,121 @@ float blendMargin(float a, float b) {
     if (aW != bW) return 0.08;  // water-land: sharp
     if (aW && bW) return 0.20;  // water-water: gradual
     return 0.18;                 // land-land: moderate
+}
+
+// ── Elevation visualization helpers ──
+
+float getNeighborElev(int i) {
+    if (i == 0) return v_neighborElev03.x;
+    if (i == 1) return v_neighborElev03.y;
+    if (i == 2) return v_neighborElev03.z;
+    if (i == 3) return v_neighborElev03.w;
+    if (i == 4) return v_neighborElev45.x;
+    return v_neighborElev45.y;
+}
+
+// 8-stop hypsometric color ramp: lowland green → alpine white
+// Smoothly interpolated between stops for a natural topo look
+vec3 elevationRamp(float t) {
+    // Clamp to valid range
+    t = clamp(t, 0.0, 1.0);
+
+    const vec3 c0 = vec3(0.20, 0.45, 0.28);  // deep lowland green
+    const vec3 c1 = vec3(0.35, 0.55, 0.30);  // green
+    const vec3 c2 = vec3(0.55, 0.62, 0.32);  // yellow-green
+    const vec3 c3 = vec3(0.70, 0.65, 0.34);  // golden
+    const vec3 c4 = vec3(0.72, 0.56, 0.38);  // tan
+    const vec3 c5 = vec3(0.62, 0.48, 0.40);  // brown
+    const vec3 c6 = vec3(0.58, 0.56, 0.54);  // gray
+    const vec3 c7 = vec3(0.88, 0.86, 0.82);  // near-white
+
+    float scaled = t * 7.0;
+    int lo = int(floor(scaled));
+    float f = fract(scaled);
+
+    if (lo >= 7) return c7;
+    if (lo == 0) return mix(c0, c1, f);
+    if (lo == 1) return mix(c1, c2, f);
+    if (lo == 2) return mix(c2, c3, f);
+    if (lo == 3) return mix(c3, c4, f);
+    if (lo == 4) return mix(c4, c5, f);
+    if (lo == 5) return mix(c5, c6, f);
+    return mix(c6, c7, f);
+}
+
+// Detect contour line strength near this fragment.
+// For each hex edge, checks if this cell and its neighbor straddle
+// a contour interval boundary. Returns 0-1 line strength.
+float contourLine(float elev, float contourInt) {
+    float lineStrength = 0.0;
+    float apothem = SQRT3 / 2.0;
+
+    for (int i = 0; i < 6; i++) {
+        float nElev = getNeighborElev(i);
+        if (nElev < -9990.0) continue;  // no neighbor
+
+        // Check if a contour crosses between this cell and neighbor
+        float eLo = min(elev, nElev);
+        float eHi = max(elev, nElev);
+        float firstContour = ceil(eLo / contourInt) * contourInt;
+
+        if (firstContour > eHi) continue;  // no crossing on this edge
+
+        // Where the contour falls between centers (0 = this cell, 1 = neighbor)
+        float crossFrac = (eHi - eLo) > 0.1
+            ? abs((firstContour - elev) / (nElev - elev))
+            : 0.5;
+
+        // Fragment distance from this edge, normalized 0 (edge) to 1 (center)
+        float dist = edgeDist(v_hexLocal, i);
+        float normDist = dist / apothem;
+
+        // Contour sits at position (1 - crossFrac) from center toward edge
+        float contourPos = 1.0 - crossFrac;
+        float proximity = abs(normDist - contourPos);
+
+        // Line width: consistent ~1.5px on screen
+        float lineWidth = 2.5 / u_cellPixels;
+        float line = 1.0 - sStep(0.0, lineWidth, proximity);
+
+        lineStrength = max(lineStrength, line);
+    }
+
+    return lineStrength;
+}
+
+// Pseudo-hillshade from neighbor elevation gradient.
+// Light from NW (cartographic convention). Returns 0-1 shade value.
+//
+// Hex neighbor layout (pointy-top, odd-r offset):
+//   Edge 0: E,  Edge 1: NE, Edge 2: NW
+//   Edge 3: W,  Edge 4: SW, Edge 5: SE
+float computeHillshade(float elev) {
+    // Use this cell's elevation as fallback for missing neighbors
+    float e0 = getNeighborElev(0); if (e0 < -9990.0) e0 = elev;  // E
+    float e1 = getNeighborElev(1); if (e1 < -9990.0) e1 = elev;  // NE
+    float e2 = getNeighborElev(2); if (e2 < -9990.0) e2 = elev;  // NW
+    float e3 = getNeighborElev(3); if (e3 < -9990.0) e3 = elev;  // W
+    float e4 = getNeighborElev(4); if (e4 < -9990.0) e4 = elev;  // SW
+    float e5 = getNeighborElev(5); if (e5 < -9990.0) e5 = elev;  // SE
+
+    // Horizontal gradient (east - west)
+    float dEdx = (e0 - e3);
+    // Vertical gradient (south - north, screen Y inverted)
+    float northAvg = (e1 + e2) * 0.5;
+    float southAvg = (e4 + e5) * 0.5;
+    float dEdy = (southAvg - northAvg);
+
+    // Vertical exaggeration — moderate to avoid per-cell banding artifacts
+    float exaggeration = 1.5;
+    vec3 normal = normalize(vec3(-dEdx * exaggeration, -dEdy * exaggeration, 100.0));
+
+    // Light from NW (azimuth 315°, altitude 45°)
+    vec3 light = normalize(vec3(-0.5, -0.5, 0.707));
+
+    float shade = dot(normal, light);
+    // Remap [-1,1] → [0,1] with bias toward bright
+    return clamp(shade * 0.5 + 0.5, 0.0, 1.0);
 }
 
 void main() {
@@ -114,11 +239,47 @@ void main() {
         color = mix(color, nColor, blend);
     }
 
-    // ── Elevation shading (directional light from NW) ──
-    // Use neighbor elevations to estimate gradient
-    float elevScale = clamp(v_elevation / 2000.0, 0.0, 1.0);
-    // Subtle brightness boost for higher elevation
-    color += vec3(0.02, 0.02, 0.01) * elevScale;
+    // ── Elevation visualization ──
+    if (u_showElevBands) {
+        float elevRange = u_elevMax - u_elevMin;
+
+        // Quantize elevation to contour interval — all cells in the same band
+        // get the same color, producing clean readable bands instead of per-cell noise
+        float bandElev = u_contourInterval > 0.1
+            ? floor(v_elevation / u_contourInterval) * u_contourInterval
+            : v_elevation;
+        float normElev = elevRange > 0.1
+            ? clamp((bandElev - u_elevMin) / elevRange, 0.0, 1.0)
+            : 0.0;
+
+        vec3 rampColor = elevationRamp(normElev);
+
+        // Water cells (indices 0-3) keep their terrain color, land gets the ramp
+        bool waterCell = tIdx >= 0 && tIdx <= 3;
+        if (!waterCell) {
+            color = mix(color, rampColor, 0.85);
+        }
+
+        // Hillshade: NW-lit pseudo-3D relief (subtle to avoid per-cell banding)
+        float shade = computeHillshade(v_elevation);
+        float shadeMultiplier = mix(0.8, 1.1, shade);
+        color = color * mix(1.0, shadeMultiplier, u_hillshadeStrength);
+
+        // Contour lines: dark brown at band boundaries
+        // Fade out when zoomed very far out (hexes < 6px)
+        if (u_cellPixels > 4.0 && !waterCell) {
+            float contour = contourLine(v_elevation, u_contourInterval);
+            float contourOpacity = u_cellPixels < 8.0
+                ? (u_cellPixels - 4.0) / 4.0   // fade in 4-8px
+                : 0.5;                           // full at 8px+
+            vec3 contourColor = vec3(0.25, 0.18, 0.12);  // dark brown
+            color = mix(color, contourColor, contour * contourOpacity);
+        }
+    } else {
+        // Original subtle elevation shading when topo mode is off
+        float elevScale = clamp(v_elevation / 2000.0, 0.0, 1.0);
+        color += vec3(0.02, 0.02, 0.01) * elevScale;
+    }
 
     // ── Feature tinting ──
     uint fMask = uint(v_featureMask + 0.5);

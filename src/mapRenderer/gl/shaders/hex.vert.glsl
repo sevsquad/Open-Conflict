@@ -14,6 +14,8 @@ layout(location = 2) in vec2 a_terrainElev;  // terrainIndex, elevation
 layout(location = 3) in vec2 a_featureInfra; // featureMask (as float bits), infraIndex
 layout(location = 4) in vec4 a_neighbors03;  // neighborTerrains[0..3]
 layout(location = 5) in vec2 a_neighbors45;  // neighborTerrains[4..5]
+layout(location = 6) in vec4 a_neighborElev03; // neighborElevations[0..3]
+layout(location = 7) in vec2 a_neighborElev45; // neighborElevations[4..5]
 
 // Viewport uniforms
 uniform vec2 u_canvasSize;       // width, height in pixels
@@ -29,6 +31,8 @@ flat out float v_featureMask;
 flat out float v_infraIndex;
 flat out vec4 v_neighbors03;
 flat out vec2 v_neighbors45;
+flat out vec4 v_neighborElev03;
+flat out vec2 v_neighborElev45;
 
 const float SQRT3 = 1.7320508;
 
@@ -79,4 +83,6 @@ void main() {
     v_infraIndex = a_featureInfra.y;
     v_neighbors03 = a_neighbors03;
     v_neighbors45 = a_neighbors45;
+    v_neighborElev03 = a_neighborElev03;
+    v_neighborElev45 = a_neighborElev45;
 }

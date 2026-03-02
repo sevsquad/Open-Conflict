@@ -4,6 +4,7 @@ import { Button, Badge } from "../components/ui.jsx";
 import { ACTOR_COLORS } from "../terrainColors.js";
 import { createGame, getProviders } from "./orchestrator.js";
 import { cellToPositionString, parseUnitPosition } from "../mapRenderer/overlays/UnitOverlay.js";
+import { getQuickstartPreset } from "./presets.js";
 import SimMap from "./SimMap.jsx";
 import SetupLeftSidebar from "./SetupLeftSidebar.jsx";
 import SetupRightSidebar from "./SetupRightSidebar.jsx";
@@ -189,6 +190,24 @@ function setupReducer(state, action) {
     case "TOGGLE_RIGHT_SIDEBAR":
       return { ...state, rightSidebarOpen: !state.rightSidebarOpen };
 
+    case "LOAD_PRESET": {
+      const p = action.preset;
+      return {
+        ...state,
+        title: p.title,
+        description: p.description,
+        initialConditions: p.initialConditions,
+        specialRules: p.specialRules,
+        turnDuration: p.turnDuration,
+        startDate: p.startDate,
+        actors: p.actors,
+        units: p.units,
+        selectedUnitId: null,
+        interactionMode: "navigate",
+        placementPayload: null,
+      };
+    }
+
     default:
       return state;
   }
@@ -311,6 +330,13 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
           </Badge>
         )}
         <div style={{ flex: 1 }} />
+        <Button
+          variant="secondary"
+          onClick={() => dispatch({ type: "LOAD_PRESET", preset: getQuickstartPreset() })}
+          size="sm"
+        >
+          Load Preset
+        </Button>
         {state.units.length > 0 && (
           <Badge color={colors.accent.blue}>{state.units.length} units</Badge>
         )}

@@ -9,7 +9,7 @@ import {
   HEX_VERTEX_DATA, HEX_VERTEX_COUNT,
   INSTANCE_FLOATS, INSTANCE_BYTES, ATTRIB,
 } from "./HexGeometry.js";
-import { buildInstanceData, buildTerrainColorArray, buildFeatureBitmask } from "./HexGPUData.js";
+import { buildInstanceData, buildTerrainColorArray, buildFeatureBitmask, computeElevationRange } from "./HexGPUData.js";
 
 function compileShader(gl, type, source) {
   const shader = gl.createShader(type);
@@ -35,6 +35,8 @@ function linkProgram(gl, vertShader, fragShader) {
   gl.bindAttribLocation(program, ATTRIB.a_featureInfra, "a_featureInfra");
   gl.bindAttribLocation(program, ATTRIB.a_neighbors03, "a_neighbors03");
   gl.bindAttribLocation(program, ATTRIB.a_neighbors45, "a_neighbors45");
+  gl.bindAttribLocation(program, ATTRIB.a_neighborElev03, "a_neighborElev03");
+  gl.bindAttribLocation(program, ATTRIB.a_neighborElev45, "a_neighborElev45");
 
   gl.linkProgram(program);
   if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
@@ -87,6 +89,11 @@ export default class HexGLRenderer {
       u_activeFeatures: u("u_activeFeatures"),
       u_featureColor: u("u_featureColor"),
       u_gridOpacity: u("u_gridOpacity"),
+      u_showElevBands: u("u_showElevBands"),
+      u_elevMin: u("u_elevMin"),
+      u_elevMax: u("u_elevMax"),
+      u_contourInterval: u("u_contourInterval"),
+      u_hillshadeStrength: u("u_hillshadeStrength"),
     };
 
     // Create VAO
@@ -114,12 +121,12 @@ export default class HexGLRenderer {
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   }
 
-  // Upload map data to GPU
+  // Upload map data to GPU. Returns { smoothedElevMap } for contour labels.
   uploadMapData(mapData) {
-    if (!this.gl || this._destroyed) return;
+    if (!this.gl || this._destroyed) return null;
     const gl = this.gl;
 
-    const { instanceData, cellCount } = buildInstanceData(mapData);
+    const { instanceData, cellCount, smoothedElevMap } = buildInstanceData(mapData);
     this.cellCount = cellCount;
 
     gl.bindVertexArray(this.vao);
@@ -155,11 +162,24 @@ export default class HexGLRenderer {
     gl.vertexAttribPointer(ATTRIB.a_neighbors45, 2, gl.FLOAT, false, stride, 40);
     gl.vertexAttribDivisor(ATTRIB.a_neighbors45, 1);
 
+    // a_neighborElev03: vec4 at offset 48
+    gl.enableVertexAttribArray(ATTRIB.a_neighborElev03);
+    gl.vertexAttribPointer(ATTRIB.a_neighborElev03, 4, gl.FLOAT, false, stride, 48);
+    gl.vertexAttribDivisor(ATTRIB.a_neighborElev03, 1);
+
+    // a_neighborElev45: vec2 at offset 64
+    gl.enableVertexAttribArray(ATTRIB.a_neighborElev45);
+    gl.vertexAttribPointer(ATTRIB.a_neighborElev45, 2, gl.FLOAT, false, stride, 64);
+    gl.vertexAttribDivisor(ATTRIB.a_neighborElev45, 1);
+
     gl.bindVertexArray(null);
+
+    return { smoothedElevMap };
   }
 
   // Render one frame
-  render(viewport, canvasWidth, canvasHeight, activeFeatures) {
+  // elevBands: null (off) or { min, max, contourInterval } (on)
+  render(viewport, canvasWidth, canvasHeight, activeFeatures, elevBands = null) {
     if (!this.gl || this.cellCount === 0 || this._destroyed) return;
     const gl = this.gl;
 
@@ -192,6 +212,16 @@ export default class HexGLRenderer {
 
     // Feature tint color (generic highlight)
     gl.uniform3f(this.uniforms.u_featureColor, 1.0, 0.8, 0.3);
+
+    // Elevation bands
+    const showBands = elevBands !== null;
+    gl.uniform1i(this.uniforms.u_showElevBands, showBands ? 1 : 0);
+    if (showBands) {
+      gl.uniform1f(this.uniforms.u_elevMin, elevBands.min);
+      gl.uniform1f(this.uniforms.u_elevMax, elevBands.max);
+      gl.uniform1f(this.uniforms.u_contourInterval, elevBands.contourInterval);
+      gl.uniform1f(this.uniforms.u_hillshadeStrength, 0.35);
+    }
 
     // Grid opacity: ramp up as we zoom in, fade out when very zoomed out
     const cp = viewport.cellPixels;

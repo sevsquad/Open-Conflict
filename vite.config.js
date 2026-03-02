@@ -316,6 +316,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/wc/, ''),
       },
+      '/api/srtm': {
+        target: 'https://copernicus-dem-30m.s3.eu-central-1.amazonaws.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/srtm/, ''),
+      },
     },
   },
 })

@@ -6,12 +6,65 @@ import WorldScanner from "./WorldScanner.jsx";
 import { colors, typography, radius, shadows, animation, space } from "./theme.js";
 import { Badge } from "./components/ui.jsx";
 import AppHeader from "./components/AppHeader.jsx";
+import { getTestFixture } from "./testFixture.js";
 
 export default function App() {
   const [mode, setMode] = useState("menu"); // "menu" | "parser" | "viewer" | "simulation" | "worldscan"
   const [viewerData, setViewerData] = useState(null);
+  const [simPreset, setSimPreset] = useState(null);
   const [recentMaps, setRecentMaps] = useState([]);
   const [parserMounted, setParserMounted] = useState(false);
+  const [urlLoading, setUrlLoading] = useState(false);
+
+  // URL parameter handling for automated testing.
+  // ?mode=viewer|simulation  → skip menu, go to that mode
+  // ?test=true               → load built-in test fixture as map data
+  // ?load=<filename>         → fetch from /api/load and use as map data
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlMode = params.get("mode");
+    const useTest = params.get("test") === "true";
+    const loadFile = params.get("load");
+    const preset = params.get("preset");
+    if (preset) setSimPreset(preset);
+
+    if (!urlMode) return;
+
+    const validModes = ["viewer", "simulation", "parser", "worldscan"];
+    if (!validModes.includes(urlMode)) {
+      console.warn(`[URL] Invalid mode: ${urlMode}. Valid: ${validModes.join(", ")}`);
+      return;
+    }
+
+    if (useTest) {
+      const fixture = getTestFixture();
+      setViewerData(fixture);
+      setMode(urlMode);
+      console.log(`[URL] mode=${urlMode} with test fixture (${fixture.cols}x${fixture.rows})`);
+    } else if (loadFile) {
+      setUrlLoading(true);
+      fetch(`/api/load?file=${encodeURIComponent(loadFile)}`)
+        .then(r => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        })
+        .then(json => {
+          const mapData = json.map || json;
+          if (!mapData.cells || !mapData.cols) {
+            console.error("[URL] Invalid map data from load:", loadFile);
+            return;
+          }
+          setViewerData(mapData);
+          setMode(urlMode);
+          console.log(`[URL] mode=${urlMode} loaded ${loadFile} (${mapData.cols}x${mapData.rows})`);
+        })
+        .catch(err => console.error(`[URL] Failed to load ${loadFile}:`, err.message))
+        .finally(() => setUrlLoading(false));
+    } else {
+      setMode(urlMode);
+      console.log(`[URL] mode=${urlMode} (no data)`);
+    }
+  }, []);
 
   const handleViewMap = useCallback((data) => {
     setViewerData(data);
@@ -60,9 +113,18 @@ export default function App() {
             </div>
           )}
           {mode === "viewer" && <Viewer onBack={goMenu} onParser={goParser} initialData={viewerData} />}
-          {mode === "simulation" && <Simulation onBack={goMenu} />}
+          {mode === "simulation" && <Simulation onBack={goMenu} initialData={viewerData} preset={simPreset} />}
           {mode === "worldscan" && <WorldScanner onBack={goMenu} />}
         </div>
+      </div>
+    );
+  }
+
+  // Loading state while URL-triggered fetch is in progress
+  if (urlLoading) {
+    return (
+      <div style={{ background: colors.bg.base, height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: colors.text.muted, fontFamily: typography.fontFamily }}>
+        Loading map data...
       </div>
     );
   }

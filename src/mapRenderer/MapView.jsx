@@ -16,6 +16,8 @@ import {
   clampCellPixels, ZOOM_FACTOR, getVisibleRange,
 } from "./ViewportState.js";
 import { cellPixelsToHexSize, SQRT3 } from "./HexMath.js";
+import { computeElevationRange } from "./gl/HexGPUData.js";
+import { buildContourLabelData, drawContourLabels } from "./overlays/ContourLabels.js";
 
 const CLICK_THRESHOLD = 5;
 const BG_COLOR = "#1A2535";
@@ -23,6 +25,7 @@ const BG_COLOR = "#1A2535";
 const MapView = forwardRef(function MapView({
   mapData,
   activeFeatures = null,    // Set of active feature names (null = all)
+  showElevBands = false,    // toggle topographic elevation visualization
   units = null,              // array of unit objects (SimMap mode)
   actorColorMap = {},        // { actorId: "#color" }
   onCellClick = null,
@@ -43,6 +46,9 @@ const MapView = forwardRef(function MapView({
   const lineRendererRef = useRef(null);
   const preprocessedRef = useRef({ roadNetworks: null, nameGroups: null });
   const containerSizeRef = useRef({ w: 600, h: 400 });
+  const elevRangeRef = useRef(null);
+  const smoothedElevRef = useRef(null);
+  const contourLabelRef = useRef(null);
   const [hovCell, setHovCell] = useState(null);
   const [redrawTick, setRedrawTick] = useState(0);
   const rafRef = useRef(null);
@@ -95,10 +101,16 @@ const MapView = forwardRef(function MapView({
   useEffect(() => {
     if (!D || !D.cells || !rendererRef.current) return;
 
-    rendererRef.current.uploadMapData(D);
+    const uploadResult = rendererRef.current.uploadMapData(D);
+
+    // Compute elevation range for topo visualization
+    elevRangeRef.current = computeElevationRange(D);
+
+    // Capture smoothed elevation map for contour labels
+    smoothedElevRef.current = uploadResult?.smoothedElevMap || null;
 
     // Preprocess roads and labels
-    const roadNetworks = buildLinearNetworks(D.cells, cols, rows);
+    const roadNetworks = buildLinearNetworks(D.cells, cols, rows, D.linearPaths);
     const nameGroups = buildNameGroups(D.cells, cols, rows);
     preprocessedRef.current = { roadNetworks, nameGroups };
 
@@ -150,8 +162,31 @@ const MapView = forwardRef(function MapView({
 
     const viewport = viewportRef.current;
 
+    // Build elevation bands param if topo mode is on
+    let elevBands = null;
+    if (showElevBands && elevRangeRef.current) {
+      const { min, max } = elevRangeRef.current;
+      const range = max - min;
+      // Auto-compute contour interval: ~8-12 lines across the range, snapped to nice values
+      const rawInterval = range / 10;
+      const contourInterval = rawInterval > 200 ? Math.round(rawInterval / 100) * 100
+        : rawInterval > 50 ? Math.round(rawInterval / 50) * 50
+        : rawInterval > 10 ? Math.round(rawInterval / 10) * 10
+        : Math.max(5, Math.round(rawInterval));
+      elevBands = { min, max, contourInterval };
+
+      // Build contour label data (cached — only rebuild when interval changes)
+      if (smoothedElevRef.current && D?.cells &&
+          (!contourLabelRef.current || contourLabelRef.current._interval !== contourInterval)) {
+        contourLabelRef.current = buildContourLabelData(
+          smoothedElevRef.current, D.cells, cols, rows, contourInterval
+        );
+        contourLabelRef.current._interval = contourInterval;
+      }
+    }
+
     // WebGL pass: terrain + lines
-    rendererRef.current.render(viewport, w, h, activeFeatures);
+    rendererRef.current.render(viewport, w, h, activeFeatures, elevBands);
     if (lineRendererRef.current) {
       lineRendererRef.current.render(viewport, w, h);
     }
@@ -175,6 +210,10 @@ const MapView = forwardRef(function MapView({
       if (cp >= 6) {
         drawCoordLabels(ctx, viewport, w, h, cols, rows);
       }
+      // Contour elevation labels (when topo mode is on)
+      if (showElevBands && contourLabelRef.current && cp >= 6) {
+        drawContourLabels(ctx, viewport, w, h, cols, rows, contourLabelRef.current);
+      }
       // Units
       if (units || activeGhostUnit) {
         drawUnits(ctx, units, actorColorMap, viewport, w, h, cols, rows,
@@ -189,7 +228,7 @@ const MapView = forwardRef(function MapView({
         drawSelectionHighlight(ctx, viewport, w, h, selCell.c, selCell.r);
       }
     }
-  }, [D, units, hovCell, selCell, activeGhostUnit, redrawTick, cols, rows, actorColorMap, isSetupMode, activeFeatures]);
+  }, [D, units, hovCell, selCell, activeGhostUnit, redrawTick, cols, rows, actorColorMap, isSetupMode, activeFeatures, showElevBands]);
 
   // ── Mouse handlers ──
   const getCellFromEvent = useCallback((e) => {
@@ -338,7 +377,7 @@ const MapView = forwardRef(function MapView({
       return renderer.gl.canvas;
     },
     forceRedraw: () => setRedrawTick(t => t + 1),
-  }), [D, cols, rows, activeFeatures]);
+  }), [D, cols, rows, activeFeatures, showElevBands]);
 
   // Cursor
   const getCursor = () => {

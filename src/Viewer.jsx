@@ -4,6 +4,7 @@ import { Button, Badge, Panel } from "./components/ui.jsx";
 import { TC, TL, FC, FL, FG, DEFAULT_FEATURES } from "./terrainColors.js";
 import MapView from "./mapRenderer/MapView.jsx";
 import { cellPixelsToHexSize, SQRT3 } from "./mapRenderer/HexMath.js";
+import { buildCompactExport } from "./simulation/terrainCodec.js";
 
 // ═══════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -31,6 +32,7 @@ export default function Viewer({ onBack, onParser, initialData }) {
   const [savedFiles, setSavedFiles] = useState([]);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [filterText, setFilterText] = useState("");
+  const [showElev, setShowElev] = useState(false);
 
   const mapViewRef = useRef(null);
   const mmRef = useRef(null);
@@ -125,6 +127,8 @@ export default function Viewer({ onBack, onParser, initialData }) {
           e.preventDefault(); mv.fitMap(); break;
         case "Escape":
           setSel(null); break;
+        case "e": case "E":
+          e.preventDefault(); setShowElev(v => !v); break;
         case "ArrowUp": {
           e.preventDefault();
           const vp = mv.getViewport();
@@ -191,57 +195,10 @@ export default function Viewer({ onBack, onParser, initialData }) {
   // ── Export LLM text ──
   const exportLLM = useCallback(() => {
     if (!D) return;
-    const TK = { deep_water:"DW",coastal_water:"CW",lake:"LK",river:"RV",wetland:"WL",open_ground:"OG",light_veg:"LV",farmland:"FM",forest:"FR",dense_forest:"DF",highland:"HL",forested_hills:"FH",mountain_forest:"MF",mountain:"MT",peak:"PK",desert:"DS",ice:"IC",light_urban:"LU",dense_urban:"DU" };
-    const lines = [];
-    lines.push("# TERRAIN MAP");
-    lines.push(`# ${D.cols}\u00D7${D.rows} cells, ${D.cellSizeKm}km/cell`);
-    if (D.center) lines.push(`# Center: ${D.center.lat.toFixed(4)}, ${D.center.lng.toFixed(4)}`);
-    if (D.bbox) lines.push(`# Bounds: S${D.bbox.south.toFixed(4)} N${D.bbox.north.toFixed(4)} W${D.bbox.west.toFixed(4)} E${D.bbox.east.toFixed(4)}`);
-    lines.push("");
-    lines.push("## TERRAIN CODES");
-    Object.entries(TK).forEach(([k, v]) => { lines.push(`# ${v} = ${TL[k] || k}`); });
-    lines.push("");
-    lines.push("## TERRAIN GRID (row 1=north, left=west)");
-    for (let r = 0; r < D.rows; r++) {
-      const rowCodes = [];
-      for (let c = 0; c < D.cols; c++) { const cell = D.cells[`${c},${r}`]; rowCodes.push(cell ? (TK[cell.terrain] || "??") : ".."); }
-      lines.push(`${String(r + 1).padStart(3)}| ${rowCodes.join(" ")}`);
-    }
-    lines.push("");
-    lines.push("## ELEVATION (meters, cells >50m only)");
-    const elevEntries = [];
-    for (let r = 0; r < D.rows; r++) for (let c = 0; c < D.cols; c++) { const cell = D.cells[`${c},${r}`]; if (cell && cell.elevation > 50) elevEntries.push(`${cellCoord(c, r)}:${cell.elevation}m`); }
-    for (let i = 0; i < elevEntries.length; i += 12) lines.push(elevEntries.slice(i, i + 12).join("  "));
-    lines.push("");
-    lines.push("## FEATURES (per cell)");
-    for (let r = 0; r < D.rows; r++) for (let c = 0; c < D.cols; c++) {
-      const cell = D.cells[`${c},${r}`]; if (!cell) continue;
-      const feats = getFeats(cell); const fn = cell.feature_names || {};
-      if (feats.length === 0 && !cell.feature_names) continue;
-      const parts = feats.map(f => { const nm = fn[f]; return nm ? `${f}(${nm})` : f; });
-      if (fn[cell.terrain] && !feats.includes(cell.terrain)) parts.unshift(`[${cell.terrain}:${fn[cell.terrain]}]`);
-      if (fn.settlement && !fn[cell.terrain]) parts.unshift(`[${fn.settlement}]`);
-      if (parts.length > 0) lines.push(`${cellCoord(c, r)}: ${parts.join(", ")}`);
-    }
-    lines.push("");
-    lines.push("## SUMMARY");
-    const terrCt = {}; for (const k in D.cells) { const t = D.cells[k].terrain; terrCt[t] = (terrCt[t] || 0) + 1; }
-    const total = Object.values(terrCt).reduce((s, v) => s + v, 0);
-    Object.entries(terrCt).sort((a, b) => b[1] - a[1]).forEach(([t, n]) => lines.push(`# ${(TL[t] || t).padEnd(16)} ${n} cells (${((n / total) * 100).toFixed(1)}%)`));
-    lines.push(""); lines.push("## FEATURE COUNTS");
-    Object.entries(fcts).sort((a, b) => b[1] - a[1]).forEach(([f, n]) => lines.push(`# ${(FL[f] || f).padEnd(20)} ${n} cells`));
-    const nameIdx = {};
-    for (const k in D.cells) { const fn = D.cells[k].feature_names; if (!fn) continue; for (const [type, name] of Object.entries(fn)) { if (!nameIdx[type]) nameIdx[type] = {}; if (!nameIdx[type][name]) nameIdx[type][name] = []; nameIdx[type][name].push(k); } }
-    if (Object.keys(nameIdx).length > 0) {
-      lines.push(""); lines.push("## NAMED FEATURES");
-      for (const [type, names] of Object.entries(nameIdx)) for (const [name, cells] of Object.entries(names).sort((a, b) => b[1].length - a[1].length)) {
-        const coords = cells.map(k => { const [c, r] = k.split(",").map(Number); return cellCoord(c, r); });
-        lines.push(`# ${type}: ${name} \u2014 ${coords.length} cells (${coords.slice(0, 8).join(", ")}${coords.length > 8 ? ", ..." : ""})`);
-      }
-    }
-    const blob = new Blob([lines.join("\n")], { type: "text/plain" });
+    const text = buildCompactExport(D);
+    const blob = new Blob([text], { type: "text/plain" });
     const a = document.createElement("a"); a.download = `oc_map_${D.cols}x${D.rows}_llm.txt`; a.href = URL.createObjectURL(blob); a.click(); URL.revokeObjectURL(a.href);
-  }, [D, fcts]);
+  }, [D]);
 
   // ── Minimap drawing ──
   const drawMinimap = useCallback(() => {
@@ -396,6 +353,7 @@ export default function Viewer({ onBack, onParser, initialData }) {
         ref={mapViewRef}
         mapData={D}
         activeFeatures={af}
+        showElevBands={showElev}
         onCellClick={handleCellClick}
         onCellHover={handleCellHover}
       />
@@ -621,6 +579,7 @@ export default function Viewer({ onBack, onParser, initialData }) {
           <ZoomBtn label="+" onClick={zoomIn} title="Zoom in (+)" />
           <ZoomBtn label="-" onClick={zoomOut} title="Zoom out (-)" />
           <ZoomBtn label="Fit" onClick={fitMap} title="Fit to map (F)" wide />
+          <ZoomBtn label="Elev" onClick={() => setShowElev(v => !v)} title="Toggle elevation (E)" wide active={showElev} />
         </div>
         <div style={{
           fontSize: typography.body.xs, color: colors.text.muted,
@@ -638,19 +597,21 @@ export default function Viewer({ onBack, onParser, initialData }) {
 }
 
 // ── Zoom Button ──
-function ZoomBtn({ label, onClick, title, wide }) {
+function ZoomBtn({ label, onClick, title, wide, active }) {
   return (
     <div onClick={onClick} title={title} style={{
       width: wide ? 40 : 28, height: 28, borderRadius: radius.md,
-      background: colors.bg.overlay, backdropFilter: "blur(8px)",
-      border: `1px solid ${colors.border.subtle}`,
+      background: active ? colors.accent.blue + "30" : colors.bg.overlay,
+      backdropFilter: "blur(8px)",
+      border: `1px solid ${active ? colors.accent.blue + "80" : colors.border.subtle}`,
       display: "flex", alignItems: "center", justifyContent: "center",
       cursor: "pointer", fontSize: wide ? typography.body.xs : typography.body.md,
-      fontWeight: typography.weight.bold, color: colors.text.secondary,
+      fontWeight: typography.weight.bold,
+      color: active ? colors.accent.blue : colors.text.secondary,
       transition: `all ${animation.fast}`, userSelect: "none",
     }}
       onMouseEnter={e => { e.currentTarget.style.borderColor = colors.accent.blue + "60"; e.currentTarget.style.color = colors.text.primary; }}
-      onMouseLeave={e => { e.currentTarget.style.borderColor = colors.border.subtle; e.currentTarget.style.color = colors.text.secondary; }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = active ? colors.accent.blue + "80" : colors.border.subtle; e.currentTarget.style.color = active ? colors.accent.blue : colors.text.secondary; }}
     >
       {label}
     </div>

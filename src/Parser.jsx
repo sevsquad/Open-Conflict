@@ -31,6 +31,16 @@ const TERRAIN_TYPES = [
   { id: "ice",             label: "Ice/Glacier",     color: "#D4E5F7" },
   { id: "light_urban",     label: "Light Urban",     color: "#B0A890" },
   { id: "dense_urban",     label: "Dense Urban",     color: "#7A7D80" },
+  { id: "jungle",           label: "Jungle",          color: "#1B6B20" },
+  { id: "jungle_hills",     label: "Jungle Hills",    color: "#2A7A30" },
+  { id: "jungle_mountains", label: "Jungle Mtns",     color: "#1A5A1A" },
+  { id: "boreal",           label: "Boreal",           color: "#3A7A50" },
+  { id: "boreal_hills",     label: "Boreal Hills",     color: "#2A6A40" },
+  { id: "boreal_mountains", label: "Boreal Mtns",      color: "#1A5A30" },
+  { id: "tundra",           label: "Tundra",           color: "#B8B090" },
+  { id: "savanna",          label: "Savanna",          color: "#C0B050" },
+  { id: "savanna_hills",    label: "Savanna Hills",    color: "#A09040" },
+  { id: "mangrove",         label: "Mangrove",         color: "#3A7A5A" },
 ];
 const TT = {}; TERRAIN_TYPES.forEach(t => { TT[t.id] = t; });
 
@@ -387,7 +397,7 @@ const WC_CLASSES = {
   70: "ice",          // Snow and ice
   80: "lake",         // Permanent water bodies (refined by OSM + ocean detection)
   90: "wetland",      // Herbaceous wetland
-  95: "wetland",      // Mangrove
+  95: "mangrove",     // Mangrove (WC class 95 — tidal forest, distinct from herbaceous wetland)
   100: "open_ground", // Moss and lichen
 };
 
@@ -413,7 +423,7 @@ function getWCTilesForBbox(bbox) {
   return tiles;
 }
 
-async function fetchWorldCover(bbox, cols, rows, onS, onProg, log, tier) {
+async function fetchWorldCover(bbox, cols, rows, onS, onProg, log, tier, onPartial) {
   const proj = createHexProjection(bbox, cols, rows);
   const tiles = getWCTilesForBbox(bbox);
   const wcGrid = {}, wcMix = {}, wcHasData = new Set();
@@ -443,84 +453,111 @@ async function fetchWorldCover(bbox, cols, rows, onS, onProg, log, tier) {
 
     const url = `${WC_BASE}/v200/2021/map/ESA_WorldCover_10m_2021_v200_${tileId}_Map.tif`;
 
-    try {
-      const tiff = await fromUrl(url);
-      const image = await tiff.getImage();
-      const imgW = image.getWidth();
-      const imgH = image.getHeight();
-
-      // Intersection of tile with our bbox
-      const isectS = Math.max(bbox.south, tileBbox.south);
-      const isectN = Math.min(bbox.north, tileBbox.north);
-      const isectW = Math.max(bbox.west, tileBbox.west);
-      const isectE = Math.min(bbox.east, tileBbox.east);
-      if (isectS >= isectN || isectW >= isectE) { tilesDone++; continue; }
-
-      // Pixel window in the tile (origin = top-left = NW corner)
-      const px0 = Math.max(0, Math.floor((isectW - tileBbox.west) / (tileBbox.east - tileBbox.west) * imgW));
-      const py0 = Math.max(0, Math.floor((tileBbox.north - isectN) / (tileBbox.north - tileBbox.south) * imgH));
-      const px1 = Math.min(imgW, Math.ceil((isectE - tileBbox.west) / (tileBbox.east - tileBbox.west) * imgW));
-      const py1 = Math.min(imgH, Math.ceil((tileBbox.north - isectS) / (tileBbox.north - tileBbox.south) * imgH));
-
-      // Grid cells overlapping this intersection (hex-aware range)
-      const { r0: gridR0, r1: gridR1, c0: gridC0, c1: gridC1 } = proj.geoRangeToGridRange(isectS, isectN, isectW, isectE);
-      const cellsInRange = (gridC1 - gridC0 + 1) * (gridR1 - gridR0 + 1);
-
-      if (cellsInRange <= 0) { tilesDone++; continue; }
-
-      // Read raster at reduced resolution — sized for SAMPLES_PER_CELL per cell
-      const targetPixels = cellsInRange * SAMPLES_PER_CELL * SAMPLES_PER_CELL;
-      const rasterAspect = (px1 - px0) / Math.max(1, py1 - py0);
-      const outH = Math.max(1, Math.min(py1 - py0, Math.round(Math.sqrt(targetPixels / rasterAspect))));
-      const outW = Math.max(1, Math.min(px1 - px0, Math.round(outH * rasterAspect)));
-
-      const rasters = await image.readRasters({
-        window: [px0, py0, px1, py1],
-        width: outW,
-        height: outH,
-        resampleMethod: "nearest",
-      });
-      const data = rasters[0];
-
-      // Inverse scale: geographic → raster pixel
-      const isectLonSpan = isectE - isectW, isectLatSpan = isectN - isectS;
-
-      // Accumulate raster sample counts per cell (merged across tiles later)
-      let cellsClassified = 0;
-      for (let r = gridR0; r <= gridR1; r++) {
-        for (let c = gridC0; c <= gridC1; c++) {
-          const k = `${c},${r}`;
-          if (!wcAccum[k]) wcAccum[k] = { counts: {}, total: 0 };
-          const acc = wcAccum[k];
-          const samplePts = proj.cellSamplePoints(c, r, SAMPLES_PER_CELL);
-          for (const pt of samplePts) {
-            if (pt.lon < isectW || pt.lon > isectE || pt.lat < isectS || pt.lat > isectN) continue;
-            const rx = Math.floor((pt.lon - isectW) / isectLonSpan * outW);
-            const ry = Math.floor((isectN - pt.lat) / isectLatSpan * outH);
-            if (rx < 0 || rx >= outW || ry < 0 || ry >= outH) continue;
-            const val = data[ry * outW + rx];
-            if (val !== undefined && val !== 0) {
-              acc.counts[val] = (acc.counts[val] || 0) + 1;
-              acc.total++;
-            }
-          }
-          cellsClassified++;
-        }
+    // Retry loop — geotiff fromUrl uses streaming Range requests that are
+    // vulnerable to transient network failures. A single failed tile blanks
+    // out all base terrain for that region, so retries are critical.
+    let tileSuccess = false;
+    for (let attempt = 0; attempt < 3 && !tileSuccess; attempt++) {
+      if (attempt > 0) {
+        onS(`WorldCover: tile ${tileId} retry ${attempt + 1}/3`);
+        await new Promise(r => setTimeout(r, 2000 * attempt));
       }
+      try {
+        const tiff = await fromUrl(url);
+        const image = await tiff.getImage();
+        const imgW = image.getWidth();
+        const imgH = image.getHeight();
 
-      if (log) log.ok(`Tile ${tileId}: ${cellsClassified} cells (${outW}×${outH} samples read)`);
-    } catch (e) {
-      // 404 = ocean tile (expected), other errors = log warning
-      const isOcean = e.message && (e.message.includes("404") || e.message.includes("Not Found"));
-      if (isOcean) {
-        if (log) log.info(`Tile ${tileId}: no data (ocean)`);
-      } else {
-        if (log) log.warn(`Tile ${tileId}: failed — ${e.message}`);
+        // Intersection of tile with our bbox
+        const isectS = Math.max(bbox.south, tileBbox.south);
+        const isectN = Math.min(bbox.north, tileBbox.north);
+        const isectW = Math.max(bbox.west, tileBbox.west);
+        const isectE = Math.min(bbox.east, tileBbox.east);
+        if (isectS >= isectN || isectW >= isectE) { tileSuccess = true; break; }
+
+        // Pixel window in the tile (origin = top-left = NW corner)
+        const px0 = Math.max(0, Math.floor((isectW - tileBbox.west) / (tileBbox.east - tileBbox.west) * imgW));
+        const py0 = Math.max(0, Math.floor((tileBbox.north - isectN) / (tileBbox.north - tileBbox.south) * imgH));
+        const px1 = Math.min(imgW, Math.ceil((isectE - tileBbox.west) / (tileBbox.east - tileBbox.west) * imgW));
+        const py1 = Math.min(imgH, Math.ceil((tileBbox.north - isectS) / (tileBbox.north - tileBbox.south) * imgH));
+
+        // Grid cells overlapping this intersection (hex-aware range)
+        const { r0: gridR0, r1: gridR1, c0: gridC0, c1: gridC1 } = proj.geoRangeToGridRange(isectS, isectN, isectW, isectE);
+        const cellsInRange = (gridC1 - gridC0 + 1) * (gridR1 - gridR0 + 1);
+
+        if (cellsInRange <= 0) { tileSuccess = true; break; }
+
+        // Read raster at reduced resolution — sized for SAMPLES_PER_CELL per cell
+        const targetPixels = cellsInRange * SAMPLES_PER_CELL * SAMPLES_PER_CELL;
+        const rasterAspect = (px1 - px0) / Math.max(1, py1 - py0);
+        const outH = Math.max(1, Math.min(py1 - py0, Math.round(Math.sqrt(targetPixels / rasterAspect))));
+        const outW = Math.max(1, Math.min(px1 - px0, Math.round(outH * rasterAspect)));
+
+        const rasters = await image.readRasters({
+          window: [px0, py0, px1, py1],
+          width: outW,
+          height: outH,
+          resampleMethod: "nearest",
+        });
+        const data = rasters[0];
+
+        // Inverse scale: geographic → raster pixel
+        const isectLonSpan = isectE - isectW, isectLatSpan = isectN - isectS;
+
+        // Accumulate raster sample counts per cell (merged across tiles later)
+        let cellsClassified = 0;
+        for (let r = gridR0; r <= gridR1; r++) {
+          for (let c = gridC0; c <= gridC1; c++) {
+            const k = `${c},${r}`;
+            if (!wcAccum[k]) wcAccum[k] = { counts: {}, total: 0 };
+            const acc = wcAccum[k];
+            const samplePts = proj.cellSamplePoints(c, r, SAMPLES_PER_CELL);
+            for (const pt of samplePts) {
+              if (pt.lon < isectW || pt.lon > isectE || pt.lat < isectS || pt.lat > isectN) continue;
+              const rx = Math.floor((pt.lon - isectW) / isectLonSpan * outW);
+              const ry = Math.floor((isectN - pt.lat) / isectLatSpan * outH);
+              if (rx < 0 || rx >= outW || ry < 0 || ry >= outH) continue;
+              const val = data[ry * outW + rx];
+              if (val !== undefined && val !== 0) {
+                acc.counts[val] = (acc.counts[val] || 0) + 1;
+                acc.total++;
+              }
+            }
+            cellsClassified++;
+          }
+        }
+
+        if (log) log.ok(`Tile ${tileId}: ${cellsClassified} cells (${outW}×${outH} samples read)`);
+        tileSuccess = true;
+      } catch (e) {
+        // 404 = ocean tile (expected), other errors = retry then warn
+        const isOcean = e.message && (e.message.includes("404") || e.message.includes("Not Found"));
+        if (isOcean) {
+          if (log) log.info(`Tile ${tileId}: no data (ocean)`);
+          tileSuccess = true;
+        } else if (attempt < 2) {
+          if (log) log.warn(`Tile ${tileId}: attempt ${attempt + 1} failed — ${e.message}`);
+        } else {
+          if (log) log.warn(`Tile ${tileId}: failed after 3 attempts — ${e.message}`);
+        }
       }
     }
 
     tilesDone++;
     if (onProg) onProg({ phase: "WorldCover", current: tilesDone, total: tiles.size });
+
+    // Emit partial preview: resolve current wcAccum to raw class numbers
+    if (onPartial) {
+      const partial = {};
+      for (const [k, acc] of Object.entries(wcAccum)) {
+        let best = 0, bestN = 0;
+        for (const [v, n] of Object.entries(acc.counts)) {
+          if (n > bestN) { best = Number(v); bestN = n; }
+        }
+        partial[k] = best;
+      }
+      onPartial(partial);
+    }
   }
 
   // Resolve majority vote from accumulated cross-tile counts
@@ -666,7 +703,7 @@ way["landuse"="military"]${b};
 way["landuse"="port"]${b};
 way["harbour"="yes"]${b};
 node["man_made"="dam"]${b};
-node["place"~"^(city|town|village)$"]["name"]${b};
+node["place"~"^(city|town)$"]["name"]${b};
 relation["waterway"="river"]["name"]${b};
 );out geom;`;
 }
@@ -858,7 +895,7 @@ async function fetchOSM(bbox, onS, onProg, mapWKm, mapHKm, cellKm, elevations, c
 // ELEVATION — dual provider, Open Topo Data primary (via proxy)
 // ════════════════════════════════════════════════════════════════
 
-async function fetchElev(pts, onS, onProg, log) {
+async function fetchElev(pts, onS, onProg, log, onPartial) {
   const BATCH = 100;
   const el = new Array(pts.length).fill(null);
   const batches = Math.ceil(pts.length / BATCH);
@@ -910,6 +947,7 @@ async function fetchElev(pts, onS, onProg, log) {
           const elevs = p.parse(d);
           if (elevs && elevs.length === sl.length) {
             for (let i = 0; i < elevs.length; i++) el[s + i] = elevs[i] ?? null;
+            if (onPartial) onPartial([...el]);
             successCount += sl.length;
             if (provIdx !== activeProvider && log) {
               log.warn(`Elevation: switched to ${p.name} at batch ${b + 1}`);
@@ -947,20 +985,283 @@ async function fetchElev(pts, onS, onProg, log) {
 }
 
 // ════════════════════════════════════════════════════════════════
+// COPERNICUS DEM 30m RASTER ELEVATION
+// ════════════════════════════════════════════════════════════════
+
+// Build URL for a Copernicus DEM 30m tile given its SW corner lat/lon.
+// Tiles are 1×1 degree, named by SW corner.
+// Example: lat=13, lon=107 → Copernicus_DSM_COG_10_N13_00_E107_00_DEM.tif
+function getCopernicusTileUrl(latSW, lonSW) {
+  const ns = latSW >= 0 ? "N" : "S";
+  const ew = lonSW >= 0 ? "E" : "W";
+  const latStr = `${ns}${String(Math.abs(latSW)).padStart(2, "0")}_00`;
+  const lonStr = `${ew}${String(Math.abs(lonSW)).padStart(3, "0")}_00`;
+  const name = `Copernicus_DSM_COG_10_${latStr}_${lonStr}_DEM`;
+  return `/api/srtm/${name}/${name}.tif`;
+}
+
+// Compute which 1×1 degree tiles overlap a bbox. Returns Map of tileId → { south, north, west, east, url }.
+function getCopernicusTilesForBbox(bbox) {
+  const tiles = new Map();
+  const latStart = Math.floor(bbox.south);
+  const latEnd = Math.ceil(bbox.north);
+  const lonStart = Math.floor(bbox.west);
+  const lonEnd = Math.ceil(bbox.east);
+  for (let lat = latStart; lat < latEnd; lat++) {
+    for (let lon = lonStart; lon < lonEnd; lon++) {
+      const key = `${lat >= 0 ? "N" : "S"}${Math.abs(lat)}_${lon >= 0 ? "E" : "W"}${Math.abs(lon)}`;
+      tiles.set(key, {
+        south: lat, north: lat + 1, west: lon, east: lon + 1,
+        url: getCopernicusTileUrl(lat, lon),
+      });
+    }
+  }
+  return tiles;
+}
+
+// Load elevation from Copernicus DEM 30m GeoTIFF tiles — same pattern as WorldCover tile loading.
+// Returns per-cell statistics computed from ~100 raster samples per hex cell.
+async function fetchElevFromDEM(bbox, cols, rows, onS, onProg, log, onPartial) {
+  const proj = createHexProjection(bbox, cols, rows);
+  const totalCells = cols * rows;
+  const tiles = getCopernicusTilesForBbox(bbox);
+  const ELEV_SAMPLES = 10; // 10×10 = 100 sample points per hex cell
+
+  // Per-cell accumulators — collect all valid elevation samples before computing stats.
+  // At 100 samples × 50k cells × 4 bytes = ~20MB — acceptable.
+  const cellSamples = new Array(totalCells);
+  for (let i = 0; i < totalCells; i++) cellSamples[i] = [];
+
+  if (log) {
+    log.section("DEM ELEVATION (Copernicus 30m)");
+    log.table([
+      ["Tiles needed", `${tiles.size}`],
+      ["Sampling", `${ELEV_SAMPLES}×${ELEV_SAMPLES} per cell`],
+    ]);
+  }
+
+  let tilesDone = 0;
+
+  for (const [tileId, tileBbox] of tiles) {
+    onS(`DEM Elevation: tile ${tileId} (${tilesDone + 1}/${tiles.size})`);
+    if (onProg) onProg({ phase: "DEM Elevation", current: tilesDone, total: tiles.size });
+
+    let tileSuccess = false;
+    for (let attempt = 0; attempt < 3 && !tileSuccess; attempt++) {
+      if (attempt > 0) {
+        onS(`DEM: tile ${tileId} retry ${attempt + 1}/3`);
+        await new Promise(r => setTimeout(r, 2000 * attempt));
+      }
+      try {
+        const tiff = await fromUrl(tileBbox.url);
+        const image = await tiff.getImage();
+        const imgW = image.getWidth();
+        const imgH = image.getHeight();
+
+        // Intersection of tile with our bbox (same pattern as WorldCover, line 472)
+        const isectS = Math.max(bbox.south, tileBbox.south);
+        const isectN = Math.min(bbox.north, tileBbox.north);
+        const isectW = Math.max(bbox.west, tileBbox.west);
+        const isectE = Math.min(bbox.east, tileBbox.east);
+        if (isectS >= isectN || isectW >= isectE) { tileSuccess = true; break; }
+
+        // Pixel window in the tile (origin = top-left = NW corner)
+        const px0 = Math.max(0, Math.floor((isectW - tileBbox.west) / (tileBbox.east - tileBbox.west) * imgW));
+        const py0 = Math.max(0, Math.floor((tileBbox.north - isectN) / (tileBbox.north - tileBbox.south) * imgH));
+        const px1 = Math.min(imgW, Math.ceil((isectE - tileBbox.west) / (tileBbox.east - tileBbox.west) * imgW));
+        const py1 = Math.min(imgH, Math.ceil((tileBbox.north - isectS) / (tileBbox.north - tileBbox.south) * imgH));
+
+        // Grid cells overlapping this intersection
+        const { r0: gridR0, r1: gridR1, c0: gridC0, c1: gridC1 } = proj.geoRangeToGridRange(isectS, isectN, isectW, isectE);
+        const cellsInRange = (gridC1 - gridC0 + 1) * (gridR1 - gridR0 + 1);
+        if (cellsInRange <= 0) { tileSuccess = true; break; }
+
+        // Read raster at native resolution within the window
+        const rasters = await image.readRasters({ window: [px0, py0, px1, py1] });
+        const data = rasters[0];
+        const outW = px1 - px0;
+        const outH = py1 - py0;
+        const isectLonSpan = isectE - isectW;
+        const isectLatSpan = isectN - isectS;
+
+        // Sample DEM pixels within each hex cell
+        for (let r = gridR0; r <= gridR1; r++) {
+          for (let c = gridC0; c <= gridC1; c++) {
+            const cellIdx = r * cols + c;
+            if (cellIdx < 0 || cellIdx >= totalCells) continue;
+            const samplePts = proj.cellSamplePoints(c, r, ELEV_SAMPLES);
+            for (const pt of samplePts) {
+              if (pt.lon < isectW || pt.lon > isectE || pt.lat < isectS || pt.lat > isectN) continue;
+              const rx = Math.floor((pt.lon - isectW) / isectLonSpan * outW);
+              const ry = Math.floor((isectN - pt.lat) / isectLatSpan * outH);
+              if (rx < 0 || rx >= outW || ry < 0 || ry >= outH) continue;
+              const val = data[ry * outW + rx];
+              // Filter void/nodata: Copernicus uses NaN, raw SRTM uses -32768
+              if (val !== undefined && val > -1000 && !isNaN(val)) {
+                cellSamples[cellIdx].push(val);
+              }
+            }
+          }
+        }
+
+        if (log) log.ok(`Tile ${tileId}: ${cellsInRange} cells (${outW}×${outH} px window)`);
+        tileSuccess = true;
+      } catch (e) {
+        // 404 = ocean tile (no DEM data), same as WorldCover behavior
+        const isOcean = e.message && (e.message.includes("404") || e.message.includes("Not Found") || e.message.includes("403"));
+        if (isOcean) {
+          if (log) log.info(`DEM tile ${tileId}: no data (ocean/void)`);
+          tileSuccess = true;
+        } else if (attempt < 2) {
+          if (log) log.warn(`DEM tile ${tileId}: attempt ${attempt + 1} failed — ${e.message}`);
+        } else {
+          if (log) log.warn(`DEM tile ${tileId}: failed after 3 attempts — ${e.message}`);
+        }
+      }
+    }
+
+    tilesDone++;
+    if (onProg) onProg({ phase: "DEM Elevation", current: tilesDone, total: tiles.size });
+
+    // Emit partial preview after each tile
+    if (onPartial) {
+      const preview = new Array(totalCells).fill(null);
+      for (let i = 0; i < totalCells; i++) {
+        if (cellSamples[i].length > 0) {
+          let sum = 0;
+          for (const v of cellSamples[i]) sum += v;
+          preview[i] = sum / cellSamples[i].length;
+        }
+      }
+      onPartial(preview);
+    }
+  }
+
+  // Compute per-cell statistics from accumulated samples
+  const elevations = new Array(totalCells);
+  const elevMin = new Array(totalCells);
+  const elevMax = new Array(totalCells);
+  const elevRange = new Array(totalCells);
+  const elevStddev = new Array(totalCells);
+  let validCells = 0;
+
+  for (let i = 0; i < totalCells; i++) {
+    const samples = cellSamples[i];
+    if (samples.length === 0) {
+      elevations[i] = 0;
+      elevMin[i] = 0;
+      elevMax[i] = 0;
+      elevRange[i] = 0;
+      elevStddev[i] = 0;
+      continue;
+    }
+    validCells++;
+    let sum = 0, min = Infinity, max = -Infinity;
+    for (const v of samples) {
+      sum += v;
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    const mean = sum / samples.length;
+    elevations[i] = mean;
+    elevMin[i] = min;
+    elevMax[i] = max;
+    elevRange[i] = max - min;
+
+    let sumSqDiff = 0;
+    for (const v of samples) {
+      const d = v - mean;
+      sumSqDiff += d * d;
+    }
+    elevStddev[i] = Math.sqrt(sumSqDiff / samples.length);
+  }
+
+  const coverage = validCells / totalCells;
+  if (log) {
+    log.ok(`DEM complete: ${validCells}/${totalCells} cells (${(coverage * 100).toFixed(0)}% coverage)`);
+    const avgStddev = elevStddev.reduce((a, b) => a + b, 0) / Math.max(1, validCells);
+    const maxR = Math.max(...elevRange);
+    log.detail(`Avg internal stddev: ${avgStddev.toFixed(1)}m, max range: ${maxR.toFixed(0)}m`);
+  }
+
+  return { elevations, elevMin, elevMax, elevRange, elevStddev, coverage };
+}
+
+// ════════════════════════════════════════════════════════════════
 // ELEVATION SAMPLING + INTERPOLATION
 // ════════════════════════════════════════════════════════════════
 
-async function fetchElevSmart(bbox, cols, rows, onS, onProg, log) {
+async function fetchElevSmart(bbox, cols, rows, onS, onProg, log, onPartial, cellKm) {
   const proj = createHexProjection(bbox, cols, rows);
   const totalCells = cols * rows;
-  const SAMPLE_THRESHOLD = 5000;
+  const SAMPLE_THRESHOLD = 10000;
+
+  // At fine scales (≤2km cells), use Copernicus DEM 30m raster for ~100 samples/cell.
+  // Falls back to 3-point API sampling if DEM fails or has low coverage.
+  const useRasterDEM = cellKm != null && cellKm <= 2;
 
   if (log) {
     log.section("ELEVATION");
     log.table([
       ["Grid cells", `${cols}×${rows} = ${totalCells}`],
-      ["Sampling", totalCells <= SAMPLE_THRESHOLD ? "full (every cell)" : `interpolated (threshold: ${SAMPLE_THRESHOLD})`],
+      ["Sampling", useRasterDEM ? "DEM raster (Copernicus 30m, API fallback)" :
+        (totalCells <= SAMPLE_THRESHOLD ? "full (every cell)" : `interpolated (threshold: ${SAMPLE_THRESHOLD})`)],
     ]);
+  }
+
+  if (useRasterDEM) {
+    // Try Copernicus DEM raster first — vastly more samples per cell, no rate limiting
+    try {
+      const demResult = await fetchElevFromDEM(bbox, cols, rows, onS, onProg, log, onPartial);
+      if (demResult.coverage >= 0.5) {
+        if (onPartial) onPartial([...demResult.elevations]);
+        return demResult;
+      }
+      if (log) log.warn(`DEM coverage only ${(demResult.coverage * 100).toFixed(0)}%, falling back to API`);
+    } catch (e) {
+      if (log) log.warn(`DEM failed: ${e.message}, falling back to API`);
+    }
+
+    // API fallback: 3-point multi-sample per cell (center + N/S offsets)
+    const PTS_PER_CELL = 3;
+    const pts = [];
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const { lon, lat } = proj.cellCenter(c, r);
+      pts.push({ lat, lng: lon });
+      const { x: px, y: py } = offsetToPixel(c, r, 1);
+      const geoN = proj.hexPixelToGeo(px, py - 0.5);
+      const geoS = proj.hexPixelToGeo(px, py + 0.5);
+      pts.push({ lat: geoN.lat, lng: geoN.lon });
+      pts.push({ lat: geoS.lat, lng: geoS.lon });
+    }
+
+    const wrappedPartial = onPartial ? (raw) => {
+      const preview = new Array(totalCells).fill(null);
+      for (let i = 0; i < totalCells; i++) preview[i] = raw[i * PTS_PER_CELL];
+      onPartial(preview);
+    } : undefined;
+
+    onS(`Elevation fallback: multi-sampling ${totalCells} cells × ${PTS_PER_CELL} pts...`);
+    const result = await fetchElev(pts, onS, onProg, log, wrappedPartial);
+
+    const elevations = new Array(totalCells);
+    const elevRange = new Array(totalCells);
+    for (let i = 0; i < totalCells; i++) {
+      const e0 = result.elevations[i * 3];
+      const e1 = result.elevations[i * 3 + 1];
+      const e2 = result.elevations[i * 3 + 2];
+      elevations[i] = (e0 + e1 + e2) / 3;
+      elevRange[i] = Math.max(e0, e1, e2) - Math.min(e0, e1, e2);
+    }
+
+    if (onPartial) onPartial(elevations);
+    if (log) {
+      const avgRange = elevRange.reduce((a, b) => a + b, 0) / totalCells;
+      const maxRange = Math.max(...elevRange);
+      log.ok(`API fallback complete: avg range ${avgRange.toFixed(1)}m, max range ${maxRange.toFixed(0)}m`);
+    }
+
+    return { elevations, elevRange, coverage: result.coverage };
   }
 
   if (totalCells <= SAMPLE_THRESHOLD) {
@@ -969,7 +1270,8 @@ async function fetchElevSmart(bbox, cols, rows, onS, onProg, log) {
       const { lon, lat } = proj.cellCenter(c, r);
       pts.push({ lat, lng: lon });
     }
-    return await fetchElev(pts, onS, onProg, log);
+    const result = await fetchElev(pts, onS, onProg, log, onPartial);
+    return { ...result, elevRange: null };
   }
 
   // Sample on coarser grid
@@ -995,6 +1297,15 @@ async function fetchElevSmart(bbox, cols, rows, onS, onProg, log) {
   let idx = 0;
   for (const r of sampleR) for (const c of sampleC) {
     sparse[`${c},${r}`] = sampledElev.elevations[idx++];
+  }
+
+  // Emit sparse samples mapped to full grid so preview shows sample points
+  if (onPartial) {
+    const sparseElev = new Array(totalCells).fill(null);
+    for (const r of sampleR) for (const c of sampleC) {
+      sparseElev[r * cols + c] = sparse[`${c},${r}`];
+    }
+    onPartial(sparseElev);
   }
 
   // Bicubic (Catmull-Rom) interpolation — preserves peaks and ridgelines better than bilinear
@@ -1053,7 +1364,9 @@ async function fetchElevSmart(bbox, cols, rows, onS, onProg, log) {
     }
   }
 
-  return { elevations: fullElev, coverage: sampledElev.coverage };
+  if (onPartial) onPartial(fullElev);
+
+  return { elevations: fullElev, elevRange: null, coverage: sampledElev.coverage };
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -1359,10 +1672,10 @@ const MAJOR_CANALS = new Set([
 // ════════════════════════════════════════════════════════════════
 function getRiverWhitelistNames(tier, cellKm) {
   const names = new Set();
-  // Theater (≥15km cells): scalerank 0-5 (continental rivers + significant crossings)
-  // Strategic: scalerank 0-6 (adds medium-scale rivers)
+  // Theater (≥15km cells): scalerank 0-4 (continental rivers only)
+  // Strategic: scalerank 0-5 (major crossing obstacles, ≥100m wide)
   // Operational: scalerank 0-7 (all included rivers)
-  const maxScalerank = cellKm >= 15 ? 5 : tier === "strategic" ? 6 : 7;
+  const maxScalerank = cellKm >= 15 ? 4 : tier === "strategic" ? 5 : 7;
   for (const r of riverWhitelistData.rivers) {
     if (!r.include) continue;
     if (r.scalerank > maxScalerank) continue;
@@ -1644,6 +1957,7 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
   const { south, north, west, east } = bbox;
   const proj = createHexProjection(bbox, cols, rows);
   const elev = elevData.elevations;
+  const elevRange = elevData.elevRange; // per-cell elevation range, null at coarse scales
   const wcGrid = wcData ? wcData.wcGrid : null;
   const wcMix = wcData ? wcData.wcMix : null;
 
@@ -1684,9 +1998,14 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
   const cellInfra = {};
   const cellInfraAll = {}; // ALL infra types per cell (no winner-take-all)
   const cellRoadCount = {};
+  // Preserve ordered cell paths from rasterizeWay() for rendering.
+  // BFS reconstruction loses way order and creates random branching.
+  const linearPaths = [];
   for (const line of feat.infraLines) {
+    const pathCells = rasterizeWay(line.nodes);
+    if (pathCells.length >= 2) linearPaths.push({ type: line.type, cells: pathCells });
     const seen = new Set();
-    for (const [c, r] of rasterizeWay(line.nodes)) {
+    for (const [c, r] of pathCells) {
       const k = `${c},${r}`;
       if (seen.has(k)) continue; seen.add(k);
       if (["highway", "major_road", "road", "minor_road"].includes(line.type)) {
@@ -1711,7 +2030,9 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
   // River lines
   const cellRiver = new Set();
   for (const wl of feat.waterLines) {
-    for (const [c, r] of rasterizeWay(wl.nodes)) cellRiver.add(`${c},${r}`);
+    const pathCells = rasterizeWay(wl.nodes);
+    if (pathCells.length >= 2) linearPaths.push({ type: "river", cells: pathCells });
+    for (const [c, r] of pathCells) cellRiver.add(`${c},${r}`);
   }
 
   // Stream lines (sub-tactical + tactical)
@@ -1829,11 +2150,11 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
             // OSM name contains whitelist name (e.g. "Mississippi River" contains "Mississippi")
             if (lower.includes(wdName)) return true;
           }
-          // Reverse: whitelist name contains OSM name — require word boundary + min 4 chars
-          // Catches "Ouse" matching "Great Ouse" but blocks "Ina" matching "Magdalena"
-          if (lower.length >= 4) {
-            const re = new RegExp(`\\b${lower.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
-            if (re.test(wdName)) return true;
+          // Reverse: OSM name matches the tail of a compound whitelist name.
+          // "Ouse" matches "Great Ouse", "Nile" matches "Blue Nile".
+          // "North" does NOT match "North Saskatchewan" — qualifier, not river name.
+          if (lower.length >= 4 && (wdName === lower || wdName.endsWith(" " + lower))) {
+            return true;
           }
         }
         return false;
@@ -1882,6 +2203,9 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
             const canalMinSpanKm = cellKm >= 15 ? 100 : 50;
             if (nl.isCanal && !nl.tagged && spanKm < canalMinSpanKm && (tier === "strategic" || tier === "operational")) {
               // Canal is too short on map to be confidently navigable at this scale — skip
+            } else if ((tier === "strategic" || tier === "operational") && wayCells.size < 2) {
+              // Short tributary sharing a major river's name — skip at large scales
+              // A 1-cell river at 10km is likely a small branch, not the real river
             } else {
               wayCells.forEach(k => markNav(k));
             }
@@ -1923,13 +2247,24 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
     const pipeMinSpan = tier === "strategic" ? 10 : tier === "operational" ? 6 : 1;
     if (pipeMinSpan <= 1) {
       for (const pl of feat.pipelineLines) {
-        for (const [c, r] of rasterizeWay(pl.nodes)) cellPipeline.add(`${c},${r}`);
+        const pathCells = rasterizeWay(pl.nodes);
+        if (pathCells.length >= 2) linearPaths.push({ type: "pipeline", cells: pathCells });
+        for (const [c, r] of pathCells) cellPipeline.add(`${c},${r}`);
       }
     } else {
       // Index per-way, then flood-fill connected components
       const pipeCandidates = new Set();
+      const pipePathsByCell = new Map(); // track which paths contribute to each cell
       for (const pl of feat.pipelineLines) {
-        for (const [c, r] of rasterizeWay(pl.nodes)) pipeCandidates.add(`${c},${r}`);
+        const pathCells = rasterizeWay(pl.nodes);
+        const pathIdx = linearPaths.length;
+        if (pathCells.length >= 2) linearPaths.push({ type: "pipeline", cells: pathCells, _pending: true });
+        for (const [c, r] of pathCells) {
+          const k = `${c},${r}`;
+          pipeCandidates.add(k);
+          if (!pipePathsByCell.has(k)) pipePathsByCell.set(k, new Set());
+          pipePathsByCell.get(k).add(pathIdx);
+        }
       }
       const visited = new Set();
       for (const seed of pipeCandidates) {
@@ -1945,7 +2280,20 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
             if (pipeCandidates.has(nk) && !visited.has(nk)) { visited.add(nk); queue.push(nk); }
           }
         }
-        if (component.length >= pipeMinSpan) component.forEach(k => cellPipeline.add(k));
+        if (component.length >= pipeMinSpan) {
+          component.forEach(k => cellPipeline.add(k));
+        } else {
+          // Mark paths for cells in rejected components as rejected
+          component.forEach(k => {
+            const idxs = pipePathsByCell.get(k);
+            if (idxs) idxs.forEach(i => { if (linearPaths[i]) linearPaths[i]._rejected = true; });
+          });
+        }
+      }
+      // Remove rejected pipeline paths
+      for (let i = linearPaths.length - 1; i >= 0; i--) {
+        if (linearPaths[i]._rejected) linearPaths.splice(i, 1);
+        else if (linearPaths[i]._pending) delete linearPaths[i]._pending;
       }
     }
   }
@@ -2267,6 +2615,31 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
         }
       }
 
+      // ── Biome refinement — latitude + precipitation split forest/light_veg into climate zones ──
+      // Runs AFTER desert check, BEFORE elevation modifiers.
+      // Mangrove is handled directly by WC_CLASSES[95].
+      {
+        const absLat = Math.abs(lat);
+        const precip = aridityGrid ? aridityGrid[k] : null;
+
+        // Forest → jungle (tropical wet) or boreal (high-latitude)
+        if (tt === "forest" || tt === "dense_forest") {
+          if (absLat < 23.5 && precip !== null && precip > 1500) tt = "jungle";
+          else if (absLat > 55) tt = "boreal"; // reliable by latitude alone
+        }
+
+        // Light veg → savanna (tropical grassland) or tundra (arctic)
+        if (tt === "light_veg") {
+          if (absLat < 30 && precip !== null && precip >= 500 && precip <= 1500) tt = "savanna";
+          else if (absLat > 60 && (precip === null || precip < 500)) tt = "tundra";
+        }
+
+        // Open ground → tundra (arctic barren)
+        if (tt === "open_ground" && absLat > 60 && (precip === null || precip < 500)) {
+          tt = "tundra";
+        }
+      }
+
       // Elevation modifiers — dual criteria: absolute elevation AND local prominence
       // Prevents flat high-altitude plateaus (Tibet, Altiplano, Iranian plateau) from being peaks.
       // A plateau at 4500m with prominence ~0 stays highland; a 2500m peak rising 500m above surroundings is a peak.
@@ -2284,17 +2657,41 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
         } else {
           // Vegetated/other terrain: dual criteria with prominence
           if (e > 1800 && prom > 500 && tt !== "ice") tt = "peak";
-          else if (e > 1000 && prom > 300 && tt !== "ice" && tt !== "farmland") tt = (tt === "forest" || tt === "dense_forest") ? "mountain_forest" : "mountain";
+          else if (e > 1000 && prom > 300 && tt !== "ice" && tt !== "farmland") {
+            if (tt === "forest" || tt === "dense_forest") tt = "mountain_forest";
+            else if (tt === "jungle") tt = "jungle_mountains";
+            else if (tt === "boreal") tt = "boreal_mountains";
+            else tt = "mountain";
+          }
           else if ((e > 800 || prom > 150) && tt !== "ice" && tt !== "farmland") {
             if (tt === "forest" || tt === "dense_forest") tt = "mountain_forest";
-            else if (!["wetland", "desert", "ice", "farmland"].includes(tt)) tt = (e > 800 && prom > 300) ? "mountain" : "highland";
+            else if (tt === "jungle") tt = "jungle_mountains";
+            else if (tt === "boreal") tt = "boreal_mountains";
+            else if (!["wetland", "desert", "ice", "farmland", "savanna", "tundra", "mangrove"].includes(tt)) tt = (e > 800 && prom > 300) ? "mountain" : "highland";
           } else if (e > 500 && tt !== "ice" && tt !== "farmland") {
             // Require some local relief — flat plateau tops (prom ≤ 50) stay as-is
             if ((tt === "forest" || tt === "dense_forest") && prom > 50) tt = "forested_hills";
-            else if (!["forest", "dense_forest", "wetland", "desert", "ice", "farmland"].includes(tt)) tt = "highland";
+            else if (tt === "jungle" && prom > 50) tt = "jungle_hills";
+            else if (tt === "boreal" && prom > 50) tt = "boreal_hills";
+            else if (tt === "savanna" && prom > 50) tt = "savanna_hills";
+            else if (!["forest", "dense_forest", "wetland", "desert", "ice", "farmland", "jungle", "boreal", "savanna", "tundra", "mangrove"].includes(tt)) tt = "highland";
           }
         }
       }
+
+      // Range-based forested hills reclassification (fine scales only).
+      // A forest cell with 30m+ internal elevation range is hilly regardless of absolute elevation.
+      // This catches moderate hills (200-500m) that the absolute thresholds above miss.
+      if (elevRange && cellKm <= 2) {
+        const range = elevRange[r * cols + c] || 0;
+        const isMtn = ["mountain", "mountain_forest", "peak", "highland", "jungle_mountains", "boreal_mountains"].includes(tt);
+        if (range > 30 && !isMtn) {
+          if (tt === "forest" || tt === "dense_forest") tt = "forested_hills";
+          else if (tt === "jungle") tt = "jungle_hills";
+          else if (tt === "boreal") tt = "boreal_hills";
+        }
+      }
+
       terrain[k] = tt;
 
       // Per-cell confidence: how certain is this terrain classification?
@@ -2461,7 +2858,7 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
     const influenceScale = Math.max(1, Math.round(cellKm / 1.5));
     const MIN_CLUSTER = Math.max(2, Math.round(1.5 * influenceScale));
     const MIN_CLUSTER_DENSE = Math.max(5, Math.round(3 * influenceScale));
-    const TOWN_SCORE = 0.08;       // minimum score for town feature
+    const TOWN_SCORE = tier === "strategic" ? 0.20 : 0.08; // strategic needs stronger signal
 
     const clusterOf = {};  // k -> clusterId
     const clusters = [];   // [{cells: Set, maxScore, hasSettlement}]
@@ -2515,6 +2912,17 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
         if (score >= DENSE_SCORE && size >= MIN_CLUSTER_DENSE) {
           terrain[k] = "dense_urban";
         } else if (score >= SEED_THRESHOLD) {
+          terrain[k] = "light_urban";
+        }
+      }
+    }
+
+    // Force light_urban for settlements above population threshold that
+    // weren't caught by cluster detection (WorldCover pixel dilution at large scale)
+    if (tier === "strategic") {
+      const POP_URBAN_THRESHOLD = 40000;
+      for (const [k, sett] of cellSettlement.entries()) {
+        if (sett.population >= POP_URBAN_THRESHOLD && !["light_urban", "dense_urban"].includes(terrain[k])) {
           terrain[k] = "light_urban";
         }
       }
@@ -2579,14 +2987,14 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
     }
   }
 
-  return { terrain, infra, attrs, features, featureNames, elevG, elevCoverage: elevData.coverage, cellRoadCount, cellBuildingPct, cellStream, cellBarrier, cellConfidence, urbanScore, cellSettlement };
+  return { terrain, infra, attrs, features, featureNames, elevG, elevCoverage: elevData.coverage, cellRoadCount, cellBuildingPct, cellStream, cellBarrier, cellConfidence, urbanScore, cellSettlement, linearPaths };
 }
 
 // ════════════════════════════════════════════════════════════════
 // POST-PROCESSING
 // ════════════════════════════════════════════════════════════════
 
-function postProc(terrain, infra, attrs, features, featureNames, cols, rows, elevG, cellKm, elevCoverage, cellRoadCount, cellBuildingPct, tier, wcGrid, wcHasData, wcMix, urbanScore) {
+function postProc(terrain, infra, attrs, features, featureNames, cols, rows, elevG, cellKm, elevCoverage, cellRoadCount, cellBuildingPct, tier, wcGrid, wcHasData, wcMix, urbanScore, elevRange, elevStddev) {
   let tG = { ...terrain }, iG = { ...infra }, aG = {};
   for (const k in attrs) aG[k] = [...attrs[k]];
   // Features: deep copy
@@ -2597,8 +3005,8 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
   for (const k in featureNames) fnG[k] = { ...featureNames[k] };
 
   const isW = t => ["deep_water", "coastal_water", "lake", "river"].includes(t);
-  const isForest = t => ["forest", "dense_forest", "forested_hills", "mountain_forest"].includes(t);
-  const isOpen = t => ["open_ground", "light_veg", "highland", "desert", "farmland"].includes(t);
+  const isForest = t => ["forest", "dense_forest", "forested_hills", "mountain_forest", "jungle", "jungle_hills", "jungle_mountains", "boreal", "boreal_hills", "boreal_mountains", "mangrove"].includes(t);
+  const isOpen = t => ["open_ground", "light_veg", "highland", "desert", "farmland", "tundra", "savanna", "savanna_hills"].includes(t);
 
   // ── OCEAN ──
   // Flood-fill from map edges to identify ocean cells.
@@ -2612,7 +3020,7 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
     //  - cells with real WC data showing specific land types (farmland, forest, urban, wetland)
     //    These are genuinely land even if at sea level (e.g. Netherlands polders)
     //  - only open_ground/lake terrain types can become ocean
-    const WC_DEFINITE_LAND = new Set(["farmland", "forest", "dense_forest", "forested_hills", "light_veg", "wetland", "light_urban", "dense_urban", "ice"]);
+    const WC_DEFINITE_LAND = new Set(["farmland", "forest", "dense_forest", "forested_hills", "light_veg", "wetland", "light_urban", "dense_urban", "ice", "jungle", "jungle_hills", "jungle_mountains", "boreal", "boreal_hills", "boreal_mountains", "tundra", "savanna", "savanna_hills", "mangrove"]);
     const isCand = k => {
       const t = tG[k], e = elevG[k] || 0;
       if (t === "desert") return false;
@@ -2788,6 +3196,39 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
     }
   }
 
+  // ── SADDLE (mountain pass / military crest) ──
+  // Cell lower than 2 opposite hex neighbors AND higher than 2 other opposite neighbors.
+  // Hex grid has 3 opposite pairs: (E,W), (NE,SW), (NW,SE).
+  // getNeighbors returns [E, NE, NW, W, SW, SE] → pairs: (0,3), (1,4), (2,5).
+  if (tier !== "strategic") {
+    const SADDLE_MIN_DIFF = 10; // minimum 10m difference to count
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const k = `${c},${r}`;
+      if (isW(tG[k])) continue;
+      const e = elevG[k] || 0;
+      if (e < 50) continue; // saddles only matter at significant elevation
+
+      const nbrs = getNeighbors(c, r);
+      if (nbrs.length < 6) continue;
+      const nElev = nbrs.map(([nc, nr]) => {
+        const nk = `${nc},${nr}`;
+        return elevG[nk] !== undefined ? (elevG[nk] || 0) : null;
+      });
+      if (nElev.some(v => v === null)) continue; // need all 6 neighbors
+
+      let higherPairs = 0, lowerPairs = 0;
+      for (const [a, b] of [[0, 3], [1, 4], [2, 5]]) {
+        if (nElev[a] - e > SADDLE_MIN_DIFF && nElev[b] - e > SADDLE_MIN_DIFF) higherPairs++;
+        if (e - nElev[a] > SADDLE_MIN_DIFF && e - nElev[b] > SADDLE_MIN_DIFF) lowerPairs++;
+      }
+
+      if (higherPairs >= 1 && lowerPairs >= 1) {
+        if (!aG[k]) aG[k] = [];
+        aG[k].push("saddle");
+      }
+    }
+  }
+
   // ── TREELINE (tactical/sub-tactical only — at strategic every forest edge is treeline = noise) ──
   if (tier === "sub-tactical" || tier === "tactical") {
     for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
@@ -2826,11 +3267,16 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
   // ── SLOPE-BASED FOREST RECLASSIFICATION ──
   // Steep forested slopes become forested_hills regardless of absolute elevation.
   // Catches ravine walls and river valley sides that are tactically difficult terrain.
+  // At fine scales (≤2km/cell), use 10° threshold to catch moderate slopes that restrict
+  // vehicle movement and affect LOS — militarily significant terrain.
+  const slopeReclassThresh = cellKm <= 2 ? 10 : 15;
   for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
     const k = `${c},${r}`;
     const t = tG[k];
-    if ((t === "forest" || t === "dense_forest") && slopeGrid[k] > 15) {
-      tG[k] = "forested_hills";
+    if (slopeGrid[k] > slopeReclassThresh) {
+      if (t === "forest" || t === "dense_forest") tG[k] = "forested_hills";
+      else if (t === "jungle") tG[k] = "jungle_hills";
+      else if (t === "boreal") tG[k] = "boreal_hills";
     }
   }
 
@@ -2843,20 +3289,76 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
     }
   }
 
-  // ── ELEVATION ADVANTAGE (sub-tactical + tactical) ──
+  // ── TOPOGRAPHIC POSITION INDEX (multi-ring) ──
+  // Cell elevation minus mean within radius-3 neighborhood. Positive = hilltop/ridge,
+  // negative = valley/depression. Uses prefix sums for O(1) per-cell computation
+  // (same approach as prominence in classifyGrid).
+  const TPI_RADIUS = 3;
+  const tpiGrid = {};
+  if (tier === "sub-tactical" || tier === "tactical") {
+    const prefixSum = new Float64Array((cols + 1) * (rows + 1));
+    const prefixCnt = new Uint32Array((cols + 1) * (rows + 1));
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const e = elevG[`${c},${r}`] || 0;
+        const i = (r + 1) * (cols + 1) + (c + 1);
+        prefixSum[i] = e + prefixSum[i - 1] + prefixSum[i - (cols + 1)] - prefixSum[i - (cols + 1) - 1];
+        prefixCnt[i] = 1 + prefixCnt[i - 1] + prefixCnt[i - (cols + 1)] - prefixCnt[i - (cols + 1) - 1];
+      }
+    }
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const r0 = Math.max(0, r - TPI_RADIUS), r1 = Math.min(rows - 1, r + TPI_RADIUS);
+        const c0 = Math.max(0, c - TPI_RADIUS), c1 = Math.min(cols - 1, c + TPI_RADIUS);
+        const br = (r1 + 1) * (cols + 1) + (c1 + 1);
+        const tl = r0 * (cols + 1) + c0;
+        const tr = r0 * (cols + 1) + (c1 + 1);
+        const bl = (r1 + 1) * (cols + 1) + c0;
+        const sum = prefixSum[br] - prefixSum[tr] - prefixSum[bl] + prefixSum[tl];
+        const cnt = prefixCnt[br] - prefixCnt[tr] - prefixCnt[bl] + prefixCnt[tl];
+        const mean = cnt > 0 ? sum / cnt : 0;
+        tpiGrid[`${c},${r}`] = (elevG[`${c},${r}`] || 0) - mean;
+      }
+    }
+  }
+
+  // ── ELEVATION ADVANTAGE (sub-tactical + tactical, TPI-based) ──
+  // Uses multi-ring TPI instead of just immediate neighbors — catches broad hills
+  // where all neighbors are also elevated (which the old 1-ring approach missed).
   if (tier === "sub-tactical" || tier === "tactical") {
     for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
       const k = `${c},${r}`;
       if (isW(tG[k])) continue;
-      const e = elevG[k] || 0;
-      let nb = 0, totalNeighE = 0;
-      for (const [nc, nr] of getNeighbors(c, r)) {
-        const nk = `${nc},${nr}`;
-        if (elevG[nk] !== undefined) { nb++; totalNeighE += (elevG[nk] || 0); }
-      }
-      if (nb >= 2 && e - (totalNeighE / nb) >= 50) {
+      if ((tpiGrid[k] || 0) >= 30) {
         if (!aG[k]) aG[k] = [];
         aG[k].push("elevation_advantage");
+      }
+    }
+  }
+
+  // ── ROUGH TERRAIN (fine scales — DEM stddev or API range fallback) ──
+  // Flags non-forested, non-water cells with significant internal elevation variation.
+  // Covers hilly open ground that doesn't change terrain type but is militarily significant.
+  if (cellKm <= 2) {
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const k = `${c},${r}`;
+      const t = tG[k];
+      if (isW(t) || t === "light_urban" || t === "dense_urban") continue;
+      if (isForest(t)) continue; // handled by forested_hills reclassification
+
+      let isRough = false;
+      if (elevStddev) {
+        // Stddev > 15m means significant undulation within the cell (hills, gullies).
+        // Much more robust than 3-point range — uses ~100 DEM samples.
+        isRough = (elevStddev[r * cols + c] || 0) > 15;
+      } else if (elevRange) {
+        // API fallback: 3-point range (less accurate, existing behavior)
+        isRough = (elevRange[r * cols + c] || 0) > 40;
+      }
+
+      if (isRough) {
+        if (!aG[k]) aG[k] = [];
+        aG[k].push("rough_terrain");
       }
     }
   }
@@ -2917,7 +3419,7 @@ export async function scanSinglePatch(bbox, cellKm, callbacks = {}) {
 
   // Phase 1: Elevation
   onStatus("Elevation...");
-  const elevData = await fetchElevSmart(bbox, cols, rows, onStatus, onProgress, log);
+  const elevData = await fetchElevSmart(bbox, cols, rows, onStatus, onProgress, log, null, cellKm);
   onPhaseComplete("elevation");
 
   // Phase 2: WorldCover
@@ -2949,9 +3451,9 @@ export async function scanSinglePatch(bbox, cellKm, callbacks = {}) {
   const wikidataNames = await wikidataPromise;
   const whitelistNames = (tier === "strategic" || tier === "operational")
     ? getRiverWhitelistNames(tier, cellKm) : null;
-  const wikidataRivers = whitelistNames
-    ? new Set([...whitelistNames, ...(wikidataNames || [])])
-    : wikidataNames;
+  // Whitelist-only at strategic/operational (matches go() behavior).
+  // Merging whitelist + Wikidata added too many secondary rivers.
+  const wikidataRivers = whitelistNames || wikidataNames;
   const aridityGrid = await aridityPromise;
   const metroCities = await metroCitiesPromise;
 
@@ -2966,7 +3468,7 @@ export async function scanSinglePatch(bbox, cellKm, callbacks = {}) {
   const pp = postProc(res.terrain, res.infra, res.attrs, res.features, res.featureNames,
     cols, rows, res.elevG, cellKm, res.elevCoverage, res.cellRoadCount, res.cellBuildingPct,
     tier, wcData ? wcData.wcGrid : null, wcData ? wcData.wcHasData : null,
-    wcData ? wcData.wcMix : null, res.urbanScore || {});
+    wcData ? wcData.wcMix : null, res.urbanScore || {}, elevData.elevRange, elevData.elevStddev);
 
   onPhaseComplete("classified");
 
@@ -3021,6 +3523,157 @@ function buildColorLUT(types) {
 
 const TERR_LUT = buildColorLUT(TERRAIN_TYPES);
 const INFRA_LUT = buildColorLUT(INFRA_TYPES);
+
+// ── Live preview color schemes ──
+
+// Elevation heatmap: 5-stop gradient blue → cyan → green → yellow → red
+const ELEV_STOPS = [
+  [0.0,  30, 60, 160],   // deep blue (lowest)
+  [0.25, 40, 160, 180],  // cyan
+  [0.5,  80, 180, 80],   // green
+  [0.75, 220, 200, 60],  // yellow
+  [1.0,  200, 60, 40],   // red (highest)
+];
+
+function elevColor(t) {
+  for (let i = 1; i < ELEV_STOPS.length; i++) {
+    if (t <= ELEV_STOPS[i][0]) {
+      const [t0, r0, g0, b0] = ELEV_STOPS[i - 1];
+      const [t1, r1, g1, b1] = ELEV_STOPS[i];
+      const f = (t - t0) / (t1 - t0);
+      return [Math.round(r0 + (r1 - r0) * f), Math.round(g0 + (g1 - g0) * f), Math.round(b0 + (b1 - b0) * f)];
+    }
+  }
+  return [200, 60, 40]; // clamp to red
+}
+
+// ESA WorldCover raw class → RGB (follows ESA official palette approximately)
+const WC_COLORS = {
+  10:  [0, 100, 0],      // Tree cover — dark green
+  20:  [180, 150, 50],    // Shrubland — olive
+  30:  [160, 200, 80],    // Grassland — light green
+  40:  [220, 210, 100],   // Cropland — yellow-green
+  50:  [200, 50, 50],     // Built-up — red
+  60:  [180, 170, 140],   // Bare/sparse — tan
+  70:  [220, 235, 250],   // Snow/ice — light blue-white
+  80:  [30, 80, 180],     // Water — blue
+  90:  [70, 140, 120],    // Wetland — teal
+  95:  [50, 120, 90],     // Mangroves — dark teal
+  100: [140, 180, 120],   // Moss/lichen — muted green
+};
+
+// ── Live preview: shows map building in real time during generation ──
+function LivePreview({ previewData, cols, rows }) {
+  const canvasRef = useRef(null);
+  const [userMode, setUserMode] = useState(null); // null = auto-select
+  const prevCountRef = useRef(0);
+
+  // Determine available modes based on what data has arrived
+  const available = [];
+  if (previewData.elevations) available.push("elevation");
+  if (previewData.wcGrid) available.push("worldcover");
+  if (previewData.terrain || previewData.terrainFinal) available.push("terrain");
+
+  // Auto-select the latest mode, unless user manually picked one
+  const activeMode = userMode && available.includes(userMode)
+    ? userMode : available[available.length - 1] || null;
+
+  // Reset to auto-select when a new mode becomes available
+  useEffect(() => {
+    if (available.length > prevCountRef.current) setUserMode(null);
+    prevCountRef.current = available.length;
+  }, [available.length]);
+
+  // Canvas sizing: fit grid into ~400px width
+  const CANVAS_W = Math.min(400, Math.max(200, cols * 3));
+  const hexSize = CANVAS_W / (SQRT3 * (cols + 0.5));
+  const CANVAS_H = Math.max(1, Math.round((1.5 * rows + 0.5) * hexSize));
+  const padX = SQRT3_2 * hexSize;
+  const padY = hexSize;
+
+  // Redraw canvas when data or mode changes
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !activeMode) return;
+    const ctx = canvas.getContext("2d");
+    const imgData = ctx.createImageData(CANVAS_W, CANVAS_H);
+    const data = imgData.data;
+
+    for (let py = 0; py < CANVAS_H; py++) {
+      for (let px = 0; px < CANVAS_W; px++) {
+        const { col, row } = pixelToOffset(px - padX, py - padY, hexSize);
+        if (col < 0 || col >= cols || row < 0 || row >= rows) continue;
+        const idx = (py * CANVAS_W + px) * 4;
+        let rgb;
+
+        if (activeMode === "elevation") {
+          const e = previewData.elevations[row * cols + col];
+          if (e === null) continue; // not yet fetched — leave dark
+          const range = previewData.elevMax - previewData.elevMin;
+          const t = range > 0 ? (e - previewData.elevMin) / range : 0.5;
+          rgb = elevColor(Math.max(0, Math.min(1, t)));
+        } else if (activeMode === "worldcover") {
+          const cls = previewData.wcGrid[`${col},${row}`];
+          if (!cls) continue;
+          rgb = WC_COLORS[cls] || [40, 40, 40];
+        } else if (activeMode === "terrain") {
+          const src = previewData.terrainFinal || previewData.terrain;
+          const val = src[`${col},${row}`];
+          if (!val) continue;
+          rgb = TERR_LUT[val] || [18, 24, 42];
+        }
+
+        if (rgb) {
+          data[idx] = rgb[0]; data[idx + 1] = rgb[1]; data[idx + 2] = rgb[2]; data[idx + 3] = 255;
+        }
+      }
+    }
+    ctx.putImageData(imgData, 0, 0);
+  }, [activeMode, previewData, cols, rows, CANVAS_W, CANVAS_H, hexSize, padX, padY]);
+
+  if (!activeMode) return <div style={{ padding: space[4], color: colors.text.muted, fontSize: typography.body.sm, textAlign: "center" }}>Waiting for data...</div>;
+
+  const MODES = [
+    { id: "elevation", label: "Elevation", color: colors.accent.purple },
+    { id: "worldcover", label: "WorldCover", color: colors.accent.amber },
+    { id: "terrain", label: "Terrain", color: colors.accent.green },
+  ];
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: space[1] }}>
+        <div style={{ fontSize: typography.body.sm, fontWeight: typography.weight.bold, color: colors.text.primary }}>Live Preview</div>
+        <div style={{ display: "flex", gap: 2 }}>
+          {MODES.map(m => {
+            const avail = available.includes(m.id);
+            const active = activeMode === m.id;
+            return (
+              <div key={m.id} onClick={() => avail && setUserMode(m.id)} style={{
+                padding: "2px 8px", borderRadius: radius.sm, fontSize: typography.body.xs,
+                cursor: avail ? "pointer" : "default",
+                background: active ? `${m.color}20` : colors.bg.raised,
+                color: active ? m.color : avail ? colors.text.secondary : colors.text.disabled,
+                border: `1px solid ${active ? m.color + "50" : colors.border.subtle}`,
+                opacity: avail ? 1 : 0.3, transition: `all ${animation.fast}`,
+              }}>
+                {m.label}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <canvas ref={canvasRef} width={CANVAS_W} height={CANVAS_H} style={{
+        width: "100%", borderRadius: radius.md,
+        border: `1px solid ${colors.border.default}`,
+        background: colors.bg.base, imageRendering: "pixelated",
+      }} />
+      <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginTop: space[1], fontFamily: typography.monoFamily }}>
+        {cols}{"\u00D7"}{rows} {"\u2022"} {activeMode}
+        {activeMode === "elevation" && previewData.elevMin !== undefined && ` \u2022 ${Math.round(previewData.elevMin)}m\u2013${Math.round(previewData.elevMax)}m`}
+      </div>
+    </div>
+  );
+}
 
 function CanvasMap({ grid, colorLUT, gC, gR, elevG, features, featureNames: fnG, activeFeatures, opacity, paintType, onPaint }) {
   const canvasRef = useRef(null);
@@ -3374,7 +4027,7 @@ export default function Parser({ onBack, onViewMap }) {
   const [mapW, setMapW] = useState(40), [mapH, setMapH] = useState(40);
   const [cellKm, setCellKm] = useState(0.5);
   const [activeScale, setActiveScale] = useState("tactical");
-  const [tG, setTG] = useState(null), [iG, setIG] = useState(null), [aG, setAG] = useState(null), [fG, setFG] = useState(null), [fnG, setFnG] = useState(null);
+  const [tG, setTG] = useState(null), [iG, setIG] = useState(null), [aG, setAG] = useState(null), [fG, setFG] = useState(null), [fnG, setFnG] = useState(null), [lpG, setLPG] = useState(null);
   const [eG, setEG] = useState(null);
   const [gC, setGC] = useState(0), [gR, setGR] = useState(0);
   const [status, setStatus] = useState(""), [error, setError] = useState(null), [gen, setGen] = useState(false);
@@ -3384,6 +4037,8 @@ export default function Parser({ onBack, onViewMap }) {
   const [progress, setProgress] = useState(null);
   const [startTime, setStartTime] = useState(null);
   const [genLog, setGenLog] = useState(null);
+  const [previewData, setPreviewData] = useState(null);
+  const [previewDims, setPreviewDims] = useState(null);
 
   // Estimate generation time for user messaging
   const estimateTime = useCallback(() => {
@@ -3426,9 +4081,22 @@ export default function Parser({ onBack, onViewMap }) {
 
       const tier = getQueryTier(cellKm);
 
+      // ── Live preview callbacks ──
+      setPreviewData(null);
+      setPreviewDims({ cols, rows });
+      const onElevPartial = (elArr) => {
+        let min = Infinity, max = -Infinity;
+        for (const v of elArr) { if (v !== null) { if (v < min) min = v; if (v > max) max = v; } }
+        if (min === Infinity) return;
+        setPreviewData(prev => ({ ...prev, elevations: elArr, elevMin: min, elevMax: max }));
+      };
+      const onWcPartial = (partial) => {
+        setPreviewData(prev => ({ ...prev, wcGrid: partial }));
+      };
+
       // ── PHASE 1: ELEVATION (fast, enables ocean skipping) ──
       setStatus("Phase 1: Fetching elevation data...");
-      const elevData = await fetchElevSmart(bbox, cols, rows, setStatus, setProgress, log);
+      const elevData = await fetchElevSmart(bbox, cols, rows, setStatus, setProgress, log, onElevPartial, cellKm);
       const maxElev = Math.max(...elevData.elevations), minElev = Math.min(...elevData.elevations);
       setElevInfo(`Coverage: ${(elevData.coverage * 100).toFixed(0)}% | Max: ${maxElev}m | Min: ${minElev}m`);
       log.info(`Range: ${minElev}m to ${maxElev}m`);
@@ -3437,7 +4105,7 @@ export default function Parser({ onBack, onViewMap }) {
       setStatus("Phase 2: Fetching satellite land cover...");
       let wcData = null;
       try {
-        wcData = await fetchWorldCover(bbox, cols, rows, setStatus, setProgress, log, tier);
+        wcData = await fetchWorldCover(bbox, cols, rows, setStatus, setProgress, log, tier, onWcPartial);
       } catch (e) {
         log.warn(`WorldCover failed: ${e.message} — falling back to OSM-only terrain`);
       }
@@ -3498,10 +4166,12 @@ export default function Parser({ onBack, onViewMap }) {
       setProgress({ phase: "Processing", current: 1, total: 2 });
       setStatus("Classifying..."); await new Promise(r => setTimeout(r, 20));
       const res = classifyGrid(bbox, cols, rows, feat, elevData, setStatus, wcData, tier, cellKm, wikidataRivers, aridityGrid, metroCities);
+      setPreviewData(prev => ({ ...prev, terrain: res.terrain }));
 
       setProgress({ phase: "Processing", current: 2, total: 2 });
       setStatus("Post-processing..."); await new Promise(r => setTimeout(r, 20));
-      const pp = postProc(res.terrain, res.infra, res.attrs, res.features, res.featureNames, cols, rows, res.elevG, cellKm, res.elevCoverage, res.cellRoadCount, res.cellBuildingPct, tier, wcData ? wcData.wcGrid : null, wcData ? wcData.wcHasData : null, wcData ? wcData.wcMix : null, res.urbanScore || {});
+      const pp = postProc(res.terrain, res.infra, res.attrs, res.features, res.featureNames, cols, rows, res.elevG, cellKm, res.elevCoverage, res.cellRoadCount, res.cellBuildingPct, tier, wcData ? wcData.wcGrid : null, wcData ? wcData.wcHasData : null, wcData ? wcData.wcMix : null, res.urbanScore || {}, elevData.elevRange, elevData.elevStddev);
+      setPreviewData(prev => ({ ...prev, terrainFinal: pp.terrain }));
 
       // ── LOG TERRAIN DISTRIBUTION ──
       log.section("TERRAIN DISTRIBUTION");
@@ -3565,7 +4235,7 @@ export default function Parser({ onBack, onViewMap }) {
         ["Elevation coverage", `${(elevData.coverage * 100).toFixed(0)}%`],
       ]);
 
-      setTG(pp.terrain); setIG(pp.infra); setAG(pp.attrs); setFG(pp.features); setFnG(pp.featureNames); setEG(res.elevG); setGC(cols); setGR(rows);
+      setTG(pp.terrain); setIG(pp.infra); setAG(pp.attrs); setFG(pp.features); setFnG(pp.featureNames); setEG(res.elevG); setGC(cols); setGR(rows); setLPG(res.linearPaths);
       setStatus(`Done in ${Math.round((Date.now() - t0) / 1000)}s`);
       setProgress(null);
       setGenLog(log.toString());
@@ -3582,7 +4252,7 @@ export default function Parser({ onBack, onViewMap }) {
           if (pp.featureNames && pp.featureNames[k]) cell.feature_names = pp.featureNames[k];
           saveCells[k] = cell;
         }
-        const saveObj = { map: { cols, rows, cellSizeKm: cellKm, widthKm: mapW, heightKm: mapH, gridType: "hex", center: { lat, lng }, bbox: getBBox(lat, lng, mapW, mapH), cells: saveCells, labels: {} }, _meta: { generated: new Date().toISOString(), source: "WorldCover+OSM+SRTM", version: "v0.10", tier } };
+        const saveObj = { map: { cols, rows, cellSizeKm: cellKm, widthKm: mapW, heightKm: mapH, gridType: "hex", center: { lat, lng }, bbox: getBBox(lat, lng, mapW, mapH), cells: saveCells, labels: {}, linearPaths: res.linearPaths || [] }, _meta: { generated: new Date().toISOString(), source: "WorldCover+OSM+SRTM", version: "v0.10", tier } };
 
         // Derive best name from feature_names — find highest-rank settlement near center
         let bestName = null;
@@ -3646,9 +4316,9 @@ export default function Parser({ onBack, onViewMap }) {
       if (fnG && fnG[k]) cell.feature_names = fnG[k];
       cells[k] = cell;
     }
-    const obj = { map: { cols: gC, rows: gR, cellSizeKm: cellKm, widthKm: mapW, heightKm: mapH, gridType: "hex", center: { lat, lng }, bbox: getBBox(lat, lng, mapW, mapH), cells, labels: {} }, _meta: { generated: new Date().toISOString(), source: "WorldCover+OSM+SRTM", version: "v0.10", tier: getQueryTier(cellKm) } };
+    const obj = { map: { cols: gC, rows: gR, cellSizeKm: cellKm, widthKm: mapW, heightKm: mapH, gridType: "hex", center: { lat, lng }, bbox: getBBox(lat, lng, mapW, mapH), cells, labels: {}, linearPaths: lpG || [] }, _meta: { generated: new Date().toISOString(), source: "WorldCover+OSM+SRTM", version: "v0.10", tier: getQueryTier(cellKm) } };
     const b = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" }), u = URL.createObjectURL(b), a = document.createElement("a"); a.href = u; a.download = "open_conflict_terrain.json"; a.click(); URL.revokeObjectURL(u);
-  }, [tG, iG, aG, fG, fnG, eG, gC, gR, cellKm, mapW, mapH, lat, lng]);
+  }, [tG, iG, aG, fG, fnG, eG, gC, gR, cellKm, mapW, mapH, lat, lng, lpG]);
 
   const viewInMap = useCallback(() => {
     if (!tG || !onViewMap) return;
@@ -3659,9 +4329,9 @@ export default function Parser({ onBack, onViewMap }) {
       if (fnG && fnG[k]) cell.feature_names = fnG[k];
       cells[k] = cell;
     }
-    const mapData = { cols: gC, rows: gR, cellSizeKm: cellKm, widthKm: mapW, heightKm: mapH, gridType: "hex", center: { lat, lng }, bbox: getBBox(lat, lng, mapW, mapH), cells, labels: {} };
+    const mapData = { cols: gC, rows: gR, cellSizeKm: cellKm, widthKm: mapW, heightKm: mapH, gridType: "hex", center: { lat, lng }, bbox: getBBox(lat, lng, mapW, mapH), cells, labels: {}, linearPaths: lpG || [] };
     onViewMap(mapData);
-  }, [tG, iG, aG, fG, fnG, eG, gC, gR, cellKm, mapW, mapH, lat, lng, onViewMap]);
+  }, [tG, iG, aG, fG, fnG, eG, gC, gR, cellKm, mapW, mapH, lat, lng, onViewMap, lpG]);
 
   const expLog = useCallback(() => {
     if (!genLog) return;
@@ -3812,34 +4482,40 @@ export default function Parser({ onBack, onViewMap }) {
               {gen && <ProgressBar progress={progress} status={status} startTime={startTime} />}
             </div>
             <div style={{ flex: 1, maxWidth: 420 }}>
-              <div style={{ padding: space[3], background: colors.bg.raised, borderRadius: radius.lg, fontSize: typography.body.xs + 1, color: colors.text.secondary, lineHeight: 1.6, border: `1px solid ${colors.border.subtle}` }}>
-                <div style={{ fontWeight: typography.weight.bold, color: colors.text.primary, fontSize: typography.body.sm + 1, marginBottom: space[2] }}>Per-Cell Data Model</div>
-                <div style={{ display: "flex", gap: space[3], marginBottom: space[2] }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: typography.body.xs, fontWeight: typography.weight.bold, color: colors.accent.green, marginBottom: space[1] }}>Terrain (18)</div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 6px" }}>
-                      {TERRAIN_TYPES.map(t => <span key={t.id} style={{ fontSize: 8, display: "flex", alignItems: "center", gap: 3, fontFamily: typography.fontFamily }}><span style={{ width: 6, height: 6, borderRadius: 2, background: t.color, display: "inline-block", flexShrink: 0 }} />{t.label}</span>)}
+              {previewData && previewDims ? (
+                <LivePreview previewData={previewData} cols={previewDims.cols} rows={previewDims.rows} />
+              ) : (
+                <>
+                  <div style={{ padding: space[3], background: colors.bg.raised, borderRadius: radius.lg, fontSize: typography.body.xs + 1, color: colors.text.secondary, lineHeight: 1.6, border: `1px solid ${colors.border.subtle}` }}>
+                    <div style={{ fontWeight: typography.weight.bold, color: colors.text.primary, fontSize: typography.body.sm + 1, marginBottom: space[2] }}>Per-Cell Data Model</div>
+                    <div style={{ display: "flex", gap: space[3], marginBottom: space[2] }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: typography.body.xs, fontWeight: typography.weight.bold, color: colors.accent.green, marginBottom: space[1] }}>Terrain (18)</div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 6px" }}>
+                          {TERRAIN_TYPES.map(t => <span key={t.id} style={{ fontSize: 8, display: "flex", alignItems: "center", gap: 3, fontFamily: typography.fontFamily }}><span style={{ width: 6, height: 6, borderRadius: 2, background: t.color, display: "inline-block", flexShrink: 0 }} />{t.label}</span>)}
+                        </div>
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: typography.body.xs, fontWeight: typography.weight.bold, color: colors.accent.amber, marginBottom: space[1] }}>Features (per cell, multi-select)</div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 6px" }}>
+                          {Object.entries(FEATURE_TYPES).map(([k, v]) => <span key={k} style={{ fontSize: 8, display: "flex", alignItems: "center", gap: 3, fontFamily: typography.fontFamily }}><span style={{ width: 6, height: 6, borderRadius: 2, background: v.color, display: "inline-block", flexShrink: 0 }} />{v.label}</span>)}
+                        </div>
+                      </div>
                     </div>
+                    <div style={{ fontSize: typography.body.xs, color: colors.text.muted }}>+ Elevation (m) per cell. Features accumulate — a cell can have highway + railway + bridge + military_base simultaneously.</div>
                   </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: typography.body.xs, fontWeight: typography.weight.bold, color: colors.accent.amber, marginBottom: space[1] }}>Features (per cell, multi-select)</div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 6px" }}>
-                      {Object.entries(FEATURE_TYPES).map(([k, v]) => <span key={k} style={{ fontSize: 8, display: "flex", alignItems: "center", gap: 3, fontFamily: typography.fontFamily }}><span style={{ width: 6, height: 6, borderRadius: 2, background: v.color, display: "inline-block", flexShrink: 0 }} />{v.label}</span>)}
-                    </div>
-                  </div>
-                </div>
-                <div style={{ fontSize: typography.body.xs, color: colors.text.muted }}>+ Elevation (m) per cell. Features accumulate — a cell can have highway + railway + bridge + military_base simultaneously.</div>
-              </div>
 
-              {/* Scale tier explanation */}
-              <div style={{ marginTop: space[2], padding: space[2] + 2, background: colors.bg.raised, borderRadius: radius.lg, fontSize: typography.body.xs, color: colors.text.secondary, lineHeight: 1.6, border: `1px solid ${colors.border.subtle}` }}>
-                <div style={{ fontWeight: typography.weight.bold, color: colors.text.primary, fontSize: typography.body.xs + 1, marginBottom: space[1] }}>4-Tier Scale-Adaptive Pipeline</div>
-                <div style={{ marginBottom: space[1], color: colors.accent.purple }}>ESA WorldCover (satellite) provides base terrain globally. OSM adds infrastructure and refinement, scaled to cell size.</div>
-                <div style={{ marginBottom: 2 }}><span style={{ color: colors.accent.purple, fontWeight: typography.weight.semibold }}>Sub-tactical</span> (&lt;0.5km cells): Buildings, barriers, footpaths, ditches, slope. Squad-level detail.</div>
-                <div style={{ marginBottom: 2 }}><span style={{ color: colors.accent.green, fontWeight: typography.weight.semibold }}>Tactical</span> (0.5–2km cells): Full OSM refines WorldCover — urban types, water types, all roads</div>
-                <div style={{ marginBottom: 2 }}><span style={{ color: colors.accent.amber, fontWeight: typography.weight.semibold }}>Operational</span> (2–8km): OSM adds urban, water detail, major roads. WorldCover handles vegetation.</div>
-                <div><span style={{ color: colors.accent.red, fontWeight: typography.weight.semibold }}>Strategic</span> (&gt;8km): OSM infra only (highways, rail, military). Dam/river crossing filtered by significance.</div>
-              </div>
+                  {/* Scale tier explanation */}
+                  <div style={{ marginTop: space[2], padding: space[2] + 2, background: colors.bg.raised, borderRadius: radius.lg, fontSize: typography.body.xs, color: colors.text.secondary, lineHeight: 1.6, border: `1px solid ${colors.border.subtle}` }}>
+                    <div style={{ fontWeight: typography.weight.bold, color: colors.text.primary, fontSize: typography.body.xs + 1, marginBottom: space[1] }}>4-Tier Scale-Adaptive Pipeline</div>
+                    <div style={{ marginBottom: space[1], color: colors.accent.purple }}>ESA WorldCover (satellite) provides base terrain globally. OSM adds infrastructure and refinement, scaled to cell size.</div>
+                    <div style={{ marginBottom: 2 }}><span style={{ color: colors.accent.purple, fontWeight: typography.weight.semibold }}>Sub-tactical</span> (&lt;0.5km cells): Buildings, barriers, footpaths, ditches, slope. Squad-level detail.</div>
+                    <div style={{ marginBottom: 2 }}><span style={{ color: colors.accent.green, fontWeight: typography.weight.semibold }}>Tactical</span> (0.5–2km cells): Full OSM refines WorldCover — urban types, water types, all roads</div>
+                    <div style={{ marginBottom: 2 }}><span style={{ color: colors.accent.amber, fontWeight: typography.weight.semibold }}>Operational</span> (2–8km): OSM adds urban, water detail, major roads. WorldCover handles vegetation.</div>
+                    <div><span style={{ color: colors.accent.red, fontWeight: typography.weight.semibold }}>Strategic</span> (&gt;8km): OSM infra only (highways, rail, military). Dam/river crossing filtered by significance.</div>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )}

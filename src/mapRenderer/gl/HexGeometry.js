@@ -57,17 +57,18 @@ function buildEdgeNormals() {
 }
 
 // Per-instance attribute layout:
-// Stride = 12 floats = 48 bytes per instance
+// Stride = 18 floats = 72 bytes per instance
 //
 // offset 0:  col           (float)
 // offset 1:  row           (float)
-// offset 2:  terrainIndex  (float, 0-17)
+// offset 2:  terrainIndex  (float, 0-28)
 // offset 3:  elevation     (float, meters)
 // offset 4:  featureMask   (float, bitfield packed as float)
 // offset 5:  infraIndex    (float, infrastructure type index)
-// offset 6-11: neighborTerrains[6] (float each, terrain index of 6 neighbors)
+// offset 6-11:  neighborTerrains[6]  (float each, terrain index of 6 neighbors)
+// offset 12-17: neighborElevations[6] (float each, elevation of 6 neighbors; -10000 = missing)
 //
-export const INSTANCE_FLOATS = 12;
+export const INSTANCE_FLOATS = 18;
 export const INSTANCE_BYTES = INSTANCE_FLOATS * 4;
 
 // Attribute locations (must match vertex shader)
@@ -81,6 +82,8 @@ export const ATTRIB = {
   a_featureInfra: 3,   // vec2 — featureMask, infraIndex
   a_neighbors03: 4,    // vec4 — neighborTerrains[0..3]
   a_neighbors45: 5,    // vec2 — neighborTerrains[4..5]
+  a_neighborElev03: 6, // vec4 — neighborElevations[0..3]
+  a_neighborElev45: 7, // vec2 — neighborElevations[4..5]
 };
 
 export const HEX_VERTEX_DATA = buildHexVertices();

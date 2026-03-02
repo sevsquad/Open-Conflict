@@ -6,7 +6,7 @@ import SimGame from "./SimGame.jsx";
 // SIMULATION — Mode router between setup and active game
 // ═══════════════════════════════════════════════════════════════
 
-export default function Simulation({ onBack }) {
+export default function Simulation({ onBack, initialData, preset }) {
   const [phase, setPhase] = useState("setup"); // "setup" | "game"
   const [gameState, setGameState] = useState(null);
   const [terrainData, setTerrainData] = useState(null);
@@ -41,5 +41,5 @@ export default function Simulation({ onBack }) {
     );
   }
 
-  return <SimSetup onBack={onBack} onStart={handleStart} />;
+  return <SimSetup onBack={onBack} onStart={handleStart} initialTerrainData={initialData} preset={preset} />;
 }

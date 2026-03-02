@@ -10,6 +10,10 @@ export const TC = {
   forest: "#3D8530", dense_forest: "#2D6620", highland: "#98A068", forested_hills: "#4D7838", mountain_forest: "#5A8040",
   mountain: "#7A7A6A", peak: "#D0C8B0", desert: "#D4C090", ice: "#D0E0F0",
   light_urban: "#C0B89A", dense_urban: "#8A8070",
+  jungle: "#1B6B20", jungle_hills: "#2A7A30", jungle_mountains: "#1A5A1A",
+  boreal: "#3A7A50", boreal_hills: "#2A6A40", boreal_mountains: "#1A5A30",
+  tundra: "#B8B090", savanna: "#C0B050", savanna_hills: "#A09040",
+  mangrove: "#3A7A5A",
 };
 
 // Terrain labels
@@ -19,6 +23,10 @@ export const TL = {
   forest: "Forest", dense_forest: "Dense Forest", highland: "Highland", forested_hills: "Forested Hills", mountain_forest: "Mtn Forest",
   mountain: "Mountain", peak: "Peak/Alpine", desert: "Desert", ice: "Ice/Glacier",
   light_urban: "Light Urban", dense_urban: "Dense Urban",
+  jungle: "Jungle", jungle_hills: "Jungle Hills", jungle_mountains: "Jungle Mtns",
+  boreal: "Boreal", boreal_hills: "Boreal Hills", boreal_mountains: "Boreal Mtns",
+  tundra: "Tundra", savanna: "Savanna", savanna_hills: "Savanna Hills",
+  mangrove: "Mangrove",
 };
 
 // Feature colors (overlays on terrain)
@@ -37,6 +45,8 @@ export const FC = {
   building_dense: "#C0A080", building_sparse: "#B0A090",
   hedgerow: "#6AA050", walled: "#8A6A5A", elevation_advantage: "#E0C060",
   bridge: "#C4956E", river_crossing: "#4A9ACF", stream_crossing: "#6ABADF", shoreline: "#6BB8D4",
+  rough_terrain: "#C0A060",
+  saddle: "#B8A870",
 };
 
 // Feature labels (auto-generated from keys)
@@ -56,7 +66,7 @@ export const FG = {
   "Military": ["military_base"],
   "Strategic": ["beach", "town"],
   "Structures": ["building", "parking", "tower", "wall", "fence"],
-  "Terrain": ["cliffs", "ridgeline", "treeline", "slope_steep", "slope_extreme", "building_dense", "building_sparse", "hedgerow", "walled", "elevation_advantage"],
+  "Terrain": ["cliffs", "ridgeline", "saddle", "treeline", "slope_steep", "slope_extreme", "building_dense", "building_sparse", "hedgerow", "walled", "elevation_advantage", "rough_terrain"],
 };
 
 // Default active features for viewer/parser

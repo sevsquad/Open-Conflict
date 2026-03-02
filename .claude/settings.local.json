@@ -1,7 +1,18 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(npx vite build)",
+      "Bash(timeout 10 npx vite --port 5173)",
+      "Bash(node -e \":*)",
+      "Bash(xargs grep -l \"binary\\\\|encode\\\\|decode\\\\|v1.*format\")",
+      "Bash(find /c/Users/Ryan/Documents/open-conflict-v0.10/open-conflict -type d \\\\\\( -name save* -o -name data -o -name cache \\\\\\))",
+      "WebFetch(domain:copernicus-dem-30m.s3.amazonaws.com)",
+      "WebFetch(domain:copernicus-dem-30m.s3.eu-central-1.amazonaws.com)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(ls /c/Users/Ryan/Documents/open-conflict-v0.10/open-conflict/node_modules/.bin/vite*)",
+      "Bash(node -e \"const j=require\\(''fs''\\).readFileSync\\(''saves/Bastogne_tactical_80x92_2026-02-21.json'',''utf8''\\); const d=JSON.parse\\(j\\); const terrains=new Set\\(\\); const features=new Set\\(\\); for\\(const k in d.map.cells\\){terrains.add\\(d.map.cells[k].terrain\\); \\(d.map.cells[k].features||[]\\).forEach\\(f=>features.add\\(f\\)\\);} console.log\\(''Terrains:'',JSON.stringify\\([...terrains].sort\\(\\)\\)\\); console.log\\(''Features:'',JSON.stringify\\([...features].sort\\(\\)\\)\\);\")",
+      "Bash(ls -la C:/Users/Ryan/Documents/open-conflict-v0.10/open-conflict/*.js)"
     ]
   }
 }

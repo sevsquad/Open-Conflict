@@ -174,6 +174,20 @@ Replace the examples below with your actual project details.
 
 <!-- Dev server: `npm run dev` -->
 
+### Testing Protocol (URL Parameters)
+
+The app supports URL parameters to bypass the menu and load test data directly.
+Use these to verify UI changes without depending on external APIs.
+
+- `?mode=viewer&test=true` — Open Viewer with built-in 12x15 test fixture
+- `?mode=simulation&test=true` — Open Simulation setup with test fixture pre-loaded
+- `?mode=viewer&load=<filename>` — Load a specific save file into Viewer
+- `?mode=viewer` — Open Viewer load screen (no data)
+
+Test fixture: `src/testFixture.js` (12x15 hex grid, 15+ terrain types, 10+ features, 0-1200m elevation, no external deps)
+
+**To verify UI changes:** use `preview_start "dev"` then navigate to `http://localhost:5173/?mode=viewer&test=true`. Use `preview_screenshot` to confirm rendering. This is the standard verification method — do not skip it.
+
 ### Conventions
 
 <!-- Document your established patterns so Claude maintains consistency -->

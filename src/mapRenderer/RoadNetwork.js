@@ -1,5 +1,5 @@
 // ════════════════════════════════════════════════════════════════
-// RoadNetwork — BFS road preprocessing for line drawing (hex grid)
+// RoadNetwork — road/rail/waterway preprocessing for line drawing
 // ════════════════════════════════════════════════════════════════
 
 import { getNeighbors } from "./HexMath.js";
@@ -32,10 +32,30 @@ function getFeats(cell) {
   return [];
 }
 
-// Build road/rail/waterway network segments by BFS (6-connected hex neighbors)
-export function buildLinearNetworks(cells, cols, rows) {
-  const networks = {}; // type → array of segments [{from: {c,r}, to: {c,r}}]
+// Build segments directly from ordered paths preserved during parsing.
+// Each path is a sequence of [c,r] cells from a single OSM way, so consecutive
+// pairs form natural segments without BFS reconstruction artifacts.
+function buildFromPaths(linearPaths) {
+  const networks = {};
+  for (const path of linearPaths) {
+    const { type, cells } = path;
+    if (!LINE_CONFIG[type]) continue;
+    if (!networks[type]) networks[type] = [];
+    const segs = networks[type];
+    for (let i = 0; i < cells.length - 1; i++) {
+      const [c1, r1] = cells[i];
+      const [c2, r2] = cells[i + 1];
+      if (c1 === c2 && r1 === r2) continue; // skip zero-length
+      segs.push({ from: { c: c1, r: r1 }, to: { c: c2, r: r2 } });
+    }
+  }
+  return networks;
+}
 
+// Fallback: BFS reconstruction from per-cell feature flags.
+// Used for old save files that don't have linearPaths.
+function buildFromBFS(cells, cols, rows) {
+  const networks = {};
   for (const type of LINEAR_TYPES) {
     const segments = [];
     const visited = new Set();
@@ -54,7 +74,6 @@ export function buildLinearNetworks(cells, cols, rows) {
         visited.add(key);
         while (queue.length > 0) {
           const cur = queue.shift();
-          // Check 6-connected hex neighbors
           for (const [nc, nr] of getNeighbors(cur.c, cur.r)) {
             if (nc < 0 || nc >= cols || nr < 0 || nr >= rows) continue;
             const nk = `${nc},${nr}`;
@@ -74,6 +93,15 @@ export function buildLinearNetworks(cells, cols, rows) {
     }
   }
   return networks;
+}
+
+// Build network segments for line rendering.
+// Uses ordered paths when available (new maps), falls back to BFS (old saves).
+export function buildLinearNetworks(cells, cols, rows, linearPaths) {
+  if (linearPaths && linearPaths.length > 0) {
+    return buildFromPaths(linearPaths);
+  }
+  return buildFromBFS(cells, cols, rows);
 }
 
 // Get all linear feature types

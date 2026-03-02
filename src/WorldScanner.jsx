@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { colors, typography, radius, shadows, animation, space } from "./theme.js";
 import { Button, Panel } from "./components/ui.jsx";
 import { runWorldScan, retryFailedPatches, verifyCompletedPatches, getWorldScanProgress, generatePatchGrid } from "./worldScanOrchestrator.js";
-import { checkStorageQuota, requestPersistentStorage, getScanStats } from "./worldScanStore.js";
+import { checkStorageQuota, requestPersistentStorage, getScanStats, loadManifest } from "./worldScanStore.js";
 import { acquireWakeLock, releaseWakeLock, isWakeLockActive } from "./wakeLock.js";
 
 // ════════════════════════════════════════════════════════════════
@@ -26,6 +26,7 @@ export default function WorldScanner({ onBack }) {
   const [scanStats, setScanStats] = useState({});
   const stopRef = useRef(false);
   const logEndRef = useRef(null);
+  const [manifest, setManifest] = useState(null);
 
   // Load storage quota and scan stats on mount and periodically
   useEffect(() => {
@@ -35,11 +36,15 @@ export default function WorldScanner({ onBack }) {
       const stats10 = await getWorldScanProgress(10);
       const stats05 = await getWorldScanProgress(0.5);
       setScanStats({ "10km": stats10, "0.5km": stats05 });
+      // Load manifest for world map visualization
+      const res = resolution.cellKm >= 8 ? "10km" : "0.5km";
+      const m = await loadManifest(res);
+      setManifest(m);
     }
     loadStats();
     const interval = setInterval(loadStats, scanning ? 10000 : 30000);
     return () => clearInterval(interval);
-  }, [scanning]);
+  }, [scanning, resolution]);
 
   // Auto-scroll log
   useEffect(() => {
@@ -277,7 +282,7 @@ export default function WorldScanner({ onBack }) {
         {/* Right panel: world map + log */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: space[3], minWidth: 0 }}>
           {/* World map visualization showing patch status */}
-          <WorldPatchMap resolution={resolution} scanStats={scanStats} />
+          <WorldPatchMap resolution={resolution} scanStats={scanStats} manifest={manifest} />
 
           {/* Status bar */}
           {status && (
@@ -337,9 +342,11 @@ export default function WorldScanner({ onBack }) {
 // ── World Patch Map ──────────────────────────────────────────
 // Simple equirectangular projection showing patch status
 
-function WorldPatchMap({ resolution, scanStats }) {
+function WorldPatchMap({ resolution, scanStats, manifest }) {
   const canvasRef = useRef(null);
   const stats = scanStats[resolution.id];
+  const patchStatuses = manifest?.patches || {};
+  const failedCount = Object.values(patchStatuses).filter(e => e.status === "failed").length;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -356,68 +363,60 @@ function WorldPatchMap({ resolution, scanStats }) {
     ctx.lineWidth = 1;
     ctx.strokeRect(0, 0, w, h);
 
-    if (!stats || !stats.total) {
-      // Draw grid lines for empty state
-      ctx.strokeStyle = colors.border.subtle + "40";
-      ctx.lineWidth = 0.5;
-      // Latitude lines every 30 degrees
-      for (let lat = -60; lat <= 60; lat += 30) {
-        const y = ((90 - lat) / 180) * h;
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
-      }
-      // Longitude lines every 30 degrees
-      for (let lng = -150; lng <= 150; lng += 30) {
-        const x = ((lng + 180) / 360) * w;
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
-      }
+    // Draw grid lines (always, as subtle background)
+    ctx.strokeStyle = colors.border.subtle + "40";
+    ctx.lineWidth = 0.5;
+    for (let lat = -60; lat <= 60; lat += 30) {
+      const y = ((90 - lat) / 180) * h;
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+    }
+    for (let lng = -150; lng <= 150; lng += 30) {
+      const x = ((lng + 180) / 360) * w;
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+    }
 
+    if (!stats || !stats.total) {
       ctx.fillStyle = colors.text.disabled;
       ctx.font = `${11}px ${typography.fontFamily}`;
       ctx.textAlign = "center";
-      ctx.fillText("No scan data — start a scan to see progress", w / 2, h / 2);
+      ctx.fillText("No scan data \u2014 start a scan to see progress", w / 2, h / 2);
       return;
     }
 
-    // Draw patches from manifest data
-    // We'll reconstruct patch positions from their IDs
+    // Draw patches colored by real status from manifest
     const patchDeg = resolution.patchDeg;
     const latRange = 170; // -85 to 85
     const lngRange = 360;
 
-    // For performance with many patches, batch by status color
-    const statusColors = {
+    const statusColorMap = {
       complete: colors.accent.green + "60",
       in_progress: colors.accent.amber + "90",
       failed: colors.accent.red + "80",
       pending: colors.bg.surface,
     };
 
-    // Generate all patches and their status
     const patches = generatePatchGrid(resolution.cellKm);
     for (const patch of patches) {
-      const entry = stats.total > 0 ? "complete" : "pending"; // Simplified — real impl reads manifest
+      const entry = patchStatuses[patch.id];
+      const status = entry?.status || "pending";
       const pxX = ((patch.bbox.west + 180) / lngRange) * w;
       const pxY = ((85 - patch.bbox.north) / latRange) * h;
       const pxW = (patchDeg / lngRange) * w;
       const pH = (patchDeg / latRange) * h;
 
-      ctx.fillStyle = statusColors.pending;
+      ctx.fillStyle = statusColorMap[status] || statusColorMap.pending;
       ctx.fillRect(pxX, pxY, pxW, pH);
     }
 
-    // Overlay with actual status data from manifest (if available)
-    // This is a simplified visualization — a full implementation would
-    // read the manifest and color each patch individually
-    if (stats.completed > 0) {
-      ctx.fillStyle = colors.text.secondary;
-      ctx.font = `${12}px ${typography.fontFamily}`;
-      ctx.textAlign = "center";
-      ctx.fillText(
-        `${stats.completed}/${stats.total} patches complete (${((stats.completed / stats.total) * 100).toFixed(1)}%)`,
-        w / 2, h - 10
-      );
-    }
-  }, [resolution, stats]);
+    // Summary text overlay
+    ctx.fillStyle = colors.text.secondary;
+    ctx.font = `${12}px ${typography.fontFamily}`;
+    ctx.textAlign = "center";
+    ctx.fillText(
+      `${stats.completed}/${stats.total} patches complete (${((stats.completed / stats.total) * 100).toFixed(1)}%)`,
+      w / 2, h - 10
+    );
+  }, [resolution, stats, patchStatuses]);
 
   return (
     <div style={{
@@ -425,8 +424,13 @@ function WorldPatchMap({ resolution, scanStats }) {
       border: `1px solid ${colors.border.subtle}`, padding: space[2],
       minHeight: 200,
     }}>
-      <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: space[1], textTransform: "uppercase", letterSpacing: 1 }}>
-        World Coverage — {resolution.label}
+      <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: space[1], textTransform: "uppercase", letterSpacing: 1, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span>World Coverage {"\u2014"} {resolution.label}</span>
+        {failedCount > 0 && (
+          <span style={{ background: colors.accent.red, color: "white", padding: "1px 8px", borderRadius: radius.sm, fontSize: typography.body.xs, fontWeight: typography.weight.bold, textTransform: "none", letterSpacing: 0 }}>
+            {failedCount} failed
+          </span>
+        )}
       </div>
       <canvas
         ref={canvasRef}

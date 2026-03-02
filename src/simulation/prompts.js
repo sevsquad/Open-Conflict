@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { ADJUDICATION_SCHEMA_EXAMPLE } from "./schemas.js";
+import { buildReadingInstructions, buildLegend, buildTerrainGrid, buildElevationBands, buildFeatureRegions, buildNamedFeatures } from "./terrainCodec.js";
 
 // ── D.1: System Prompt ──────────────────────────────────────
 
@@ -109,11 +110,16 @@ const TERRAIN_LABELS = {
   forest: "Forest", dense_forest: "Dense Forest", highland: "Highland", forested_hills: "Forested Hills", mountain_forest: "Mtn Forest",
   mountain: "Mountain", peak: "Peak/Alpine", desert: "Desert", ice: "Ice/Glacier",
   light_urban: "Light Urban", dense_urban: "Dense Urban",
+  jungle: "Jungle", jungle_hills: "Jungle Hills", jungle_mountains: "Jungle Mtns",
+  boreal: "Boreal", boreal_hills: "Boreal Hills", boreal_mountains: "Boreal Mtns",
+  tundra: "Tundra", savanna: "Savanna", savanna_hills: "Savanna Hills",
+  mangrove: "Mangrove",
 };
 
 /**
  * Build a condensed terrain summary for prompt injection.
- * Adapted from Viewer.jsx exportLLM logic (lines 441-493).
+ * Includes compact spatial grid (RLE), elevation bands, and grouped features
+ * so the LLM can reason about WHERE terrain is, not just aggregate stats.
  */
 export function buildTerrainSummary(terrainData) {
   if (!terrainData) return "No terrain data loaded.";
@@ -126,18 +132,9 @@ export function buildTerrainSummary(terrainData) {
   if (D.bbox) lines.push(`Bounds: S${D.bbox.south.toFixed(4)} N${D.bbox.north.toFixed(4)} W${D.bbox.west.toFixed(4)} E${D.bbox.east.toFixed(4)}`);
   lines.push(`Map size: ${D.widthKm || (D.cols * D.cellSizeKm)}km x ${D.heightKm || Math.round(D.rows * D.cellSizeKm * (Math.sqrt(3) / 2))}km`);
 
-  // Terrain distribution
+  // Terrain distribution (aggregate stats — cheap, always include)
   const terrCt = {};
-  let elevMin = Infinity, elevMax = -Infinity;
-  for (const k in D.cells) {
-    const cell = D.cells[k];
-    const t = cell.terrain;
-    terrCt[t] = (terrCt[t] || 0) + 1;
-    if (cell.elevation !== undefined) {
-      if (cell.elevation < elevMin) elevMin = cell.elevation;
-      if (cell.elevation > elevMax) elevMax = cell.elevation;
-    }
-  }
+  for (const k in D.cells) { terrCt[D.cells[k].terrain] = (terrCt[D.cells[k].terrain] || 0) + 1; }
   const total = Object.values(terrCt).reduce((s, v) => s + v, 0);
 
   lines.push("");
@@ -148,51 +145,30 @@ export function buildTerrainSummary(terrainData) {
       lines.push(`  ${(TERRAIN_LABELS[t] || t).padEnd(16)} ${((n / total) * 100).toFixed(1)}% (${n} cells)`);
     });
 
-  if (elevMin !== Infinity) {
+  // Compact spatial data via terrainCodec
+  lines.push("");
+  lines.push(...buildReadingInstructions());
+  lines.push("");
+  lines.push(...buildLegend(D));
+  lines.push("");
+  lines.push(...buildTerrainGrid(D));
+
+  const elevLines = buildElevationBands(D);
+  if (elevLines.length > 0) {
     lines.push("");
-    lines.push(`ELEVATION: ${elevMin}m to ${elevMax}m`);
+    lines.push(...elevLines);
   }
 
-  // Key features summary
-  const featCt = {};
-  for (const k in D.cells) {
-    const cell = D.cells[k];
-    const feats = [...(cell.features || []), ...(cell.attributes || [])];
-    if (cell.infrastructure) feats.push(cell.infrastructure);
-    for (const f of feats) featCt[f] = (featCt[f] || 0) + 1;
-  }
-  const significantFeats = Object.entries(featCt)
-    .filter(([, n]) => n >= 2)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 20);
-
-  if (significantFeats.length > 0) {
+  const featLines = buildFeatureRegions(D);
+  if (featLines.length > 0) {
     lines.push("");
-    lines.push("KEY FEATURES:");
-    significantFeats.forEach(([f, n]) => {
-      lines.push(`  ${f.replace(/_/g, " ").padEnd(22)} ${n} cells`);
-    });
+    lines.push(...featLines);
   }
 
-  // Named features
-  const nameIdx = {};
-  for (const k in D.cells) {
-    const fn = D.cells[k].feature_names;
-    if (!fn) continue;
-    for (const [type, name] of Object.entries(fn)) {
-      if (!nameIdx[type]) nameIdx[type] = {};
-      if (!nameIdx[type][name]) nameIdx[type][name] = 0;
-      nameIdx[type][name]++;
-    }
-  }
-  if (Object.keys(nameIdx).length > 0) {
+  const namedLines = buildNamedFeatures(D);
+  if (namedLines.length > 0) {
     lines.push("");
-    lines.push("NAMED FEATURES:");
-    for (const [type, names] of Object.entries(nameIdx)) {
-      for (const [name, count] of Object.entries(names).sort((a, b) => b[1] - a[1])) {
-        lines.push(`  ${type}: ${name} (${count} cells)`);
-      }
-    }
+    lines.push(...namedLines);
   }
 
   return lines.join("\n");

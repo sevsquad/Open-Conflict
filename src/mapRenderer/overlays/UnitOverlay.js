@@ -34,6 +34,13 @@ export function cellToDisplayString(c, r) {
   return `${letters}${r + 1}`;
 }
 
+// Short labels for unit type identification at a glance
+const TYPE_LABELS = {
+  infantry: "INF", armor: "ARM", artillery: "ART", recon: "RCN",
+  mechanized: "MECH", air: "AIR", naval: "NAV", special_forces: "SF",
+  logistics: "LOG", headquarters: "HQ", other: "OTH",
+};
+
 // NATO-style unit type symbols
 export const TYPE_ICONS = {
   infantry: (ctx, cx, cy, s) => {
@@ -101,6 +108,15 @@ export const TYPE_ICONS = {
     ctx.lineTo(cx - s * 0.6, cy + s * 0.3);
     ctx.stroke();
   },
+  other: (ctx, cx, cy, s) => {
+    // Circle with dot — generic/unknown unit
+    ctx.beginPath();
+    ctx.arc(cx, cy, s * 0.6, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, cy, s * 0.15, 0, Math.PI * 2);
+    ctx.fill();
+  },
 };
 
 // Background disc for contrast
@@ -151,13 +167,25 @@ function drawUnit(ctx, unit, actorColorMap, viewport, canvasWidth, canvasHeight,
     ctx.lineWidth = 1.5;
     ctx.strokeRect(bx, by, boxW, boxH);
 
-    // Type icon
+    // Type icon (shifted up slightly to make room for label)
     const iconFn = TYPE_ICONS[unit.type];
     if (iconFn) {
       ctx.strokeStyle = "#FFF";
       ctx.fillStyle = "#FFF";
       ctx.lineWidth = 1.5;
-      iconFn(ctx, x, y, boxH * 0.3);
+      iconFn(ctx, x, y - boxH * 0.08, boxH * 0.3);
+    }
+
+    // Type label inside box, below icon
+    const typeLabel = TYPE_LABELS[unit.type];
+    if (typeLabel) {
+      const labelSize = Math.max(6, boxH * 0.28);
+      ctx.font = `bold ${labelSize}px Arial`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.fillStyle = "rgba(255,255,255,0.85)";
+      ctx.fillText(typeLabel, x, by + boxH - 1);
+      ctx.textBaseline = "alphabetic";
     }
 
     // Name below
@@ -216,6 +244,23 @@ function drawUnit(ctx, unit, actorColorMap, viewport, canvasWidth, canvasHeight,
         ctx.fillStyle = "#FFF";
         ctx.lineWidth = 1;
         iconFn(ctx, x, y, markerSize * 0.4);
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    // Type label tag above circle (visible when cp >= 16)
+    if (cp >= 16) {
+      const typeLabel = TYPE_LABELS[unit.type];
+      if (typeLabel) {
+        const tagSize = Math.max(6, cp * 0.16);
+        ctx.globalAlpha = detailBlend;
+        ctx.font = `bold ${tagSize}px Arial`;
+        ctx.textAlign = "center";
+        ctx.strokeStyle = "rgba(0,0,0,0.7)";
+        ctx.lineWidth = 2;
+        ctx.strokeText(typeLabel, x, y - markerSize - 2);
+        ctx.fillStyle = "#FFF";
+        ctx.fillText(typeLabel, x, y - markerSize - 2);
         ctx.globalAlpha = 1;
       }
     }

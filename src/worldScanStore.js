@@ -29,13 +29,16 @@ function crc32(buffer) {
 
 // ── Enum tables for binary encoding ──────────────────────────
 
-// 18 terrain types → u8 index
+// 29 terrain types → u8 index (new types appended at end for backward compat)
 const TERRAIN_TYPES = [
   "deep_water", "coastal_water", "lake", "river", "wetland",
   "open_ground", "light_veg", "farmland", "forest", "dense_forest",
   "highland", "mountain_forest", "mountain", "peak", "desert",
   "ice", "light_urban", "dense_urban",
   "forested_hills",
+  "jungle", "jungle_hills", "jungle_mountains",
+  "boreal", "boreal_hills", "boreal_mountains",
+  "tundra", "savanna", "savanna_hills", "mangrove",
 ];
 const TERRAIN_TO_IDX = Object.fromEntries(TERRAIN_TYPES.map((t, i) => [t, i]));
 
@@ -63,6 +66,7 @@ const FEATURE_FLAGS = [
   "building_dense", "building_sparse",
   "hedgerow", "walled", "elevation_advantage",
   "bridge", "river_crossing", "stream_crossing", "shoreline",
+  "rough_terrain", "saddle",
 ];
 const FEATURE_TO_BIT = Object.fromEntries(FEATURE_FLAGS.map((f, i) => [f, i]));
 
