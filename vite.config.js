@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import fs from 'fs'
 import path from 'path'
@@ -83,7 +83,7 @@ function llmPlugin() {
         if (req.method !== 'POST') { res.statusCode = 405; res.end('POST only'); return; }
         try {
           const body = JSON.parse(await readBody(req));
-          const { provider, model, temperature, messages } = body;
+          const { provider, model, temperature, messages, max_tokens: clientMaxTokens } = body;
 
           if (!provider || !model || !messages) {
             res.statusCode = 400;
@@ -104,9 +104,12 @@ function llmPlugin() {
             // Anthropic Messages API
             const systemMsg = messages.find(m => m.role === 'system');
             const userMsgs = messages.filter(m => m.role !== 'system');
+            // Client sends dynamic max_tokens based on scenario complexity;
+            // clamp to [8192, 64000] (Sonnet supports up to 64K output)
+            const maxTokens = Math.min(Math.max(clientMaxTokens || 16384, 8192), 64000);
             const apiBody = {
               model,
-              max_tokens: 8192,
+              max_tokens: maxTokens,
               temperature: temperature ?? 0.4,
               messages: userMsgs
             };
@@ -204,7 +207,7 @@ function llmPlugin() {
       server.middlewares.use('/api/llm/providers', (req, res) => {
         if (req.method !== 'GET') { res.statusCode = 405; res.end('GET only'); return; }
         const providers = [];
-        if (process.env.ANTHROPIC_API_KEY) providers.push({ id: 'anthropic', name: 'Anthropic', models: ['claude-sonnet-4-20250514', 'claude-haiku-4-20250414'] });
+        if (process.env.ANTHROPIC_API_KEY) providers.push({ id: 'anthropic', name: 'Anthropic', models: ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001'] });
         if (process.env.OPENAI_API_KEY) providers.push({ id: 'openai', name: 'OpenAI', models: ['gpt-4o', 'gpt-4o-mini'] });
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify({ providers }));
@@ -299,7 +302,24 @@ function gamePlugin() {
   };
 }
 
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  // Load ALL .env vars into process.env so server plugins can read API keys.
+  // loadEnv won't override existing process.env values (even empty ones),
+  // so we parse .env directly and force-set any non-empty values.
+  const envFile = path.resolve(process.cwd(), '.env');
+  if (fs.existsSync(envFile)) {
+    for (const line of fs.readFileSync(envFile, 'utf8').split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eq = trimmed.indexOf('=');
+      if (eq === -1) continue;
+      const key = trimmed.slice(0, eq).trim();
+      const val = trimmed.slice(eq + 1).trim();
+      if (val) process.env[key] = val;
+    }
+  }
+
+  return {
   plugins: [react(), savePlugin(), llmPlugin(), gamePlugin()],
   server: {
     watch: {
@@ -323,4 +343,4 @@ export default defineConfig({
       },
     },
   },
-})
+};})

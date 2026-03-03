@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { colors, typography, radius, shadows, animation, space } from "./theme.js";
 import { Button, Panel } from "./components/ui.jsx";
 import { runWorldScan, retryFailedPatches, verifyCompletedPatches, getWorldScanProgress, generatePatchGrid } from "./worldScanOrchestrator.js";
-import { checkStorageQuota, requestPersistentStorage, getScanStats, loadManifest } from "./worldScanStore.js";
+import { checkStorageQuota, requestPersistentStorage, getScanStats, loadManifest, clearResolution, saveManifest } from "./worldScanStore.js";
 import { acquireWakeLock, releaseWakeLock, isWakeLockActive } from "./wakeLock.js";
 
 // ════════════════════════════════════════════════════════════════
@@ -27,6 +27,7 @@ export default function WorldScanner({ onBack }) {
   const stopRef = useRef(false);
   const logEndRef = useRef(null);
   const [manifest, setManifest] = useState(null);
+  const [selectedPatch, setSelectedPatch] = useState(null);
 
   // Load storage quota and scan stats on mount and periodically
   useEffect(() => {
@@ -139,6 +140,19 @@ export default function WorldScanner({ onBack }) {
     addLog(`Verification complete: ${gaps.length} patches need re-scanning`);
   }, [resolution, addLog]);
 
+  const handleReset = useCallback(async () => {
+    const resKey = resolution.cellKm >= 8 ? "10km" : "0.5km";
+    addLog(`Clearing all ${resolution.label} data...`);
+    await clearResolution(resKey);
+    await saveManifest(resKey, { patches: {}, startedAt: null });
+    setManifest(null);
+    setScanStats(prev => ({ ...prev, [resolution.id]: {} }));
+    setProgress(null);
+    setStatus("");
+    setLog([]);
+    addLog(`${resolution.label} data cleared`);
+  }, [resolution, addLog]);
+
   const stats = scanStats[resolution.id] || {};
   const pct = stats.total > 0 ? ((stats.completed / stats.total) * 100).toFixed(1) : 0;
 
@@ -175,7 +189,7 @@ export default function WorldScanner({ onBack }) {
             </div>
             {RESOLUTIONS.map(r => (
               <div key={r.id}
-                onClick={() => !scanning && setResolution(r)}
+                onClick={() => { if (!scanning) { setResolution(r); setSelectedPatch(null); } }}
                 style={{
                   padding: `${space[2]}px ${space[3]}px`,
                   borderRadius: radius.md,
@@ -270,6 +284,11 @@ export default function WorldScanner({ onBack }) {
                     Verify Data Integrity
                   </Button>
                 )}
+                {stats.completed > 0 && (
+                  <Button onClick={() => { if (confirm(`Delete all ${resolution.label} scan data? This cannot be undone.`)) handleReset(); }} variant="ghost" style={{ color: colors.accent.red }}>
+                    Reset All Data
+                  </Button>
+                )}
               </>
             ) : (
               <Button onClick={pauseScan} variant="danger" size="lg">
@@ -277,12 +296,68 @@ export default function WorldScanner({ onBack }) {
               </Button>
             )}
           </div>
+
+          {/* Patch inspector — shown when a patch is clicked on the map */}
+          {selectedPatch && (() => {
+            const patchStatuses = manifest?.patches || {};
+            const entry = patchStatuses[selectedPatch];
+            const d = entry ? {
+              id: selectedPatch, status: entry.status,
+              cellCount: entry.cellCount || 0, phases: entry.phases || {},
+              timestamp: entry.timestamp, retries: entry.retries || 0,
+              lastError: entry.lastError,
+            } : { id: selectedPatch, status: "pending" };
+            const sc = { complete: colors.accent.green, in_progress: colors.accent.amber, failed: colors.accent.red, pending: colors.text.muted };
+            return (
+              <div style={{
+                background: colors.bg.raised, borderRadius: radius.lg,
+                border: `1px solid ${colors.border.subtle}`, padding: space[3],
+                fontSize: typography.body.xs, lineHeight: 1.6,
+              }}>
+                <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: space[1], textTransform: "uppercase", letterSpacing: 1 }}>
+                  Patch Info
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                  <span style={{ fontWeight: typography.weight.bold, color: colors.text.primary, fontFamily: typography.monoFamily, fontSize: typography.body.sm }}>
+                    {d.id}
+                  </span>
+                  <span style={{ color: sc[d.status] || colors.text.muted, fontWeight: typography.weight.semibold }}>
+                    {d.status}
+                  </span>
+                </div>
+                {d.cellCount > 0 && (
+                  <div style={{ color: colors.text.secondary }}>
+                    Cells: <span style={{ color: colors.accent.cyan }}>{d.cellCount.toLocaleString()}</span>
+                  </div>
+                )}
+                {d.phases && Object.keys(d.phases).length > 0 && (
+                  <div style={{ color: colors.text.secondary }}>
+                    {Object.entries(d.phases).map(([k, v]) => (
+                      <span key={k} style={{ marginRight: 8, color: v ? colors.accent.green : colors.text.disabled }}>
+                        {v ? "\u2713" : "\u2717"} {k}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {d.timestamp && (
+                  <div style={{ color: colors.text.muted, marginTop: 2 }}>
+                    {new Date(d.timestamp).toLocaleString()}
+                  </div>
+                )}
+                {d.lastError && (
+                  <div style={{ color: colors.accent.red, marginTop: 2 }}>
+                    {d.lastError} (retries: {d.retries})
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
 
         {/* Right panel: world map + log */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: space[3], minWidth: 0 }}>
           {/* World map visualization showing patch status */}
-          <WorldPatchMap resolution={resolution} scanStats={scanStats} manifest={manifest} />
+          <WorldPatchMap resolution={resolution} scanStats={scanStats} manifest={manifest} selectedPatch={selectedPatch} onPatchSelect={(id) => setSelectedPatch(prev => prev === id ? null : id)} />
 
           {/* Status bar */}
           {status && (
@@ -342,11 +417,30 @@ export default function WorldScanner({ onBack }) {
 // ── World Patch Map ──────────────────────────────────────────
 // Simple equirectangular projection showing patch status
 
-function WorldPatchMap({ resolution, scanStats, manifest }) {
+function WorldPatchMap({ resolution, scanStats, manifest, selectedPatch, onPatchSelect }) {
   const canvasRef = useRef(null);
   const stats = scanStats[resolution.id];
   const patchStatuses = manifest?.patches || {};
   const failedCount = Object.values(patchStatuses).filter(e => e.status === "failed").length;
+
+  // Click on canvas → resolve to patch via equirectangular projection
+  const handleMapClick = useCallback((e) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const scale = 720 / rect.width;
+    const px = (e.clientX - rect.left) * scale;
+    const py = (e.clientY - rect.top) * scale;
+    // Equirectangular: px→lng, py→lat (canvas is 720×360, lat range -85 to 85)
+    const lng = (px / 720) * 360 - 180;
+    const lat = 85 - (py / 360) * 170;
+    const patches = generatePatchGrid(resolution.cellKm);
+    const hit = patches.find(p =>
+      lat >= p.bbox.south && lat < p.bbox.north &&
+      lng >= p.bbox.west && lng < p.bbox.east
+    );
+    if (onPatchSelect) onPatchSelect(hit?.id ?? null);
+  }, [resolution, onPatchSelect]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -408,6 +502,20 @@ function WorldPatchMap({ resolution, scanStats, manifest }) {
       ctx.fillRect(pxX, pxY, pxW, pH);
     }
 
+    // Highlight selected patch with cyan outline
+    if (selectedPatch) {
+      const sel = patches.find(p => p.id === selectedPatch);
+      if (sel) {
+        const pxX = ((sel.bbox.west + 180) / lngRange) * w;
+        const pxY = ((85 - sel.bbox.north) / latRange) * h;
+        const pxW = (patchDeg / lngRange) * w;
+        const pH = (patchDeg / latRange) * h;
+        ctx.strokeStyle = colors.accent.cyan;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(pxX + 1, pxY + 1, pxW - 2, pH - 2);
+      }
+    }
+
     // Summary text overlay
     ctx.fillStyle = colors.text.secondary;
     ctx.font = `${12}px ${typography.fontFamily}`;
@@ -416,7 +524,7 @@ function WorldPatchMap({ resolution, scanStats, manifest }) {
       `${stats.completed}/${stats.total} patches complete (${((stats.completed / stats.total) * 100).toFixed(1)}%)`,
       w / 2, h - 10
     );
-  }, [resolution, stats, patchStatuses]);
+  }, [resolution, stats, patchStatuses, selectedPatch]);
 
   return (
     <div style={{
@@ -436,7 +544,8 @@ function WorldPatchMap({ resolution, scanStats, manifest }) {
         ref={canvasRef}
         width={720}
         height={360}
-        style={{ width: "100%", height: "auto", borderRadius: radius.md, display: "block" }}
+        onClick={handleMapClick}
+        style={{ width: "100%", height: "auto", borderRadius: radius.md, display: "block", cursor: "crosshair" }}
       />
     </div>
   );

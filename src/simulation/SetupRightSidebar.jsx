@@ -4,15 +4,15 @@ import { Button, Input, Badge, CollapsibleSection } from "../components/ui.jsx";
 import { ACTOR_COLORS } from "../terrainColors.js";
 import { TYPE_ICONS } from "../mapRenderer/overlays/UnitOverlay.js";
 import { cellToDisplayString } from "../mapRenderer/overlays/UnitOverlay.js";
+import SetupCellEditor from "./SetupCellEditor.jsx";
+import {
+  getBranchesForScale, getEchelonsForScale, ECHELON_LABELS,
+  POSTURES, SCALE_TIERS, isSystemActive, MOVEMENT_TYPES,
+} from "./schemas.js";
 
 // ═══════════════════════════════════════════════════════════════
 // SETUP RIGHT SIDEBAR — Unit Palette, Placed Units, Properties
 // ═══════════════════════════════════════════════════════════════
-
-const UNIT_TYPES = [
-  "infantry", "mechanized", "armor", "artillery", "air",
-  "naval", "special_forces", "logistics", "headquarters", "recon", "other",
-];
 
 // Render a small NATO icon onto a canvas and return it as a data URL
 function renderTypeIcon(type, color, size = 24) {
@@ -43,11 +43,15 @@ function positionDisplay(pos) {
   return pos;
 }
 
-export default function SetupRightSidebar({ state, dispatch, open, onToggle }) {
+export default function SetupRightSidebar({ state, dispatch, terrainData, onUpdateCell, open, onToggle }) {
   const {
-    actors, units,
+    actors, units, scale,
     interactionMode, placementPayload, selectedUnitId,
   } = state;
+
+  const scaleTier = SCALE_TIERS[scale]?.tier || 3;
+  const branches = getBranchesForScale(scale);
+  const echelons = getEchelonsForScale(scale);
 
   const selectedUnit = selectedUnitId ? units.find(u => u.id === selectedUnitId) : null;
   const selectedUnitIdx = selectedUnit ? units.indexOf(selectedUnit) : -1;
@@ -109,6 +113,14 @@ export default function SetupRightSidebar({ state, dispatch, open, onToggle }) {
           padding: space[3], borderLeft: `1px solid ${colors.border.subtle}`,
           background: colors.bg.raised, boxSizing: "border-box",
         }}>
+          {/* Terrain edit mode: show cell editor */}
+          {interactionMode === "edit_terrain" ? (
+            <SetupCellEditor
+              selectedCell={state.selectedCell}
+              terrainData={terrainData}
+              onUpdateCell={onUpdateCell}
+            />
+          ) : (<>
           {/* Unit Palette */}
           <CollapsibleSection title="Unit Palette" accent={colors.accent.amber}>
             {actors.map((actor, ai) => {
@@ -123,15 +135,15 @@ export default function SetupRightSidebar({ state, dispatch, open, onToggle }) {
                     {actor.name}
                   </div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
-                    {UNIT_TYPES.map(type => {
+                    {branches.map(branch => {
                       const isActive = interactionMode === "place_unit" &&
                         placementPayload?.actorId === actor.id &&
-                        placementPayload?.unitType === type;
+                        placementPayload?.unitType === branch;
                       return (
                         <button
-                          key={type}
-                          onClick={() => handlePaletteClick(actor.id, type)}
-                          title={`Place ${formatType(type)} for ${actor.name}`}
+                          key={branch}
+                          onClick={() => handlePaletteClick(actor.id, branch)}
+                          title={`Place ${formatType(branch)} for ${actor.name}`}
                           style={{
                             padding: "3px 6px", fontSize: typography.body.xs,
                             background: isActive ? actorColor + "30" : colors.bg.input,
@@ -142,7 +154,7 @@ export default function SetupRightSidebar({ state, dispatch, open, onToggle }) {
                             boxShadow: isActive ? shadows.glow(actorColor) : "none",
                           }}
                         >
-                          {formatType(type)}
+                          {formatType(branch)}
                         </button>
                       );
                     })}
@@ -191,7 +203,7 @@ export default function SetupRightSidebar({ state, dispatch, open, onToggle }) {
                           {unit.name || "(unnamed)"}
                         </div>
                         <div style={{ fontSize: 8, color: colors.text.muted }}>
-                          {formatType(unit.type)} · {positionDisplay(unit.position)}
+                          {formatType(unit.type)}{unit.echelon ? ` · ${ECHELON_LABELS[unit.echelon] || formatType(unit.echelon)}` : ""} · {positionDisplay(unit.position)}
                         </div>
                       </div>
                       <div style={{ fontSize: 8, color: unit.strength > 50 ? colors.accent.green : unit.strength > 25 ? colors.accent.amber : colors.accent.red, fontFamily: typography.monoFamily }}>
@@ -224,14 +236,46 @@ export default function SetupRightSidebar({ state, dispatch, open, onToggle }) {
                 />
               </div>
 
+              {/* Branch + Echelon side by side */}
+              <div style={{ display: "flex", gap: space[1], marginBottom: space[2] }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Branch</div>
+                  <select
+                    value={selectedUnit.type}
+                    onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "type", value: e.target.value })}
+                    style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}
+                  >
+                    {branches.map(t => <option key={t} value={t}>{formatType(t)}</option>)}
+                    {/* Show current value if not in scale-filtered list (backward compat) */}
+                    {!branches.includes(selectedUnit.type) && (
+                      <option value={selectedUnit.type}>{formatType(selectedUnit.type)}</option>
+                    )}
+                  </select>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Echelon</div>
+                  <select
+                    value={selectedUnit.echelon || ""}
+                    onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "echelon", value: e.target.value })}
+                    style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}
+                  >
+                    {echelons.map(e => <option key={e} value={e}>{ECHELON_LABELS[e] || formatType(e)}</option>)}
+                    {selectedUnit.echelon && !echelons.includes(selectedUnit.echelon) && (
+                      <option value={selectedUnit.echelon}>{ECHELON_LABELS[selectedUnit.echelon] || formatType(selectedUnit.echelon)}</option>
+                    )}
+                  </select>
+                </div>
+              </div>
+
+              {/* Posture */}
               <div style={{ marginBottom: space[2] }}>
-                <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Type</div>
+                <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Posture</div>
                 <select
-                  value={selectedUnit.type}
-                  onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "type", value: e.target.value })}
+                  value={selectedUnit.posture || "ready"}
+                  onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "posture", value: e.target.value })}
                   style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}
                 >
-                  {UNIT_TYPES.map(t => <option key={t} value={t}>{formatType(t)}</option>)}
+                  {POSTURES.map(p => <option key={p} value={p}>{formatType(p)}</option>)}
                 </select>
               </div>
 
@@ -264,6 +308,113 @@ export default function SetupRightSidebar({ state, dispatch, open, onToggle }) {
                   style={{ width: "100%", accentColor: colors.accent.cyan }} />
               </div>
 
+              {/* Morale — Tiers 1-3 */}
+              {isSystemActive("morale", scaleTier) && selectedUnit.morale !== undefined && (
+                <div style={{ marginBottom: space[2] }}>
+                  <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2, display: "flex", justifyContent: "space-between" }}>
+                    <span>Morale</span>
+                    <span style={{ color: selectedUnit.morale > 50 ? colors.accent.green : selectedUnit.morale > 25 ? colors.accent.amber : colors.accent.red, fontFamily: typography.monoFamily, fontWeight: typography.weight.semibold }}>{selectedUnit.morale}%</span>
+                  </div>
+                  <input type="range" min="0" max="100" step="5" value={selectedUnit.morale}
+                    onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "morale", value: parseInt(e.target.value) })}
+                    style={{ width: "100%", accentColor: selectedUnit.morale > 50 ? colors.accent.green : selectedUnit.morale > 25 ? colors.accent.amber : colors.accent.red }} />
+                </div>
+              )}
+
+              {/* Ammo — Tiers 1-3 */}
+              {isSystemActive("ammo_tracking", scaleTier) && selectedUnit.ammo !== undefined && (
+                <div style={{ marginBottom: space[2] }}>
+                  <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2, display: "flex", justifyContent: "space-between" }}>
+                    <span>Ammo</span>
+                    <span style={{ color: selectedUnit.ammo > 50 ? colors.accent.green : selectedUnit.ammo > 25 ? colors.accent.amber : colors.accent.red, fontFamily: typography.monoFamily, fontWeight: typography.weight.semibold }}>{selectedUnit.ammo}%</span>
+                  </div>
+                  <input type="range" min="0" max="100" step="5" value={selectedUnit.ammo}
+                    onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "ammo", value: parseInt(e.target.value) })}
+                    style={{ width: "100%", accentColor: selectedUnit.ammo > 50 ? colors.accent.green : selectedUnit.ammo > 25 ? colors.accent.amber : colors.accent.red }} />
+                </div>
+              )}
+
+              {/* Fuel — Tiers 2-4 */}
+              {isSystemActive("fuel_tracking", scaleTier) && selectedUnit.fuel !== undefined && (
+                <div style={{ marginBottom: space[2] }}>
+                  <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2, display: "flex", justifyContent: "space-between" }}>
+                    <span>Fuel</span>
+                    <span style={{ color: selectedUnit.fuel > 50 ? colors.accent.green : selectedUnit.fuel > 25 ? colors.accent.amber : colors.accent.red, fontFamily: typography.monoFamily, fontWeight: typography.weight.semibold }}>{selectedUnit.fuel}%</span>
+                  </div>
+                  <input type="range" min="0" max="100" step="5" value={selectedUnit.fuel}
+                    onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "fuel", value: parseInt(e.target.value) })}
+                    style={{ width: "100%", accentColor: selectedUnit.fuel > 50 ? colors.accent.green : selectedUnit.fuel > 25 ? colors.accent.amber : colors.accent.red }} />
+                </div>
+              )}
+
+              {/* Fatigue — Tiers 1-2 */}
+              {isSystemActive("fatigue", scaleTier) && selectedUnit.fatigue !== undefined && (
+                <div style={{ marginBottom: space[2] }}>
+                  <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2, display: "flex", justifyContent: "space-between" }}>
+                    <span>Fatigue</span>
+                    <span style={{ color: selectedUnit.fatigue < 30 ? colors.accent.green : selectedUnit.fatigue < 60 ? colors.accent.amber : colors.accent.red, fontFamily: typography.monoFamily, fontWeight: typography.weight.semibold }}>{selectedUnit.fatigue}%</span>
+                  </div>
+                  <input type="range" min="0" max="100" step="5" value={selectedUnit.fatigue}
+                    onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "fatigue", value: parseInt(e.target.value) })}
+                    style={{ width: "100%", accentColor: selectedUnit.fatigue < 30 ? colors.accent.green : selectedUnit.fatigue < 60 ? colors.accent.amber : colors.accent.red }} />
+                </div>
+              )}
+
+              {/* Entrenchment — Tiers 1-3 */}
+              {isSystemActive("entrenchment", scaleTier) && selectedUnit.entrenchment !== undefined && (
+                <div style={{ marginBottom: space[2] }}>
+                  <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2, display: "flex", justifyContent: "space-between" }}>
+                    <span>Entrenchment</span>
+                    <span style={{ color: colors.accent.cyan, fontFamily: typography.monoFamily, fontWeight: typography.weight.semibold }}>{selectedUnit.entrenchment}%</span>
+                  </div>
+                  <input type="range" min="0" max="100" step="10" value={selectedUnit.entrenchment}
+                    onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "entrenchment", value: parseInt(e.target.value) })}
+                    style={{ width: "100%", accentColor: colors.accent.cyan }} />
+                </div>
+              )}
+
+              {/* Movement Type + Parent HQ side by side */}
+              <div style={{ display: "flex", gap: space[1], marginBottom: space[2] }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Movement</div>
+                  <select
+                    value={selectedUnit.movementType || "foot"}
+                    onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "movementType", value: e.target.value })}
+                    style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}
+                  >
+                    {MOVEMENT_TYPES.map(mt => <option key={mt} value={mt}>{formatType(mt)}</option>)}
+                  </select>
+                </div>
+                {scaleTier >= 3 && (
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Parent HQ</div>
+                    <select
+                      value={selectedUnit.parentHQ || ""}
+                      onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "parentHQ", value: e.target.value })}
+                      style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}
+                    >
+                      <option value="">None</option>
+                      {units.filter(u => u.type === "headquarters" && u.id !== selectedUnit.id).map(hq => (
+                        <option key={hq.id} value={hq.id}>{hq.name || hq.id}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              {/* Task Organization — Grand Tactical (Tier 3) only */}
+              {scaleTier === 3 && (
+                <div style={{ marginBottom: space[2] }}>
+                  <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Task Organization</div>
+                  <textarea
+                    value={selectedUnit.taskOrg || ""}
+                    onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "taskOrg", value: e.target.value })}
+                    placeholder="e.g., 1x armor co, 2x mech inf co, 1x eng plt"
+                    style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.xs, fontFamily: typography.fontFamily, outline: "none", minHeight: 36, resize: "vertical", boxSizing: "border-box" }}
+                  />
+                </div>
+              )}
+
               <div style={{ marginBottom: space[2] }}>
                 <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Notes</div>
                 <textarea
@@ -280,6 +431,7 @@ export default function SetupRightSidebar({ state, dispatch, open, onToggle }) {
               </div>
             </CollapsibleSection>
           )}
+          </>)}
         </div>
       </div>
     </div>

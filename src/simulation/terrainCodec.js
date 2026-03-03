@@ -3,6 +3,80 @@
 // RLE terrain grids, elevation banding, feature region grouping
 // ═══════════════════════════════════════════════════════════════
 
+import { getNeighborKeys } from "../mapRenderer/HexMath.js";
+
+// ── Feature Scale Relevance ──────────────────────────────────
+// [minTier, maxTier] — feature is included in prompts only at these tiers.
+// Tiers: 1=Sub-Tactical, 2=Tactical, 3=Grand Tactical, 4=Operational, 5=Strategic, 6=Theater
+
+export const FEATURE_SCALE_RELEVANCE = {
+  // Micro-terrain (Tiers 1-2 only)
+  fence: [1, 2], wall: [1, 2], hedgerow: [1, 2], building_sparse: [1, 2],
+  footpath: [1, 2], trail: [1, 2], minor_road: [1, 2], gate: [1, 2],
+  ditch: [1, 2], embankment: [1, 2],
+  // Tactical features (Tiers 1-3)
+  treeline: [1, 3], building: [1, 3], building_dense: [1, 3],
+  slope_steep: [1, 4], slope_extreme: [1, 4], cliffs: [1, 4],
+  road: [1, 4], ford: [1, 4],
+  // Key terrain (all or most tiers)
+  bridge: [1, 4],
+  ridgeline: [1, 5],
+  river: [1, 6], major_road: [1, 6], highway: [1, 6],
+  railway: [3, 6],
+  town: [1, 6],
+  // Strategic infrastructure (Tiers 3-6)
+  airfield: [3, 6], military_base: [3, 6], port: [4, 6],
+  power_plant: [5, 6], pipeline: [5, 6], dam: [4, 6],
+  // Always relevant
+  river_crossing: [1, 6], fortification: [1, 6],
+};
+
+/** Check if a feature is relevant at a given scale tier */
+export function isFeatureRelevant(feature, tierNumber) {
+  const range = FEATURE_SCALE_RELEVANCE[feature];
+  if (!range) return true; // Unknown features always included
+  return tierNumber >= range[0] && tierNumber <= range[1];
+}
+
+// ── Terrain Type Collapsing ─────────────────────────────────
+// At higher tiers, merge similar terrain types into broad categories.
+
+const TERRAIN_COLLAPSE_TIER4 = {
+  forest: "forested", dense_forest: "forested", mountain_forest: "forested", forested_hills: "forested",
+  light_urban: "urban", dense_urban: "urban",
+  jungle: "jungle", jungle_hills: "jungle", jungle_mountains: "jungle",
+  boreal: "boreal", boreal_hills: "boreal", boreal_mountains: "boreal",
+  savanna: "savanna", savanna_hills: "savanna",
+};
+
+const TERRAIN_COLLAPSE_TIER6 = {
+  ...TERRAIN_COLLAPSE_TIER4,
+  farmland: "open", open_ground: "open", light_veg: "open",
+  highland: "mountain", mountain: "mountain", peak: "mountain",
+  wetland: "water", lake: "water", river: "water", mangrove: "water",
+  deep_water: "water", coastal_water: "water",
+  tundra: "arctic", ice: "arctic",
+};
+
+const COLLAPSED_LABELS = {
+  forested: "Forested", urban: "Urban", jungle: "Jungle",
+  boreal: "Boreal", savanna: "Savanna", open: "Open Terrain",
+  mountain: "Mountain", water: "Water", arctic: "Arctic",
+};
+
+/** Get the display terrain type for a given tier, collapsing variants */
+export function getTerrainForTier(terrainType, tierNumber) {
+  if (tierNumber >= 6) return TERRAIN_COLLAPSE_TIER6[terrainType] || terrainType;
+  if (tierNumber >= 4) return TERRAIN_COLLAPSE_TIER4[terrainType] || terrainType;
+  return terrainType;
+}
+
+/** Get the label for a possibly-collapsed terrain type */
+export function getTerrainLabelForTier(terrainType, tierNumber) {
+  const collapsed = getTerrainForTier(terrainType, tierNumber);
+  return COLLAPSED_LABELS[collapsed] || TERRAIN_LABEL[collapsed] || collapsed;
+}
+
 // ── Single-character terrain codes ──────────────────────────
 // 28 terrain types mapped to unique single chars.
 // Letters chosen for mnemonic value where possible.
@@ -40,6 +114,61 @@ export function colLbl(c) {
 }
 
 export function cellCoord(c, r) { return colLbl(c) + (r + 1); }
+
+// Reverse Excel-style label → {col, row} (0-indexed).
+// "A1" → {col:0, row:0}, "AA27" → {col:26, row:26}
+export function labelToColRow(label) {
+  const match = label.match(/^([A-Z]+)(\d+)$/i);
+  if (!match) return null;
+  const letters = match[1].toUpperCase();
+  const col = letters.split("").reduce((s, ch) => s * 26 + ch.charCodeAt(0) - 64, 0) - 1;
+  const row = parseInt(match[2]) - 1;
+  return { col, row };
+}
+
+// Format a single cell as readable text for LLM consumption.
+// "H4: Forest, 280m, features:[river,bridge], infra:bridge, names:{river=Stonebrook}"
+// Optional scaleTier filters features by relevance and collapses terrain types.
+export function formatCellDetail(col, row, cell, scaleTier = null) {
+  if (!cell) return `${cellCoord(col, row)}: [off-map]`;
+  const parts = [cellCoord(col, row) + ":"];
+
+  // Terrain type — collapse at higher tiers
+  if (scaleTier && scaleTier >= 4) {
+    parts.push(getTerrainLabelForTier(cell.terrain, scaleTier));
+  } else {
+    parts.push(TERRAIN_LABEL[cell.terrain] || cell.terrain);
+  }
+
+  if (cell.elevation !== undefined) parts.push(`${Math.round(cell.elevation)}m`);
+
+  // Features — filter by scale relevance
+  const feats = [];
+  if (cell.features?.length) {
+    for (const f of cell.features) {
+      if (!scaleTier || isFeatureRelevant(f, scaleTier)) feats.push(f);
+    }
+  }
+  if (cell.attributes?.length) {
+    for (const a of cell.attributes) {
+      if (!scaleTier || isFeatureRelevant(a, scaleTier)) feats.push(a);
+    }
+  }
+  if (feats.length) parts.push(`features:[${feats.join(",")}]`);
+
+  // Infrastructure — filter by scale
+  if (cell.infrastructure && cell.infrastructure !== "none") {
+    if (!scaleTier || isFeatureRelevant(cell.infrastructure, scaleTier)) {
+      parts.push(`infra:${cell.infrastructure}`);
+    }
+  }
+
+  if (cell.feature_names && Object.keys(cell.feature_names).length > 0) {
+    const names = Object.entries(cell.feature_names).map(([k, v]) => `${k}=${v}`).join(",");
+    parts.push(`names:{${names}}`);
+  }
+  return parts.join(" ");
+}
 
 // ── Run-Length Encoding ─────────────────────────────────────
 
@@ -217,13 +346,192 @@ function compressColRanges(cols) {
   return ranges.join(",");
 }
 
+// ── Elevation Narrative (Tier 4+) ────────────────────────────
+// At operational+ scales, raw elevation bands are noise. This synthesizes
+// geographic features (mountain ranges, valleys, transition lines) from
+// the hex grid elevation data and presents them as a narrative summary.
+
+const ELEV_CATEGORY_LABELS = {
+  low: "lowlands", moderate: "foothills", high: "highlands/mountains", very_high: "mountain peaks",
+};
+
+/** Classify a single elevation value into a category string. */
+function elevCategory(e, mergeHigh) {
+  if (e >= 1000 && !mergeHigh) return "very_high";
+  if (e >= 500) return "high";
+  if (e >= 200) return "moderate";
+  return "low";
+}
+
+/** BFS flood-fill to find contiguous regions of same elevation category. */
+function floodFillElevRegions(terrainData, categoryMap, targetCategories) {
+  const visited = new Set();
+  const regions = [];
+  const D = terrainData;
+
+  for (let r = 0; r < D.rows; r++) {
+    for (let c = 0; c < D.cols; c++) {
+      const key = `${c},${r}`;
+      if (visited.has(key) || !D.cells[key]) continue;
+      const cat = categoryMap[key];
+      if (!targetCategories.includes(cat)) continue;
+
+      // BFS flood fill
+      const region = { category: cat, cells: new Set(), minElev: Infinity, maxElev: -Infinity, elevSum: 0 };
+      const queue = [key];
+      visited.add(key);
+
+      while (queue.length > 0) {
+        const k = queue.shift();
+        region.cells.add(k);
+        const elev = D.cells[k].elevation || 0;
+        if (elev < region.minElev) region.minElev = elev;
+        if (elev > region.maxElev) region.maxElev = elev;
+        region.elevSum += elev;
+
+        const [kc, kr] = k.split(",").map(Number);
+        for (const nk of getNeighborKeys(kc, kr)) {
+          if (visited.has(nk) || !D.cells[nk]) continue;
+          if (categoryMap[nk] === cat) {
+            visited.add(nk);
+            queue.push(nk);
+          }
+        }
+      }
+
+      region.avgElev = Math.round(region.elevSum / region.cells.size);
+      regions.push(region);
+    }
+  }
+  return regions;
+}
+
+/** Compute bounding box (row/col extent) for a region. */
+function regionBounds(region) {
+  let minR = Infinity, maxR = -Infinity, minC = Infinity, maxC = -Infinity;
+  for (const k of region.cells) {
+    const [c, r] = k.split(",").map(Number);
+    if (r < minR) minR = r;
+    if (r > maxR) maxR = r;
+    if (c < minC) minC = c;
+    if (c > maxC) maxC = c;
+  }
+  return { minR, maxR, minC, maxC };
+}
+
+/** Find row boundaries with large average elevation change — natural defensive lines. */
+function findElevationTransitions(terrainData, threshold) {
+  const D = terrainData;
+  const transitions = [];
+  for (let r = 0; r < D.rows - 1; r++) {
+    let deltaSum = 0, count = 0;
+    for (let c = 0; c < D.cols; c++) {
+      const e1 = D.cells[`${c},${r}`]?.elevation;
+      const e2 = D.cells[`${c},${r + 1}`]?.elevation;
+      if (e1 !== undefined && e2 !== undefined) {
+        deltaSum += Math.abs(e2 - e1);
+        count++;
+      }
+    }
+    if (count > 0 && (deltaSum / count) >= threshold) {
+      transitions.push({ row: r, avgDelta: Math.round(deltaSum / count) });
+    }
+  }
+  return transitions;
+}
+
+/** Check if a low-elevation region contains river features — marks it as a valley corridor. */
+function isValleyCorridor(region, terrainData) {
+  for (const k of region.cells) {
+    const cell = terrainData.cells[k];
+    if (cell?.features?.includes("river")) return true;
+  }
+  return false;
+}
+
+/**
+ * Build scale-aware elevation narrative for Tier 4+ (operational/strategic/theater).
+ * Replaces raw elevation bands with geographic feature descriptions.
+ * Tier 4: keeps bands + appends geographic features.
+ * Tier 5-6: geographic overview only (no raw bands).
+ */
+export function buildElevationNarrative(terrainData, scaleTier) {
+  const D = terrainData;
+  const lines = [];
+
+  // Find elevation range
+  let elevMin = Infinity, elevMax = -Infinity;
+  for (const k in D.cells) {
+    const e = D.cells[k].elevation;
+    if (e !== undefined) {
+      if (e < elevMin) elevMin = e;
+      if (e > elevMax) elevMax = e;
+    }
+  }
+  if (elevMin === Infinity) return lines;
+
+  // Classify cells into elevation categories
+  // At tier 5-6, merge high+very_high for coarser narrative
+  const mergeHigh = scaleTier >= 5;
+  const categoryMap = {};
+  for (const k in D.cells) {
+    const e = D.cells[k].elevation;
+    if (e === undefined) continue;
+    categoryMap[k] = elevCategory(e, mergeHigh);
+  }
+
+  // Flood fill all categories
+  const targetCats = mergeHigh ? ["low", "moderate", "high"] : ["low", "moderate", "high", "very_high"];
+  const allRegions = floodFillElevRegions(D, categoryMap, targetCats);
+
+  // Filter to significant regions (3+ cells), sort largest first
+  const significant = allRegions.filter(r => r.cells.size >= 3);
+  significant.sort((a, b) => b.cells.size - a.cells.size);
+
+  // Tier 4: keep raw bands alongside narrative
+  if (scaleTier === 4) {
+    lines.push(`## ELEVATION: ${Math.round(elevMin)}m to ${Math.round(elevMax)}m`);
+    // Include raw bands (skip the duplicate header from buildElevationBands)
+    for (const bl of buildElevationBands(D)) {
+      if (!bl.startsWith("## ELEVATION")) lines.push(bl);
+    }
+    lines.push("");
+    lines.push("GEOGRAPHIC FEATURES:");
+  } else {
+    // Tier 5-6: narrative only
+    lines.push(`## GEOGRAPHIC OVERVIEW: ${Math.round(elevMin)}m to ${Math.round(elevMax)}m`);
+  }
+
+  // Describe significant regions (cap at 8)
+  for (const region of significant.slice(0, 8)) {
+    const bounds = regionBounds(region);
+    const locStr = `rows ${bounds.minR + 1}-${bounds.maxR + 1}, cols ${colLbl(bounds.minC)}-${colLbl(bounds.maxC)}`;
+    const label = ELEV_CATEGORY_LABELS[region.category] || region.category;
+
+    if (region.category === "low" && isValleyCorridor(region, D)) {
+      lines.push(`- Valley corridor (${locStr}, ${Math.round(region.minElev)}-${Math.round(region.maxElev)}m): low ground with river, potential movement axis`);
+    } else {
+      lines.push(`- ${label} (${locStr}, ${Math.round(region.minElev)}-${Math.round(region.maxElev)}m avg ${region.avgElev}m, ${region.cells.size} cells)`);
+    }
+  }
+
+  // Elevation transitions — natural defensive lines
+  const threshold = scaleTier >= 5 ? 300 : 200;
+  const transitions = findElevationTransitions(D, threshold);
+  for (const t of transitions) {
+    lines.push(`- Elevation transition at row ${t.row + 1}/${t.row + 2} boundary (avg ${t.avgDelta}m change): natural defensive line`);
+  }
+
+  return lines;
+}
+
 // ── Feature Region Grouping ─────────────────────────────────
 
 /**
  * Group features across cells into contiguous ranges.
  * Returns array of lines.
  */
-export function buildFeatureRegions(terrainData) {
+export function buildFeatureRegions(terrainData, scaleTier = null) {
   const D = terrainData;
   const lines = [];
 
@@ -243,6 +551,8 @@ export function buildFeatureRegions(terrainData) {
     if (cell.infrastructure && cell.infrastructure !== "none") allFeats.push(cell.infrastructure);
 
     for (const f of allFeats) {
+      // Skip features irrelevant at this scale tier
+      if (scaleTier && !isFeatureRelevant(f, scaleTier)) continue;
       if (!featCells[f]) featCells[f] = [];
       featCells[f].push({ c, r });
       if (fn[f]) {

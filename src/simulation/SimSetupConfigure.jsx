@@ -5,6 +5,7 @@ import { ACTOR_COLORS } from "../terrainColors.js";
 import { createGame, getProviders } from "./orchestrator.js";
 import { cellToPositionString, parseUnitPosition } from "../mapRenderer/overlays/UnitOverlay.js";
 import { getQuickstartPreset } from "./presets.js";
+import { SCALE_TIERS, getDefaultEchelon, DEFAULT_ENVIRONMENT, getUnitFieldsForScale } from "./schemas.js";
 import SimMap from "./SimMap.jsx";
 import SetupLeftSidebar from "./SetupLeftSidebar.jsx";
 import SetupRightSidebar from "./SetupRightSidebar.jsx";
@@ -18,12 +19,15 @@ import SetupRightSidebar from "./SetupRightSidebar.jsx";
 
 function createInitialState(terrainData, selectedMap) {
   return {
+    // Scale (determines what systems, unit types, and prompt sections are active)
+    scale: "grand_tactical",
+
     // Scenario
     title: "",
     description: "",
     initialConditions: "",
     specialRules: "",
-    turnDuration: "1 day",
+    turnDuration: "4 hours",
     startDate: "",
 
     // Actors
@@ -35,6 +39,9 @@ function createInitialState(terrainData, selectedMap) {
     // Units
     units: [],
 
+    // Environment
+    environment: { ...DEFAULT_ENVIRONMENT },
+
     // LLM
     provider: "",
     model: "",
@@ -44,6 +51,7 @@ function createInitialState(terrainData, selectedMap) {
     interactionMode: "navigate",
     placementPayload: null, // { actorId, unitType }
     selectedUnitId: null,
+    selectedCell: null, // { c, r } — cell being edited in terrain edit mode
     ghostCell: null,
 
     // UI
@@ -110,16 +118,21 @@ function setupReducer(state, action) {
       };
 
     case "ADD_UNIT": {
+      const tierNum = SCALE_TIERS[state.scale]?.tier || 3;
+      const scaleFields = getUnitFieldsForScale(tierNum);
       const newUnit = {
         id: `unit_${Date.now()}_${++unitCounter}`,
         actor: action.actorId,
         name: "",
         type: action.unitType || "infantry",
+        echelon: getDefaultEchelon(state.scale),
+        posture: "ready",
         position: action.position || "",
         strength: 100,
         supply: 100,
         status: "ready",
         notes: "",
+        ...scaleFields,
       };
       return {
         ...state,
@@ -190,10 +203,25 @@ function setupReducer(state, action) {
     case "TOGGLE_RIGHT_SIDEBAR":
       return { ...state, rightSidebarOpen: !state.rightSidebarOpen };
 
-    case "LOAD_PRESET": {
-      const p = action.preset;
+    case "UPDATE_ENVIRONMENT":
       return {
         ...state,
+        environment: { ...state.environment, [action.field]: action.value },
+      };
+
+    case "LOAD_PRESET": {
+      const p = action.preset;
+      const presetScale = p.scale || state.scale;
+      const defaultEch = getDefaultEchelon(presetScale);
+      // Normalize units: ensure echelon and posture exist (backward compat with old saves)
+      const normalizedUnits = (p.units || []).map(u => ({
+        ...u,
+        echelon: u.echelon || defaultEch,
+        posture: u.posture || "ready",
+      }));
+      return {
+        ...state,
+        scale: presetScale,
         title: p.title,
         description: p.description,
         initialConditions: p.initialConditions,
@@ -201,12 +229,35 @@ function setupReducer(state, action) {
         turnDuration: p.turnDuration,
         startDate: p.startDate,
         actors: p.actors,
-        units: p.units,
+        units: normalizedUnits,
+        environment: p.environment || { ...DEFAULT_ENVIRONMENT },
         selectedUnitId: null,
         interactionMode: "navigate",
         placementPayload: null,
       };
     }
+
+    case "ENTER_EDIT_TERRAIN_MODE":
+      return {
+        ...state,
+        interactionMode: "edit_terrain",
+        selectedUnitId: null,
+        placementPayload: null,
+        selectedCell: null,
+      };
+
+    case "EXIT_EDIT_TERRAIN_MODE":
+      return {
+        ...state,
+        interactionMode: "navigate",
+        selectedCell: null,
+      };
+
+    case "SELECT_CELL_FOR_EDIT":
+      return {
+        ...state,
+        selectedCell: action.cell, // { c, r }
+      };
 
     default:
       return state;
@@ -218,6 +269,35 @@ function setupReducer(state, action) {
 export default function SimSetupConfigure({ terrainData, selectedMap, onBack, onStart }) {
   const [state, dispatch] = useReducer(setupReducer, createInitialState(terrainData, selectedMap));
   const [providers, setProviders] = useState([]);
+
+  // Deep-clone terrain so edits don't mutate the parent's object
+  const [editableTerrainData, setEditableTerrainData] = useState(() => ({
+    ...terrainData,
+    cells: Object.fromEntries(
+      Object.entries(terrainData.cells).map(([k, v]) => [k, { ...v, features: [...(v.features || [])], attributes: [...(v.attributes || [])] }])
+    ),
+    linearPaths: terrainData.linearPaths ? [...terrainData.linearPaths] : [],
+  }));
+
+  // Update a single cell field immutably
+  const updateCell = useCallback((c, r, field, value) => {
+    setEditableTerrainData(prev => {
+      const key = `${c},${r}`;
+      const oldCell = prev.cells[key];
+      if (!oldCell) return prev;
+      const newCell = { ...oldCell };
+      if (field === "features" || field === "attributes") {
+        newCell[field] = [...value];
+      } else {
+        newCell[field] = value;
+      }
+      return {
+        ...prev,
+        cells: { ...prev.cells, [key]: newCell },
+        linearPaths: [], // force BFS rebuild for road/rail networks
+      };
+    });
+  }, []);
 
   // Load LLM providers
   useEffect(() => {
@@ -235,7 +315,13 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === "Escape") {
-        if (state.interactionMode === "place_unit") {
+        if (state.interactionMode === "edit_terrain") {
+          if (state.selectedCell) {
+            dispatch({ type: "SELECT_CELL_FOR_EDIT", cell: null }); // deselect cell
+          } else {
+            dispatch({ type: "EXIT_EDIT_TERRAIN_MODE" });
+          }
+        } else if (state.interactionMode === "place_unit") {
           dispatch({ type: "EXIT_PLACEMENT_MODE" });
         } else if (state.selectedUnitId) {
           dispatch({ type: "SELECT_UNIT", unitId: state.selectedUnitId }); // deselect
@@ -244,11 +330,14 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [state.interactionMode, state.selectedUnitId]);
+  }, [state.interactionMode, state.selectedUnitId, state.selectedCell]);
 
   // Handle cell click from map
   const handleCellClick = useCallback((cell) => {
-    if (state.interactionMode === "place_unit" && state.placementPayload) {
+    if (state.interactionMode === "edit_terrain") {
+      // Edit mode: select this cell for editing
+      dispatch({ type: "SELECT_CELL_FOR_EDIT", cell: { c: cell.c, r: cell.r } });
+    } else if (state.interactionMode === "place_unit" && state.placementPayload) {
       // Place a new unit at this cell
       const pos = cellToPositionString(cell.c, cell.r);
       dispatch({
@@ -282,6 +371,7 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
     if (!state.provider || !state.model) { alert("No LLM provider configured. Check your .env file."); return; }
 
     const scenario = {
+      scale: state.scale,
       title: state.title.trim(),
       description: state.description.trim(),
       turnDuration: state.turnDuration,
@@ -295,16 +385,17 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
       initialConditions: state.initialConditions,
       specialRules: state.specialRules,
       units: state.units.filter(u => u.name.trim()),
+      environment: state.environment,
     };
 
     const gameState = createGame({
       scenario,
       terrainRef: selectedMap,
-      terrainData,
+      terrainData: editableTerrainData,
       llmConfig: { provider: state.provider, model: state.model, temperature: state.temperature },
     });
 
-    onStart(gameState, terrainData);
+    onStart(gameState, editableTerrainData);
   };
 
   return (
@@ -324,11 +415,14 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
         <div style={{ fontSize: typography.heading.sm, fontWeight: typography.weight.bold }}>
           Setup: {selectedMap}
         </div>
-        {terrainData && (
+        {editableTerrainData && (
           <Badge color={colors.accent.green}>
-            {terrainData.cols}&times;{terrainData.rows}
+            {editableTerrainData.cols}&times;{editableTerrainData.rows}
           </Badge>
         )}
+        <Badge color={colors.accent.cyan}>
+          {SCALE_TIERS[state.scale]?.label || "Grand Tactical"}
+        </Badge>
         <div style={{ flex: 1 }} />
         <Button
           variant="secondary"
@@ -336,6 +430,19 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
           size="sm"
         >
           Load Preset
+        </Button>
+        <Button
+          variant="secondary"
+          onClick={() => dispatch({
+            type: state.interactionMode === "edit_terrain" ? "EXIT_EDIT_TERRAIN_MODE" : "ENTER_EDIT_TERRAIN_MODE"
+          })}
+          size="sm"
+          style={state.interactionMode === "edit_terrain" ? {
+            borderColor: colors.accent.green, color: colors.accent.green,
+            background: `${colors.accent.green}15`,
+          } : undefined}
+        >
+          {state.interactionMode === "edit_terrain" ? "Exit Edit Mode" : "Edit Terrain"}
         </Button>
         {state.units.length > 0 && (
           <Badge color={colors.accent.blue}>{state.units.length} units</Badge>
@@ -363,7 +470,7 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
         {/* Map (center) */}
         <div style={{ flex: 1, minWidth: 0, position: "relative" }}>
           <SimMap
-            terrainData={terrainData}
+            terrainData={editableTerrainData}
             units={state.units}
             actors={state.actors}
             interactionMode={state.interactionMode}
@@ -378,6 +485,8 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
         <SetupRightSidebar
           state={state}
           dispatch={dispatch}
+          terrainData={editableTerrainData}
+          onUpdateCell={updateCell}
           open={state.rightSidebarOpen}
           onToggle={() => dispatch({ type: "TOGGLE_RIGHT_SIDEBAR" })}
         />

@@ -15,7 +15,7 @@ import {
   createViewport, screenToCell, zoomAtPoint, panViewport,
   clampCellPixels, ZOOM_FACTOR, getVisibleRange,
 } from "./ViewportState.js";
-import { cellPixelsToHexSize, SQRT3 } from "./HexMath.js";
+import { cellPixelsToHexSize, hexDistance, hexToScreen, SQRT3 } from "./HexMath.js";
 import { computeElevationRange } from "./gl/HexGPUData.js";
 import { buildContourLabelData, drawContourLabels } from "./overlays/ContourLabels.js";
 
@@ -34,6 +34,8 @@ const MapView = forwardRef(function MapView({
   selectedUnitId = null,
   ghostUnit = null,
   isSetupMode = false,
+  unitOverlayOptions = null,    // { showFrontLines: bool, ... } passed to drawUnits
+  cellSizeKm = null,            // km per hex — enables scale bar and distance labels
   style = {},
 }, ref) {
   const glCanvasRef = useRef(null);
@@ -52,6 +54,10 @@ const MapView = forwardRef(function MapView({
   const [hovCell, setHovCell] = useState(null);
   const [redrawTick, setRedrawTick] = useState(0);
   const rafRef = useRef(null);
+
+  // Ruler measurement state (interactionMode === "measure")
+  const [measureStart, setMeasureStart] = useState(null);
+  const [measureEnd, setMeasureEnd] = useState(null);
 
   const D = mapData;
   const cols = D?.cols || 0;
@@ -216,8 +222,10 @@ const MapView = forwardRef(function MapView({
       }
       // Units
       if (units || activeGhostUnit) {
-        drawUnits(ctx, units, actorColorMap, viewport, w, h, cols, rows,
-          isSetupMode ? { ghostUnit: activeGhostUnit, isSetupMode: true } : null);
+        const drawOpts = isSetupMode
+          ? { ghostUnit: activeGhostUnit, isSetupMode: true }
+          : unitOverlayOptions || null;
+        drawUnits(ctx, units, actorColorMap, viewport, w, h, cols, rows, drawOpts);
       }
       // Hover highlight
       if (hovCell) {
@@ -227,8 +235,36 @@ const MapView = forwardRef(function MapView({
       if (selCell) {
         drawSelectionHighlight(ctx, viewport, w, h, selCell.c, selCell.r);
       }
+
+      // ── Measurement overlays ──
+
+      // Scale bar (bottom-left, always visible when cellSizeKm is known)
+      if (cellSizeKm) {
+        drawScaleBar(ctx, cp, cellSizeKm, w, h);
+      }
+
+      // Ruler line (measure mode: two clicked points)
+      if (measureStart && measureEnd && cellSizeKm) {
+        const dist = hexDistance(measureStart.c, measureStart.r, measureEnd.c, measureEnd.r);
+        const km = (dist * cellSizeKm).toFixed(1);
+        drawMeasureLine(ctx, viewport, w, h, measureStart, measureEnd, `${dist} hex · ${km} km`);
+      } else if (measureStart && hovCell && interactionMode === "measure" && cellSizeKm) {
+        // Live preview line from start to hover
+        const dist = hexDistance(measureStart.c, measureStart.r, hovCell.c, hovCell.r);
+        const km = (dist * cellSizeKm).toFixed(1);
+        drawMeasureLine(ctx, viewport, w, h, measureStart, hovCell, `${dist} hex · ${km} km`);
+      }
+
+      // Hover distance from selected unit
+      if (selCell && hovCell && cellSizeKm && interactionMode !== "measure") {
+        const dist = hexDistance(selCell.c, selCell.r, hovCell.c, hovCell.r);
+        if (dist > 0) {
+          const km = (dist * cellSizeKm).toFixed(1);
+          drawHoverDistance(ctx, viewport, w, h, selCell, hovCell, `${dist} hex · ${km} km`);
+        }
+      }
     }
-  }, [D, units, hovCell, selCell, activeGhostUnit, redrawTick, cols, rows, actorColorMap, isSetupMode, activeFeatures, showElevBands]);
+  }, [D, units, hovCell, selCell, activeGhostUnit, redrawTick, cols, rows, actorColorMap, isSetupMode, activeFeatures, showElevBands, cellSizeKm, measureStart, measureEnd, interactionMode]);
 
   // ── Mouse handlers ──
   const getCellFromEvent = useCallback((e) => {
@@ -279,9 +315,23 @@ const MapView = forwardRef(function MapView({
     }
 
     if (down && down.cell) {
+      // Measure mode: first click sets start, second sets end, third resets
+      if (interactionMode === "measure") {
+        if (!measureStart) {
+          setMeasureStart(down.cell);
+          setMeasureEnd(null);
+        } else if (!measureEnd) {
+          setMeasureEnd(down.cell);
+        } else {
+          // Third click: reset and start new measurement
+          setMeasureStart(down.cell);
+          setMeasureEnd(null);
+        }
+        return;
+      }
       onCellClick?.(down.cell);
     }
-  }, [onCellClick]);
+  }, [onCellClick, interactionMode, measureStart, measureEnd]);
 
   const handleMouseLeave = useCallback(() => {
     dragRef.current = false;
@@ -377,12 +427,27 @@ const MapView = forwardRef(function MapView({
       return renderer.gl.canvas;
     },
     forceRedraw: () => setRedrawTick(t => t + 1),
+    clearMeasure: () => { setMeasureStart(null); setMeasureEnd(null); },
+    // Composite WebGL + overlay into a single PNG data URL
+    exportImage: () => {
+      const gl = glCanvasRef.current;
+      const overlay = overlayCanvasRef.current;
+      if (!gl || !overlay) return null;
+      const composite = document.createElement("canvas");
+      composite.width = gl.width;
+      composite.height = gl.height;
+      const cctx = composite.getContext("2d");
+      cctx.drawImage(gl, 0, 0);
+      cctx.drawImage(overlay, 0, 0);
+      return composite.toDataURL("image/png");
+    },
   }), [D, cols, rows, activeFeatures, showElevBands]);
 
   // Cursor
   const getCursor = () => {
     if (dragRef.current) return "grabbing";
     if (interactionMode === "place_unit") return "copy";
+    if (interactionMode === "measure") return "crosshair";
     return "crosshair";
   };
 
@@ -428,5 +493,129 @@ const MapView = forwardRef(function MapView({
     </div>
   );
 });
+
+// ── Measurement drawing helpers ──────────────────────────────
+
+/**
+ * Draw a scale bar in the bottom-left corner of the overlay canvas.
+ * Picks the largest round km distance that fits in ~120-200px.
+ */
+function drawScaleBar(ctx, cellPixels, cellSizeKm, w, h) {
+  // Hex width in pixels = cellPixels (by definition — cellPixels is the flat-to-flat width)
+  // One hex = cellSizeKm km, so 1km = cellPixels / cellSizeKm pixels
+  const pxPerKm = cellPixels / cellSizeKm;
+
+  // Pick a nice round distance that fits in 80-200px
+  const niceValues = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
+  let barKm = niceValues[0];
+  for (const v of niceValues) {
+    const px = v * pxPerKm;
+    if (px >= 60 && px <= 200) { barKm = v; break; }
+    if (px < 60) barKm = v; // keep advancing until we overshoot
+  }
+
+  const barPx = barKm * pxPerKm;
+  if (barPx < 10 || barPx > w * 0.5) return; // don't draw if too small or too large
+
+  const x0 = 16;
+  const y0 = h - 20;
+  const tickH = 6;
+
+  // Bar background for contrast
+  ctx.fillStyle = "rgba(0,0,0,0.6)";
+  ctx.fillRect(x0 - 4, y0 - tickH - 14, barPx + 8, tickH + 22);
+
+  // Bar line
+  ctx.strokeStyle = "#E5E7EB";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x0, y0);
+  ctx.lineTo(x0 + barPx, y0);
+  // End ticks
+  ctx.moveTo(x0, y0 - tickH);
+  ctx.lineTo(x0, y0 + tickH);
+  ctx.moveTo(x0 + barPx, y0 - tickH);
+  ctx.lineTo(x0 + barPx, y0 + tickH);
+  ctx.stroke();
+
+  // Label
+  const label = barKm >= 1 ? `${barKm} km` : `${barKm * 1000} m`;
+  ctx.font = "bold 10px monospace";
+  ctx.fillStyle = "#E5E7EB";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "bottom";
+  ctx.fillText(label, x0 + barPx / 2, y0 - tickH - 2);
+}
+
+/**
+ * Draw a dashed line between two hex cells with a distance label.
+ */
+function drawMeasureLine(ctx, viewport, w, h, from, to, label) {
+  const p1 = hexToScreen(from.c, from.r, viewport, w, h);
+  const p2 = hexToScreen(to.c, to.r, viewport, w, h);
+
+  // Dashed line
+  ctx.save();
+  ctx.setLineDash([6, 4]);
+  ctx.strokeStyle = "#F59E0B";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(p1.x, p1.y);
+  ctx.lineTo(p2.x, p2.y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Label at midpoint
+  const mx = (p1.x + p2.x) / 2;
+  const my = (p1.y + p2.y) / 2;
+
+  ctx.font = "bold 11px monospace";
+  const textW = ctx.measureText(label).width;
+  ctx.fillStyle = "rgba(0,0,0,0.75)";
+  ctx.fillRect(mx - textW / 2 - 4, my - 18, textW + 8, 20);
+  ctx.fillStyle = "#F59E0B";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, mx, my - 8);
+
+  // Start/end markers
+  ctx.fillStyle = "#F59E0B";
+  ctx.beginPath();
+  ctx.arc(p1.x, p1.y, 4, 0, Math.PI * 2);
+  ctx.arc(p2.x, p2.y, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+/**
+ * Draw a faint dashed line from selected unit to hovered cell with distance label.
+ */
+function drawHoverDistance(ctx, viewport, w, h, from, to, label) {
+  const p1 = hexToScreen(from.c, from.r, viewport, w, h);
+  const p2 = hexToScreen(to.c, to.r, viewport, w, h);
+
+  ctx.save();
+  ctx.setLineDash([4, 6]);
+  ctx.strokeStyle = "rgba(245, 158, 11, 0.4)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(p1.x, p1.y);
+  ctx.lineTo(p2.x, p2.y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Small label near the hovered cell
+  ctx.font = "10px monospace";
+  const textW = ctx.measureText(label).width;
+  const lx = p2.x + 10;
+  const ly = p2.y - 10;
+  ctx.fillStyle = "rgba(0,0,0,0.7)";
+  ctx.fillRect(lx - 2, ly - 10, textW + 4, 14);
+  ctx.fillStyle = "rgba(245, 158, 11, 0.9)";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, lx, ly - 3);
+  ctx.restore();
+}
 
 export default MapView;

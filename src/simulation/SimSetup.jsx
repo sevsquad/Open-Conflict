@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { loadGameState, createGame, getProviders } from "./orchestrator.js";
 import { getQuickstartPreset } from "./presets.js";
+import { getTestFixture } from "../testFixture.js";
 import SimSetupMapSelect from "./SimSetupMapSelect.jsx";
 import SimSetupConfigure from "./SimSetupConfigure.jsx";
 
@@ -22,12 +23,15 @@ export default function SimSetup({ onBack, onStart, initialTerrainData, preset }
     if (preset !== "quickstart" || !initialTerrainData || presetFired.current) return;
     presetFired.current = true;
 
-    // Fetch the first available LLM provider, then create the game immediately
+    // Fetch available LLM providers, then create the game immediately.
+    // If no provider configured, use a placeholder — adjudication will
+    // fail with a clear error, but the game UI still loads for inspection.
     getProviders().then(data => {
       const provs = data.providers || [];
+      const provider = provs[0]?.id || "none";
+      const model = provs[0]?.models?.[0] || "none";
       if (provs.length === 0) {
-        console.error("[preset] No LLM providers configured. Add an API key to .env");
-        return;
+        console.warn("[preset] No LLM providers configured. Game will load but adjudication requires an API key in .env");
       }
       const presetData = getQuickstartPreset();
       const scenario = {
@@ -44,7 +48,7 @@ export default function SimSetup({ onBack, onStart, initialTerrainData, preset }
         scenario,
         terrainRef: "test-fixture",
         terrainData: initialTerrainData,
-        llmConfig: { provider: provs[0].id, model: provs[0].models?.[0] || "", temperature: 0.4 },
+        llmConfig: { provider, model, temperature: 0.4 },
       });
       onStart(gs, initialTerrainData);
     }).catch(err => console.error("[preset] Failed to load providers:", err));
@@ -67,6 +71,13 @@ export default function SimSetup({ onBack, onStart, initialTerrainData, preset }
       console.error("Failed to load terrain:", e);
     }
     setLoadingMap(false);
+  }, []);
+
+  // Load the built-in test fixture directly (no API call)
+  const handleLoadTestFixture = useCallback(() => {
+    const fixture = getTestFixture();
+    setTerrainData(fixture);
+    setSelectedMap("test-fixture");
   }, []);
 
   // Load a saved game directly
@@ -112,6 +123,7 @@ export default function SimSetup({ onBack, onStart, initialTerrainData, preset }
       onContinue={handleContinue}
       onBack={onBack}
       onLoadGame={handleLoadGame}
+      onLoadTestFixture={handleLoadTestFixture}
     />
   );
 }

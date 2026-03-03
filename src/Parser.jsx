@@ -1198,7 +1198,7 @@ async function fetchElevSmart(bbox, cols, rows, onS, onProg, log, onPartial, cel
 
   // At fine scales (≤2km cells), use Copernicus DEM 30m raster for ~100 samples/cell.
   // Falls back to 3-point API sampling if DEM fails or has low coverage.
-  const useRasterDEM = cellKm != null && cellKm <= 2;
+  const useRasterDEM = cellKm != null && cellKm <= 10;
 
   if (log) {
     log.section("ELEVATION");
@@ -2682,7 +2682,7 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       // Range-based forested hills reclassification (fine scales only).
       // A forest cell with 30m+ internal elevation range is hilly regardless of absolute elevation.
       // This catches moderate hills (200-500m) that the absolute thresholds above miss.
-      if (elevRange && cellKm <= 2) {
+      if (elevRange) {
         const range = elevRange[r * cols + c] || 0;
         const isMtn = ["mountain", "mountain_forest", "peak", "highland", "jungle_mountains", "boreal_mountains"].includes(tt);
         if (range > 30 && !isMtn) {

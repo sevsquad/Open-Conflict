@@ -65,19 +65,32 @@ export function getTestFixture() {
   // ── Row 3-5: Lowland (farmland, roads, settlement) ──
   for (let c = 0; c < cols; c++) set(c, 3, "farmland", 20 + c * 2);
   set(5, 3, "farmland", 30, ["road", "trail"]);
-  set(6, 3, "farmland", 32, ["highway"], { town: "Millfield" });
+  set(6, 3, "farmland", 32, ["highway", "town"], { town: "Millfield" });
   set(3, 3, "wetland", 15, ["river"], { river: "Stonebrook" });
 
   for (let c = 0; c < cols; c++) set(c, 4, "farmland", 35 + c * 2);
-  set(5, 4, "light_urban", 42, ["highway", "road", "building", "town"], { town: "Ashbury" });
+  set(0, 4, "farmland", 35, ["highway"]);
+  set(1, 4, "farmland", 37, ["highway"]);
+  set(2, 4, "light_urban", 39, ["highway", "building", "town"], { town: "Westbrook" });
+  set(3, 4, "light_veg", 30, ["river", "bridge", "highway"], { river: "Stonebrook" });
+  set(4, 4, "farmland", 43, ["highway", "major_road"]);
+  set(5, 4, "light_urban", 42, ["highway", "road", "railway", "building", "town"], { town: "Ashbury" });
   set(6, 4, "light_urban", 44, ["highway", "road", "building_sparse"]);
-  set(3, 4, "light_veg", 30, ["river", "bridge"], { river: "Stonebrook" });
-  set(10, 4, "farmland", 50, ["airfield"], { airfield: "Ashbury Strip" });
+  set(7, 4, "farmland", 49, ["highway"]);
+  set(8, 4, "farmland", 51, ["highway"]);
+  set(9, 4, "farmland", 53, ["highway"]);
+  set(10, 4, "farmland", 50, ["highway", "airfield"], { airfield: "Ashbury Strip" });
+  set(11, 4, "farmland", 57, ["highway"]);
 
   for (let c = 0; c < cols; c++) set(c, 5, "farmland", 50 + c * 3);
   set(4, 5, "open_ground", 55, ["major_road"]);
   set(5, 5, "light_urban", 58, ["major_road", "railway", "building"]);
   set(6, 5, "light_urban", 60, ["railway", "building_sparse"]);
+  set(7, 5, "farmland", 71, ["railway"]);
+  set(8, 5, "farmland", 74, ["railway"]);
+  set(9, 5, "farmland", 77, ["railway"]);
+  set(10, 5, "farmland", 80, ["railway"]);
+  set(11, 5, "farmland", 83, ["railway"]);
   set(3, 5, "farmland", 48, ["river"], { river: "Stonebrook" });
 
   // ── Row 6-8: Mid-elevation (forest, urban cluster) ──
@@ -93,7 +106,7 @@ export function getTestFixture() {
   set(5, 7, "light_urban", 130, ["road", "building_sparse"]);
   set(6, 7, "forest", 135, ["minor_road", "hedgerow"]);
   set(3, 7, "dense_forest", 120, ["river", "treeline"], { river: "Stonebrook" });
-  set(10, 7, "forest", 155, ["military_base"], { military: "Camp Ironwood" });
+  set(10, 7, "forest", 155, ["military_base", "road"], { military: "Camp Ironwood" });
   set(11, 7, "forest", 160, ["fence"]);
   set(0, 7, "mangrove", 105);
 

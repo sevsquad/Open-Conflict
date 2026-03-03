@@ -1,29 +1,40 @@
 import { colors, typography, radius, animation, space } from "../theme.js";
 import { Button, Input, Select, CollapsibleSection } from "../components/ui.jsx";
 import { ACTOR_COLORS } from "../terrainColors.js";
+import { SCALE_TIERS, SCALE_KEYS, WEATHER_OPTIONS, VISIBILITY_OPTIONS, GROUND_OPTIONS, TIME_OF_DAY_OPTIONS } from "./schemas.js";
 
 // ═══════════════════════════════════════════════════════════════
-// SETUP LEFT SIDEBAR — Scenario, Actors, LLM, Turn Settings
+// SETUP LEFT SIDEBAR — Scale, Scenario, Actors, LLM, Turn Settings
 // ═══════════════════════════════════════════════════════════════
 
 export default function SetupLeftSidebar({ state, dispatch, providers, open, onToggle }) {
   const {
-    title, description, initialConditions, specialRules,
-    actors, turnDuration, startDate,
+    scale, title, description, initialConditions, specialRules,
+    actors, turnDuration, startDate, environment,
     provider, model, temperature,
   } = state;
 
   const selectedProvider = providers.find(p => p.id === provider);
+  const currentScale = SCALE_TIERS[scale] || SCALE_TIERS.grand_tactical;
+
+  const handleScaleChange = (newScale) => {
+    dispatch({ type: "SET_FIELD", field: "scale", value: newScale });
+    // Update turn duration to the default for this scale
+    const tier = SCALE_TIERS[newScale];
+    if (tier) {
+      dispatch({ type: "SET_FIELD", field: "turnDuration", value: tier.defaultTurn });
+    }
+  };
 
   return (
     <div style={{
-      width: open ? 300 : 0, overflow: "hidden",
+      display: "flex", flexShrink: 0,
+      width: open ? 320 : 20,
       transition: `width ${animation.normal} ${animation.easeOut}`,
-      flexShrink: 0, display: "flex",
     }}>
-      {/* Collapse toggle */}
+      {/* Content */}
       <div style={{
-        position: "relative", width: open ? 300 : 0, overflow: "hidden",
+        width: open ? 300 : 0, overflow: "hidden",
         transition: `width ${animation.normal} ${animation.easeOut}`,
       }}>
         <div style={{
@@ -31,6 +42,31 @@ export default function SetupLeftSidebar({ state, dispatch, providers, open, onT
           padding: space[3], borderRight: `1px solid ${colors.border.subtle}`,
           background: colors.bg.raised, boxSizing: "border-box",
         }}>
+          {/* Scale Selector — determines everything else */}
+          <CollapsibleSection title="Scale" accent={colors.accent.cyan}>
+            <div style={{ marginBottom: space[1] }}>
+              <select
+                value={scale}
+                onChange={e => handleScaleChange(e.target.value)}
+                style={{
+                  width: "100%", padding: "6px 8px", background: colors.bg.input,
+                  border: `1px solid ${colors.border.subtle}`, borderRadius: radius.md,
+                  color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily,
+                }}
+              >
+                {SCALE_KEYS.map(key => {
+                  const t = SCALE_TIERS[key];
+                  return <option key={key} value={key}>{t.label} ({t.hexRange}/hex)</option>;
+                })}
+              </select>
+            </div>
+            <div style={{ fontSize: typography.body.xs, color: colors.text.muted, lineHeight: 1.5 }}>
+              <div>Hex size: <span style={{ color: colors.accent.cyan }}>{currentScale.hexRange}</span></div>
+              <div>Turn length: <span style={{ color: colors.accent.cyan }}>{currentScale.turnRange}</span></div>
+              <div>Unit echelons: <span style={{ color: colors.accent.cyan }}>{currentScale.echelons.join(", ")}</span></div>
+            </div>
+          </CollapsibleSection>
+
           {/* Scenario */}
           <CollapsibleSection title="Scenario" accent={colors.accent.green}>
             <Input label="Title" value={title} onChange={v => dispatch({ type: "SET_FIELD", field: "title", value: v })} placeholder="e.g., Chosin Reservoir, December 1950" />
@@ -137,6 +173,18 @@ export default function SetupLeftSidebar({ state, dispatch, providers, open, onT
             <Input label="Turn Duration" value={turnDuration} onChange={v => dispatch({ type: "SET_FIELD", field: "turnDuration", value: v })} placeholder="e.g., 12 hours, 1 day" />
             <Input label="Start Date" value={startDate} onChange={v => dispatch({ type: "SET_FIELD", field: "startDate", value: v })} placeholder="e.g., 1950-12-01" />
           </CollapsibleSection>
+
+          {/* Environment Conditions */}
+          <CollapsibleSection title="Environment" accent={colors.accent.green}>
+            <EnvSelect label="Weather" value={environment?.weather || "clear"} options={WEATHER_OPTIONS}
+              onChange={v => dispatch({ type: "UPDATE_ENVIRONMENT", field: "weather", value: v })} />
+            <EnvSelect label="Visibility" value={environment?.visibility || "good"} options={VISIBILITY_OPTIONS}
+              onChange={v => dispatch({ type: "UPDATE_ENVIRONMENT", field: "visibility", value: v })} />
+            <EnvSelect label="Ground" value={environment?.groundCondition || "dry"} options={GROUND_OPTIONS}
+              onChange={v => dispatch({ type: "UPDATE_ENVIRONMENT", field: "groundCondition", value: v })} />
+            <EnvSelect label="Time of Day" value={environment?.timeOfDay || "morning"} options={TIME_OF_DAY_OPTIONS}
+              onChange={v => dispatch({ type: "UPDATE_ENVIRONMENT", field: "timeOfDay", value: v })} />
+          </CollapsibleSection>
         </div>
       </div>
 
@@ -154,6 +202,32 @@ export default function SetupLeftSidebar({ state, dispatch, providers, open, onT
       >
         {open ? "\u25C0" : "\u25B6"}
       </button>
+    </div>
+  );
+}
+
+// ── Helpers ──────────────────────────────────────────────────
+
+// Capitalize and prettify option values: "snow_covered" → "Snow Covered"
+function formatOption(val) {
+  return val.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function EnvSelect({ label, value, options, onChange }) {
+  return (
+    <div style={{ marginBottom: space[2] }}>
+      <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>{label}</div>
+      <select
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        style={{
+          width: "100%", padding: "5px 8px", background: colors.bg.input,
+          border: `1px solid ${colors.border.subtle}`, borderRadius: radius.md,
+          color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily,
+        }}
+      >
+        {options.map(opt => <option key={opt} value={opt}>{formatOption(opt)}</option>)}
+      </select>
     </div>
   );
 }

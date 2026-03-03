@@ -8,7 +8,7 @@ import { listSavedGames, loadGameState } from "./orchestrator.js";
 // Focused screen to pick a terrain map before entering the sandbox
 // ═══════════════════════════════════════════════════════════════
 
-export default function SimSetupMapSelect({ maps, loadingMap, selectedMap, terrainData, onSelectMap, onContinue, onBack, onLoadGame }) {
+export default function SimSetupMapSelect({ maps, loadingMap, selectedMap, terrainData, onSelectMap, onContinue, onBack, onLoadGame, onLoadTestFixture }) {
   const [savedGames, setSavedGames] = useState([]);
   const [showSaved, setShowSaved] = useState(false);
 
@@ -69,6 +69,10 @@ export default function SimSetupMapSelect({ maps, loadingMap, selectedMap, terra
             options={maps.map(m => ({ value: m.name, label: `${m.name} (${(m.size / 1024).toFixed(0)}KB)` }))}
             placeholder="Select a terrain map..."
           />
+
+          <Button variant="secondary" onClick={onLoadTestFixture} size="sm" style={{ marginTop: space[2], width: "100%" }}>
+            Load Demo Scenario (12&times;15)
+          </Button>
 
           {loadingMap && (
             <div style={{
