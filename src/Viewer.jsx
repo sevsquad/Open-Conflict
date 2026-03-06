@@ -5,6 +5,8 @@ import { TC, TL, FC, FL, FG, DEFAULT_FEATURES } from "./terrainColors.js";
 import MapView from "./mapRenderer/MapView.jsx";
 import { cellPixelsToHexSize, SQRT3 } from "./mapRenderer/HexMath.js";
 import { buildCompactExport } from "./simulation/terrainCodec.js";
+import { computeElevationRange } from "./mapRenderer/gl/HexGPUData.js";
+import { buildStrategicGrid } from "./mapRenderer/StrategicGrid.js";
 
 // ═══════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -23,8 +25,10 @@ function getFeats(cell){
 // VIEWER COMPONENT
 // ═══════════════════════════════════════════════════════════════
 
-export default function Viewer({ onBack, onParser, initialData }) {
-  const [D, setD] = useState(null); // map data
+export default function Viewer({ onBack, onParser, initialData, initialFineData, initialStratGrid }) {
+  const [D, setD] = useState(null); // map data (display resolution)
+  const [fineMapData, setFineMapData] = useState(null); // fine grid for atlas painting
+  const [stratGrid, setStratGrid] = useState(null); // strategic grid mapping fine → display
   const [sel, setSel] = useState(null); // "c,r"
   const [hov, setHov] = useState(null); // "c,r"
   const [af, setAf] = useState(new Set()); // active features
@@ -57,15 +61,42 @@ export default function Viewer({ onBack, onParser, initialData }) {
     setHov(null);
   }, []);
 
-  // Load initialData on mount
+  // Load initialData on mount (with optional fine data from Parser)
   useEffect(() => {
-    if (initialData) loadMapData(initialData);
-  }, [initialData, loadMapData]);
+    if (initialData) {
+      loadMapData(initialData);
+      // Wire dual-resolution data from Parser → Viewer
+      if (initialFineData && initialStratGrid) {
+        setFineMapData(initialFineData);
+        setStratGrid(initialStratGrid);
+      } else {
+        setFineMapData(null);
+        setStratGrid(null);
+      }
+    }
+  }, [initialData, initialFineData, initialStratGrid, loadMapData]);
 
   // Fetch saved files list
   useEffect(() => {
     fetch("/api/saves").then(r => r.json()).then(setSavedFiles).catch(() => {});
   }, [D]);
+
+  // Rebuild strategic grid from fineGrid in save file
+  const loadDualResFromJson = useCallback((json) => {
+    if (json.fineGrid && json.fineGrid.cells && json.fineGrid.cols) {
+      try {
+        const sg = buildStrategicGrid(json.fineGrid, json.map.cellSizeKm);
+        setFineMapData(json.fineGrid);
+        setStratGrid(sg);
+      } catch {
+        setFineMapData(null);
+        setStratGrid(null);
+      }
+    } else {
+      setFineMapData(null);
+      setStratGrid(null);
+    }
+  }, []);
 
   const loadSaved = useCallback((filename) => {
     fetch(`/api/load?file=${encodeURIComponent(filename)}`)
@@ -74,9 +105,10 @@ export default function Viewer({ onBack, onParser, initialData }) {
         const mapData = json.map || json;
         if (!mapData.cells || !mapData.cols) { alert("Invalid save file"); return; }
         loadMapData(mapData);
+        loadDualResFromJson(json);
       })
       .catch(err => alert("Failed to load: " + err.message));
-  }, [loadMapData]);
+  }, [loadMapData, loadDualResFromJson]);
 
   const handleFile = useCallback((e) => {
     const file = e.target.files?.[0];
@@ -88,10 +120,11 @@ export default function Viewer({ onBack, onParser, initialData }) {
         const mapData = json.map || json;
         if (!mapData.cells || !mapData.cols) { alert("Invalid terrain JSON"); return; }
         loadMapData(mapData);
+        loadDualResFromJson(json);
       } catch (err) { alert("Failed to parse JSON: " + err.message); }
     };
     reader.readAsText(file);
-  }, [loadMapData]);
+  }, [loadMapData, loadDualResFromJson]);
 
   // ── Cell interaction handlers ──
   const handleCellClick = useCallback((cell) => {
@@ -188,6 +221,25 @@ export default function Viewer({ onBack, onParser, initialData }) {
     cv.getContext("2d").drawImage(glCanvas, 0, 0);
     const a = document.createElement("a");
     a.download = `oc_map_${D.cols}x${D.rows}.png`;
+    a.href = cv.toDataURL("image/png");
+    a.click();
+  }, [D]);
+
+  // ── Export Elevation PNG ──
+  const exportElevPNG = useCallback(() => {
+    if (!D || !mapViewRef.current) return;
+    const exportCellSize = 28;
+    const exportW = Math.ceil((D.cols + 0.5) * exportCellSize);
+    const exportH = Math.ceil(D.rows * exportCellSize * 1.5 / SQRT3 + exportCellSize);
+    const glCanvas = mapViewRef.current.renderExportElev(exportW, exportH);
+    if (!glCanvas) return;
+
+    const cv = document.createElement("canvas");
+    cv.width = exportW;
+    cv.height = exportH;
+    cv.getContext("2d").drawImage(glCanvas, 0, 0);
+    const a = document.createElement("a");
+    a.download = `oc_elev_${D.cols}x${D.rows}.png`;
     a.href = cv.toDataURL("image/png");
     a.click();
   }, [D]);
@@ -352,6 +404,9 @@ export default function Viewer({ onBack, onParser, initialData }) {
       <MapView
         ref={mapViewRef}
         mapData={D}
+        fineMapData={fineMapData}
+        strategicGrid={stratGrid}
+        strategicMode={!!stratGrid}
         activeFeatures={af}
         showElevBands={showElev}
         onCellClick={handleCellClick}
@@ -374,6 +429,7 @@ export default function Viewer({ onBack, onParser, initialData }) {
         </div>
         <div style={{ display: "flex", gap: space[1] + 2 }}>
           <Button variant="secondary" size="sm" onClick={exportPNG}>PNG</Button>
+          <Button variant="secondary" size="sm" onClick={exportElevPNG}>Elev PNG</Button>
           <Button variant="secondary" size="sm" onClick={exportLLM}>LLM Export</Button>
           <label>
             <Button variant="secondary" size="sm" as="span" style={{ cursor: "pointer" }}
@@ -448,6 +504,49 @@ export default function Viewer({ onBack, onParser, initialData }) {
                             </span>
                           );
                         })}
+                      </div>
+                    </div>
+                  )}
+                  {/* Building metadata (Phase 4 — urban terrain enhancement) */}
+                  {(sec.data.buildingFloors || sec.data.buildingMaterial || sec.data.buildingName || sec.data.protectedSite) && (
+                    <div style={{ marginTop: space[2] }}>
+                      <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: space[1] }}>Building</div>
+                      <div style={{ fontSize: typography.body.xs, lineHeight: 1.6 }}>
+                        {sec.data.buildingName && <div style={{ fontWeight: typography.weight.semibold, color: colors.accent.amber }}>{sec.data.buildingName}</div>}
+                        {sec.data.buildingFloors && <div>{sec.data.buildingFloors} floor{sec.data.buildingFloors > 1 ? "s" : ""}{sec.data.buildingHeight ? ` · ${Math.round(sec.data.buildingHeight)}m` : ""}</div>}
+                        {sec.data.buildingMaterial && <div style={{ textTransform: "capitalize" }}>{sec.data.buildingMaterial}</div>}
+                        {sec.data.protectedSite && <div style={{ color: colors.accent.red || "#e55" }}>⚠ Protected site (IHL)</div>}
+                      </div>
+                    </div>
+                  )}
+                  {/* Urban composition (from Strategic Grid aggregation) */}
+                  {sec.data.urban && (
+                    <div style={{ marginTop: space[2] }}>
+                      <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: space[1] }}>
+                        Urban — Pattern {sec.data.urban.pattern}
+                      </div>
+                      <div style={{ fontSize: typography.body.xs, lineHeight: 1.6 }}>
+                        <div>Buildings {Math.round(sec.data.urban.buildingCoverage * 100)}% · Roads {Math.round(sec.data.urban.roadCoverage * 100)}% · Green {Math.round(sec.data.urban.greenCoverage * 100)}%</div>
+                        {sec.data.urban.avgHeight > 0 && <div>Avg height: {Math.round(sec.data.urban.avgHeight)}m</div>}
+                      </div>
+                    </div>
+                  )}
+                  {/* Terrain composition (from Strategic Grid aggregation) */}
+                  {sec.data.terrainComposition && Object.keys(sec.data.terrainComposition).length > 0 && (
+                    <div style={{ marginTop: space[2] }}>
+                      <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: space[1] }}>Composition</div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                        {Object.entries(sec.data.terrainComposition)
+                          .sort((a, b) => b[1] - a[1])
+                          .slice(0, 6)
+                          .map(([t, frac]) => (
+                            <div key={t} style={{ display: "flex", alignItems: "center", gap: space[1], fontSize: typography.body.xs }}>
+                              <div style={{ width: 8, height: 8, borderRadius: 2, background: TC[t] || "#333", flexShrink: 0 }} />
+                              <span style={{ flex: 1 }}>{TL[t] || t}</span>
+                              <span style={{ color: colors.text.muted }}>{Math.round(frac * 100)}%</span>
+                            </div>
+                          ))
+                        }
                       </div>
                     </div>
                   )}
@@ -568,6 +667,18 @@ export default function Viewer({ onBack, onParser, initialData }) {
         <canvas ref={mmRef} style={{ display: "block" }} onClick={handleMinimapClick} />
       </Panel>
 
+      {/* Elevation legend — visible when topo mode is on */}
+      {showElev && D && (() => {
+        const { min, max } = computeElevationRange(D);
+        const range = max - min;
+        const rawInterval = range / 10;
+        const contourInterval = rawInterval > 200 ? Math.round(rawInterval / 100) * 100
+          : rawInterval > 50 ? Math.round(rawInterval / 50) * 50
+          : rawInterval > 10 ? Math.round(rawInterval / 10) * 10
+          : Math.max(5, Math.round(rawInterval));
+        return <ElevationLegend elevMin={min} elevMax={max} contourInterval={contourInterval} />;
+      })()}
+
       {/* Zoom controls */}
       <div style={{
         position: "absolute", bottom: space[3], left: space[3],
@@ -634,5 +745,100 @@ function FilterChip({ label, onClick }) {
     >
       {label}
     </div>
+  );
+}
+
+// ── Elevation Legend — vertical gradient bar with elevation labels ──
+function ElevationLegend({ elevMin, elevMax, contourInterval }) {
+  // 8-stop hypsometric ramp matching the shader in hex.frag.glsl
+  const stops = [
+    "rgb(51,115,71)",    // c0: deep lowland green
+    "rgb(89,140,77)",    // c1: green
+    "rgb(140,158,82)",   // c2: yellow-green
+    "rgb(179,166,87)",   // c3: golden
+    "rgb(184,143,97)",   // c4: tan
+    "rgb(158,122,102)",  // c5: brown
+    "rgb(148,143,138)",  // c6: gray
+    "rgb(224,219,209)",  // c7: near-white
+  ];
+  const gradient = stops.map((c, i) =>
+    `${c} ${(i / 7 * 100).toFixed(1)}%`
+  ).join(", ");
+
+  const range = elevMax - elevMin;
+
+  // Generate evenly-spaced tick marks from contour boundaries
+  const ticks = [];
+  if (range > 0 && contourInterval > 0) {
+    const firstTick = Math.ceil(elevMin / contourInterval) * contourInterval;
+    for (let e = firstTick; e <= elevMax; e += contourInterval) {
+      const pct = (e - elevMin) / range;
+      if (pct > 0.05 && pct < 0.95) ticks.push({ elev: e, pct });
+    }
+  }
+  // Keep ~5 ticks max for readability
+  const stride = Math.max(1, Math.ceil(ticks.length / 5));
+  const shownTicks = ticks.filter((_, i) => i % stride === 0);
+
+  const barHeight = 180;
+
+  return (
+    <Panel style={{
+      position: "absolute",
+      bottom: 72, left: space[3],
+      padding: `${space[2]}px ${space[2] + 2}px`,
+      width: 86,
+      animation: "fadeIn 0.2s ease-out",
+    }}>
+      <div style={{
+        fontSize: 9, color: colors.text.muted, fontWeight: typography.weight.bold,
+        letterSpacing: typography.letterSpacing.wider,
+        textTransform: "uppercase", marginBottom: 6, textAlign: "center",
+      }}>
+        Elevation
+      </div>
+      <div style={{ display: "flex", gap: 6 }}>
+        {/* Gradient bar */}
+        <div style={{
+          width: 14, height: barHeight, borderRadius: radius.sm,
+          background: `linear-gradient(to top, ${gradient})`,
+          border: `1px solid ${colors.border.subtle}`,
+          flexShrink: 0,
+        }} />
+        {/* Labels */}
+        <div style={{ position: "relative", height: barHeight, flex: 1 }}>
+          {/* Max label at top */}
+          <span style={{
+            position: "absolute", top: -4,
+            fontSize: 10, fontWeight: typography.weight.semibold,
+            color: colors.text.secondary,
+            fontFamily: typography.monoFamily, whiteSpace: "nowrap",
+          }}>
+            {elevMax}m
+          </span>
+          {/* Intermediate ticks */}
+          {shownTicks.map(t => (
+            <span key={t.elev} style={{
+              position: "absolute",
+              bottom: `${t.pct * 100}%`,
+              transform: "translateY(50%)",
+              fontSize: 9, color: colors.text.muted,
+              fontFamily: typography.monoFamily, whiteSpace: "nowrap",
+            }}>
+              {t.elev}
+            </span>
+          ))}
+          {/* Min label at bottom */}
+          <span style={{
+            position: "absolute", bottom: -4,
+            fontSize: 10, fontWeight: typography.weight.semibold,
+            color: colors.text.secondary,
+            fontFamily: typography.monoFamily, whiteSpace: "nowrap",
+          }}>
+            {elevMin}m
+          </span>
+        </div>
+      </div>
+    </Panel>
   );
 }

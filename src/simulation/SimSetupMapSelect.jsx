@@ -2,13 +2,14 @@ import { useState, useEffect, useCallback } from "react";
 import { colors, typography, radius, animation, space, shadows } from "../theme.js";
 import { Button, Select, Card, Badge, SectionHeader } from "../components/ui.jsx";
 import { listSavedGames, loadGameState } from "./orchestrator.js";
+import { getAllPresets } from "./presets.js";
 
 // ═══════════════════════════════════════════════════════════════
 // SIM SETUP — Step 1: Map Selection
 // Focused screen to pick a terrain map before entering the sandbox
 // ═══════════════════════════════════════════════════════════════
 
-export default function SimSetupMapSelect({ maps, loadingMap, selectedMap, terrainData, onSelectMap, onContinue, onBack, onLoadGame, onLoadTestFixture }) {
+export default function SimSetupMapSelect({ maps, loadingMap, selectedMap, terrainData, onSelectMap, onContinue, onBack, onLoadGame, onLoadTestFixture, onLoadPreset }) {
   const [savedGames, setSavedGames] = useState([]);
   const [showSaved, setShowSaved] = useState(false);
 
@@ -47,8 +48,24 @@ export default function SimSetupMapSelect({ maps, loadingMap, selectedMap, terra
           <div style={{ fontSize: typography.body.sm, color: colors.text.secondary, marginBottom: space[2] }}>Saved Games:</div>
           <div style={{ display: "flex", gap: space[2], flexWrap: "wrap" }}>
             {savedGames.map(g => (
-              <Button key={g.file} variant="secondary" onClick={() => onLoadGame(g.file)} size="sm">
-                {g.name} ({new Date(g.modified).toLocaleDateString()})
+              <Button key={g.file} variant="secondary" onClick={() => onLoadGame(g.file)} size="sm"
+                style={{ display: "flex", alignItems: "center", gap: space[1] }}
+              >
+                {g.isAutosave && (
+                  <Badge color={colors.accent.cyan} style={{ fontSize: 9, padding: "1px 4px" }}>AUTO</Badge>
+                )}
+                <span>{g.name}</span>
+                {g.turn != null && (
+                  <Badge color={colors.accent.amber} style={{ fontSize: 9, padding: "1px 4px" }}>T{g.turn}</Badge>
+                )}
+                {g.actorCount > 0 && (
+                  <span style={{ fontSize: typography.body.xs, color: colors.text.muted }}>
+                    {g.actorCount} sides, {g.unitCount} units
+                  </span>
+                )}
+                <span style={{ fontSize: typography.body.xs, color: colors.text.muted }}>
+                  {new Date(g.modified).toLocaleDateString()}
+                </span>
               </Button>
             ))}
           </div>
@@ -70,9 +87,21 @@ export default function SimSetupMapSelect({ maps, loadingMap, selectedMap, terra
             placeholder="Select a terrain map..."
           />
 
-          <Button variant="secondary" onClick={onLoadTestFixture} size="sm" style={{ marginTop: space[2], width: "100%" }}>
-            Load Demo Scenario (12&times;15)
-          </Button>
+          {/* Quick-start scenarios — load map + preset in one click */}
+          <div style={{ marginTop: space[3], borderTop: `1px solid ${colors.border.subtle}`, paddingTop: space[3] }}>
+            <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: space[2], textTransform: "uppercase", letterSpacing: 1 }}>
+              Quick Start Scenarios
+            </div>
+            <Select
+              value=""
+              onChange={v => {
+                const p = getAllPresets().find(pr => pr.id === v);
+                if (p) onLoadPreset(p.id, p.requiredMap);
+              }}
+              options={getAllPresets().map(p => ({ value: p.id, label: `${p.name}${p.era ? ` (${p.era.toUpperCase()})` : ""}` }))}
+              placeholder="Select a scenario..."
+            />
+          </div>
 
           {loadingMap && (
             <div style={{

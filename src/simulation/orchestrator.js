@@ -3,11 +3,14 @@
 // Prompt assembly, LLM calls, validation, state management
 // ═══════════════════════════════════════════════════════════════
 
-import { createGameState, validateAdjudication, validateStateUpdates, SCALE_TIERS, advanceDate, DIPLOMATIC_STATUSES, getSupplyConsumption, progressEnvironment, parseTurnDuration } from "./schemas.js";
-import { buildSystemPrompt, buildAdjudicationPrompt, buildTerrainSummary, reformatActionAsIntelReport, labelToCommaPosition, buildRebuttalPrompt } from "./prompts.js";
+import { createGameState, validateAdjudication, validateStateUpdates, validatePositionUpdates, SCALE_TIERS, advanceDate, DIPLOMATIC_STATUSES, getSupplyConsumption, progressEnvironment, parseTurnDuration, initDiplomacy } from "./schemas.js";
+import { buildSystemPrompt, buildAdjudicationPrompt, buildTerrainSummary, reformatActionAsIntelReport, labelToCommaPosition, buildRebuttalPrompt, formatOrderBundles } from "./prompts.js";
 import { loadCorpus } from "./corpus.js";
-import { generateFortuneRolls } from "./fortuneRoll.js";
-import { generateFrictionEvents } from "./frictionEvents.js";
+import { generateFortuneRolls, generateUnitFortuneRolls } from "./fortuneRoll.js";
+import { generateFrictionEvents, applyDetectionReveals } from "./frictionEvents.js";
+import { buildAllBundles } from "./orderComputer.js";
+import { findTemplateAcrossEras } from "./eraTemplates.js";
+import { WEAPON_RANGE_KM } from "./orderTypes.js";
 
 // ── Game Creation ───────────────────────────────────────────
 
@@ -24,9 +27,76 @@ export function createGame({ scenario, terrainRef, terrainData, llmConfig }) {
   });
 }
 
+// ── Order Normalization ─────────────────────────────────────
+
+/**
+ * Convert SimGame's order format to orderComputer's expected format.
+ * SimGame: { id: "MOVE", target: "3,4" }
+ * orderComputer: { type: "MOVE", targetHex: "3,4" }
+ */
+function normalizeOrdersForComputer(unitOrders) {
+  const normalized = {};
+  for (const [actorId, actorOrders] of Object.entries(unitOrders)) {
+    normalized[actorId] = {};
+    for (const [unitId, orders] of Object.entries(actorOrders)) {
+      const norm = { intent: orders.intent || "" };
+      if (orders.movementOrder) {
+        norm.movementOrder = {
+          type: orders.movementOrder.id,
+          targetHex: orders.movementOrder.target,
+        };
+      }
+      if (orders.actionOrder) {
+        norm.actionOrder = {
+          type: orders.actionOrder.id,
+          targetHex: orders.actionOrder.target,
+          subtype: orders.actionOrder.subtype || null,
+        };
+      }
+      normalized[actorId][unitId] = norm;
+    }
+  }
+  return normalized;
+}
+
 // ── Adjudication ────────────────────────────────────────────
 
+// Wraps fetch() with an AbortController that fires after `ms` milliseconds.
+// If an external AbortSignal is provided (e.g. user cancel), aborts on
+// whichever fires first: timeout or external cancel.
+const FETCH_TIMEOUT_MS = 900_000; // 15 minutes — cancel button is the real escape hatch
+
+function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS, externalSignal = null) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort();
+    } else {
+      externalSignal.addEventListener("abort", () => controller.abort(), { once: true });
+    }
+  }
+  return fetch(url, { ...options, signal: controller.signal })
+    .finally(() => clearTimeout(timer));
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// Save a network traffic log for debugging adjudication issues.
+// Fire-and-forget — never blocks adjudication flow.
+function saveNetLog(entry) {
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  const filename = `adj_${entry.gameId || "unknown"}_t${entry.turn || 0}_a${entry.attempt || 0}_${ts}.json`;
+  fetch("/api/netlog/save", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filename, data: entry })
+  }).catch(() => {}); // best-effort, never fail adjudication
+}
+
 const MAX_RETRIES = 3;
+// Exponential backoff for rate-limit retries: wait 5s, 15s, 30s
+const RATE_LIMIT_BACKOFF_MS = [5_000, 15_000, 30_000];
 
 /**
  * Run a full adjudication cycle for the current turn.
@@ -35,16 +105,18 @@ const MAX_RETRIES = 3;
  * @param {Object} playerActions - { actorId: "action text", ... }
  * @param {Object} terrainData - Full terrain grid data
  * @param {Object} logger - Logger instance
+ * @param {Object} structuredOrders - { unitOrders, actorIntents } from sealed orders
+ * @param {Object} detectionContext - { actorVisibility } from computeDetection() (optional)
  * @returns {{ adjudication, promptLog, error }}
  */
-export async function adjudicate(gameState, playerActions, terrainData, logger) {
+export async function adjudicate(gameState, playerActions, terrainData, logger, structuredOrders = null, detectionContext = null, abortSignal = null) {
   const scaleKey = gameState.game?.scale || "grand_tactical";
   const scaleTier = SCALE_TIERS[scaleKey]?.tier || 3;
 
   // Scale-conditional corpus loading
   const corpus = loadCorpus(scaleTier);
   // Scale-aware system prompt
-  const systemPrompt = buildSystemPrompt(scaleKey);
+  const systemPrompt = buildSystemPrompt(scaleKey, { maxTokens });
 
   // D.5: Reformat actions as intelligence reports
   const actions = [];
@@ -59,11 +131,43 @@ export async function adjudicate(gameState, playerActions, terrainData, logger) 
   }
 
   // Generate pre-adjudication randomness (chaos dice + friction)
-  const fortuneRolls = generateFortuneRolls(gameState.scenario.actors);
+  // Per-unit fortune rolls when structured orders are available; per-actor fallback otherwise
+  const fortuneRolls = structuredOrders?.unitOrders
+    ? generateUnitFortuneRolls(gameState.units, structuredOrders.unitOrders)
+    : generateFortuneRolls(gameState.scenario.actors);
   const frictionEvents = generateFrictionEvents(gameState, scaleTier);
+
+  // Apply detection reveals from friction events that grant intel
+  // (civilian_tip, signals_intercept, aerial_observation, etc.)
+  let detectionReveals = [];
+  if (detectionContext?.visibilityState && frictionEvents?.events) {
+    detectionReveals = applyDetectionReveals(
+      frictionEvents.events, gameState, detectionContext.visibilityState
+    );
+  }
+
   if (logger) {
     logger.log(gameState.game.turn, "fortune_rolls", fortuneRolls);
     logger.log(gameState.game.turn, "friction_events", frictionEvents);
+    if (detectionReveals.length > 0) {
+      logger.log(gameState.game.turn, "detection_reveals", detectionReveals);
+    }
+  }
+
+  // Build pre-computed order bundles when structured orders are available.
+  // Replaces raw text actions with dense computed data (paths, LOS, force ratios, etc.)
+  let orderBundleSection = null;
+  if (structuredOrders?.unitOrders) {
+    const normalizedOrders = normalizeOrdersForComputer(structuredOrders.unitOrders);
+    const unitFortuneMap = fortuneRolls.unitRolls || {};
+    const bundles = buildAllBundles(normalizedOrders, gameState, terrainData, unitFortuneMap, {}, detectionContext);
+    orderBundleSection = formatOrderBundles(
+      bundles,
+      structuredOrders.actorIntents || {},
+      gameState.scenario.actors,
+      { wildCard: fortuneRolls.wildCard },
+      frictionEvents?.events || []
+    );
   }
 
   // Build the full adjudication prompt
@@ -76,6 +180,9 @@ export async function adjudicate(gameState, playerActions, terrainData, logger) 
     playerActions,
     fortuneRolls,
     frictionEvents,
+    orderBundleSection,
+    detectionContext,
+    maxTokens,
   });
 
   const messages = [
@@ -86,11 +193,20 @@ export async function adjudicate(gameState, playerActions, terrainData, logger) 
   // Calculate dynamic max_tokens based on scenario complexity
   // Base scales logarithmically with grid area (bigger maps = longer narratives)
   // Per-unit cost covers feasibility assessment + citations + weaknesses + state update
-  const unitCount = gameState.scenario.actors.flatMap(a => a.units).length;
+  // Detection context adds ~500 tokens per actor for actor_perspectives narratives
+  const unitCount = gameState.units.length;
+  const actorCount = gameState.scenario.actors.length;
   const gridArea = (terrainData?.cols || 12) * (terrainData?.rows || 15);
-  const baseTokens = 6000 + Math.round(2000 * Math.log10(Math.max(gridArea / 100, 1)));
-  const perUnitTokens = 500;
-  const maxTokens = baseTokens + (unitCount * perUnitTokens);
+  // Raised from 6000/500 — Sonnet's narrative quality needs ~1000 tokens/unit
+  const baseTokens = 8000 + Math.round(2000 * Math.log10(Math.max(gridArea / 100, 1)));
+  const perUnitTokens = 1000;
+  const perspectiveTokens = detectionContext ? (actorCount * 800) : 0;
+  // High ceiling — Sonnet supports 64K, user's plan allows up to 80K.
+  // Completing in one shot is cheaper than truncation retries that double output usage.
+  const maxTokens = Math.min(
+    baseTokens + (unitCount * perUnitTokens) + perspectiveTokens,
+    64000
+  );
 
   // Attempt adjudication with retry logic (C.5)
   let lastError = null;
@@ -110,30 +226,70 @@ export async function adjudicate(gameState, playerActions, terrainData, logger) 
 
     // Call the LLM via server proxy
     let llmResponse;
+    const requestBody = {
+      provider: gameState.game.config.llm.provider,
+      model: gameState.game.config.llm.model,
+      temperature: gameState.game.config.llm.temperature,
+      messages: retryMessages,
+      max_tokens: maxTokens
+    };
+    const fetchStart = Date.now();
     try {
-      const resp = await fetch("/api/llm/adjudicate", {
+      const resp = await fetchWithTimeout("/api/llm/adjudicate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          provider: gameState.game.config.llm.provider,
-          model: gameState.game.config.llm.model,
-          temperature: gameState.game.config.llm.temperature,
-          messages: retryMessages,
-          max_tokens: maxTokens
-        })
-      });
+        body: JSON.stringify(requestBody)
+      }, FETCH_TIMEOUT_MS, abortSignal);
       llmResponse = await resp.json();
     } catch (e) {
-      lastError = `Network error calling LLM: ${e.message}`;
+      if (e.name === "AbortError") {
+        lastError = abortSignal?.aborted ? "Adjudication cancelled" : "Request timed out";
+      } else {
+        lastError = `Network error calling LLM: ${e.message}`;
+      }
+      saveNetLog({
+        type: "adjudicate", gameId: gameState.game.id, turn: gameState.game.turn, attempt,
+        durationMs: Date.now() - fetchStart, error: lastError,
+        request: { provider: requestBody.provider, model: requestBody.model, max_tokens: requestBody.max_tokens, messageCount: retryMessages.length },
+      });
+      if (logger) logger.log(gameState.game.turn, "error", { attempt, error: lastError });
+      if (abortSignal?.aborted) break;
+      continue;
+    }
+
+    const fetchDuration = Date.now() - fetchStart;
+
+    if (!llmResponse.ok) {
+      // Detect rate limiting and back off before retrying
+      const errLower = (llmResponse.error || "").toLowerCase();
+      const isRateLimit = errLower.includes("rate") || errLower.includes("429") || errLower.includes("overloaded");
+      lastError = `LLM API error: ${llmResponse.error}`;
+      if (isRateLimit && attempt < MAX_RETRIES) {
+        const delay = RATE_LIMIT_BACKOFF_MS[attempt - 1] || 30_000;
+        lastError += ` (rate limited, waiting ${delay / 1000}s)`;
+        if (logger) logger.log(gameState.game.turn, "rate_limited", { attempt, delay, error: llmResponse.error });
+        await sleep(delay);
+      }
+      saveNetLog({
+        type: "adjudicate", gameId: gameState.game.id, turn: gameState.game.turn, attempt,
+        durationMs: fetchDuration, error: lastError,
+        request: { provider: requestBody.provider, model: requestBody.model, max_tokens: requestBody.max_tokens, messageCount: retryMessages.length },
+        response: { ok: false, error: llmResponse.error },
+      });
       if (logger) logger.log(gameState.game.turn, "error", { attempt, error: lastError });
       continue;
     }
 
-    if (!llmResponse.ok) {
-      lastError = `LLM API error: ${llmResponse.error}`;
-      if (logger) logger.log(gameState.game.turn, "error", { attempt, error: lastError });
-      continue;
-    }
+    // Log successful response
+    saveNetLog({
+      type: "adjudicate", gameId: gameState.game.id, turn: gameState.game.turn, attempt,
+      durationMs: fetchDuration,
+      request: { provider: requestBody.provider, model: requestBody.model, max_tokens: requestBody.max_tokens, messageCount: retryMessages.length },
+      response: {
+        ok: true, contentLength: llmResponse.content?.length,
+        usage: llmResponse.usage, model: llmResponse.model, stop_reason: llmResponse.stop_reason
+      },
+    });
 
     if (logger) {
       logger.log(gameState.game.turn, "response_received", {
@@ -212,6 +368,36 @@ export async function adjudicate(gameState, playerActions, terrainData, logger) 
       // State update mismatches are warnings in Phase 1, not hard failures
     }
 
+    // Validate positions — clamp impossible moves, log corrections
+    if (parsed.adjudication?.state_updates && terrainData) {
+      const posResult = validatePositionUpdates(parsed.adjudication.state_updates, gameState, terrainData);
+      for (const c of posResult.corrections) {
+        // Apply correction in-place: replace LLM's proposed position with clamped position
+        const update = parsed.adjudication.state_updates.find(u => u.entity === c.entity);
+        if (update) {
+          update.position = c.corrected;
+          // Annotate justification so it's visible in turn log
+          const tag = `[ENGINE CORRECTED: ${c.reason}]`;
+          if (update.justification) {
+            update.justification += ` ${tag}`;
+          } else {
+            update.justification = tag;
+          }
+        }
+      }
+      if (logger && (posResult.corrections.length > 0 || posResult.warnings.length > 0)) {
+        logger.log(gameState.game.turn, "position_validation", {
+          corrections: posResult.corrections,
+          warnings: posResult.warnings
+        });
+      }
+    }
+
+    // Log hedge language warnings from adjudication validation
+    if (validation.warnings?.length > 0 && logger) {
+      logger.log(gameState.game.turn, "hedge_language_warnings", validation.warnings);
+    }
+
     // Build prompt log entry
     const promptLog = {
       turn: gameState.game.turn,
@@ -247,24 +433,25 @@ export async function adjudicate(gameState, playerActions, terrainData, logger) 
 // ── Rebuttal Adjudication ────────────────────────────────────
 
 /**
- * Re-adjudicate after player rebuttals.
- * Constructs a multi-turn conversation: original prompt → original response → rebuttal.
+ * Re-adjudicate after player challenges.
+ * Constructs a multi-turn conversation: original prompt → original response → challenges + rebuttals.
  * Uses the SAME fortune rolls and friction events (not regenerated).
  *
  * @param {Object} gameState - Current game state
  * @param {Object} playerActions - Original player actions
  * @param {Object} terrainData - Full terrain grid data
  * @param {Object} originalResult - The original adjudication result (from adjudicate())
- * @param {Object} rebuttals - { actorId: "rebuttal text", ... }
+ * @param {Object} rebuttals - { actorId: "challenge text", ... } (from challengers)
  * @param {Object} logger - Logger instance
+ * @param {Object} counterRebuttals - { actorId: "counter-rebuttal text", ... } (from non-challengers)
  * @returns {{ adjudication, promptLog, error }}
  */
-export async function adjudicateRebuttal(gameState, playerActions, terrainData, originalResult, rebuttals, logger) {
+export async function adjudicateRebuttal(gameState, playerActions, terrainData, originalResult, rebuttals, logger, counterRebuttals = {}, abortSignal = null) {
   const scaleKey = gameState.game?.scale || "grand_tactical";
   const scaleTier = SCALE_TIERS[scaleKey]?.tier || 3;
 
   const corpus = loadCorpus(scaleTier);
-  const systemPrompt = buildSystemPrompt(scaleKey);
+  const systemPrompt = buildSystemPrompt(scaleKey, { maxTokens });
 
   // Rebuild the original user prompt (same context)
   const actions = [];
@@ -283,10 +470,11 @@ export async function adjudicateRebuttal(gameState, playerActions, terrainData, 
     playerActions,
     fortuneRolls: originalResult.fortuneRolls,
     frictionEvents: originalResult.frictionEvents,
+    maxTokens,
   });
 
-  // Build rebuttal prompt
-  const rebuttalPrompt = buildRebuttalPrompt(rebuttals, gameState.scenario.actors);
+  // Build rebuttal prompt (includes both challenges and counter-rebuttals)
+  const rebuttalPrompt = buildRebuttalPrompt(rebuttals, gameState.scenario.actors, counterRebuttals);
 
   // Multi-turn conversation: system → original prompt → original response → rebuttal
   const originalResponseJSON = JSON.stringify(originalResult.adjudication);
@@ -302,10 +490,13 @@ export async function adjudicateRebuttal(gameState, playerActions, terrainData, 
   }
 
   // Dynamic max_tokens (same formula as adjudicate)
-  const unitCount = gameState.scenario.actors.flatMap(a => a.units).length;
+  const unitCount = gameState.units.length;
   const gridArea = (terrainData?.cols || 12) * (terrainData?.rows || 15);
-  const baseTokens = 6000 + Math.round(2000 * Math.log10(Math.max(gridArea / 100, 1)));
-  const maxTokens = baseTokens + (unitCount * 500);
+  const baseTokens = 8000 + Math.round(2000 * Math.log10(Math.max(gridArea / 100, 1)));
+  const maxTokens = Math.min(
+    baseTokens + (unitCount * 1000),
+    64000
+  );
 
   // Same retry logic as adjudicate()
   let lastError = null;
@@ -317,30 +508,68 @@ export async function adjudicateRebuttal(gameState, playerActions, terrainData, 
     }
 
     let llmResponse;
+    const rebuttalRequestBody = {
+      provider: gameState.game.config.llm.provider,
+      model: gameState.game.config.llm.model,
+      temperature: gameState.game.config.llm.temperature,
+      messages: retryMessages,
+      max_tokens: maxTokens
+    };
+    const rebuttalFetchStart = Date.now();
     try {
-      const resp = await fetch("/api/llm/adjudicate", {
+      const resp = await fetchWithTimeout("/api/llm/adjudicate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          provider: gameState.game.config.llm.provider,
-          model: gameState.game.config.llm.model,
-          temperature: gameState.game.config.llm.temperature,
-          messages: retryMessages,
-          max_tokens: maxTokens
-        })
-      });
+        body: JSON.stringify(rebuttalRequestBody)
+      }, FETCH_TIMEOUT_MS, abortSignal);
       llmResponse = await resp.json();
     } catch (e) {
-      lastError = `Network error calling LLM: ${e.message}`;
+      if (e.name === "AbortError") {
+        lastError = abortSignal?.aborted ? "Rebuttal cancelled" : "Request timed out";
+      } else {
+        lastError = `Network error calling LLM: ${e.message}`;
+      }
+      saveNetLog({
+        type: "rebuttal", gameId: gameState.game.id, turn: gameState.game.turn, attempt,
+        durationMs: Date.now() - rebuttalFetchStart, error: lastError,
+        request: { provider: rebuttalRequestBody.provider, model: rebuttalRequestBody.model, max_tokens: rebuttalRequestBody.max_tokens, messageCount: retryMessages.length },
+      });
+      if (logger) logger.log(gameState.game.turn, "error", { attempt, error: lastError });
+      if (abortSignal?.aborted) break;
+      continue;
+    }
+
+    const rebuttalFetchDuration = Date.now() - rebuttalFetchStart;
+
+    if (!llmResponse.ok) {
+      const errLower = (llmResponse.error || "").toLowerCase();
+      const isRateLimit = errLower.includes("rate") || errLower.includes("429") || errLower.includes("overloaded");
+      lastError = `LLM API error: ${llmResponse.error}`;
+      if (isRateLimit && attempt < MAX_RETRIES) {
+        const delay = RATE_LIMIT_BACKOFF_MS[attempt - 1] || 30_000;
+        lastError += ` (rate limited, waiting ${delay / 1000}s)`;
+        if (logger) logger.log(gameState.game.turn, "rate_limited", { attempt, delay, error: llmResponse.error });
+        await sleep(delay);
+      }
+      saveNetLog({
+        type: "rebuttal", gameId: gameState.game.id, turn: gameState.game.turn, attempt,
+        durationMs: rebuttalFetchDuration, error: lastError,
+        request: { provider: rebuttalRequestBody.provider, model: rebuttalRequestBody.model, max_tokens: rebuttalRequestBody.max_tokens, messageCount: retryMessages.length },
+        response: { ok: false, error: llmResponse.error },
+      });
       if (logger) logger.log(gameState.game.turn, "error", { attempt, error: lastError });
       continue;
     }
 
-    if (!llmResponse.ok) {
-      lastError = `LLM API error: ${llmResponse.error}`;
-      if (logger) logger.log(gameState.game.turn, "error", { attempt, error: lastError });
-      continue;
-    }
+    saveNetLog({
+      type: "rebuttal", gameId: gameState.game.id, turn: gameState.game.turn, attempt,
+      durationMs: rebuttalFetchDuration,
+      request: { provider: rebuttalRequestBody.provider, model: rebuttalRequestBody.model, max_tokens: rebuttalRequestBody.max_tokens, messageCount: retryMessages.length },
+      response: {
+        ok: true, contentLength: llmResponse.content?.length,
+        usage: llmResponse.usage, model: llmResponse.model, stop_reason: llmResponse.stop_reason
+      },
+    });
 
     if (logger) {
       logger.log(gameState.game.turn, "rebuttal_response_received", {
@@ -391,6 +620,29 @@ export async function adjudicateRebuttal(gameState, playerActions, terrainData, 
       continue;
     }
 
+    // Validate positions — same as adjudicate()
+    if (parsed.adjudication?.state_updates && terrainData) {
+      const posResult = validatePositionUpdates(parsed.adjudication.state_updates, gameState, terrainData);
+      for (const c of posResult.corrections) {
+        const update = parsed.adjudication.state_updates.find(u => u.entity === c.entity);
+        if (update) {
+          update.position = c.corrected;
+          const tag = `[ENGINE CORRECTED: ${c.reason}]`;
+          update.justification = update.justification ? `${update.justification} ${tag}` : tag;
+        }
+      }
+      if (logger && (posResult.corrections.length > 0 || posResult.warnings.length > 0)) {
+        logger.log(gameState.game.turn, "position_validation_rebuttal", {
+          corrections: posResult.corrections,
+          warnings: posResult.warnings
+        });
+      }
+    }
+
+    if (validation.warnings?.length > 0 && logger) {
+      logger.log(gameState.game.turn, "hedge_language_warnings_rebuttal", validation.warnings);
+    }
+
     const promptLog = {
       turn: gameState.game.turn,
       timestamp: new Date().toISOString(),
@@ -419,6 +671,29 @@ export async function adjudicateRebuttal(gameState, playerActions, terrainData, 
 // ── State Management ────────────────────────────────────────
 
 /**
+ * Normalize a value the LLM proposed for a numeric field.
+ * Strips trailing "%", parses to number, clamps to [min, max].
+ * Returns currentValue unchanged if the result is NaN.
+ */
+function normalizeNumericValue(newValue, currentValue, min = 0, max = 100) {
+  if (newValue == null) return currentValue; // null/undefined → keep current
+  let v = newValue;
+  if (typeof v === "string") v = v.replace(/%/g, "").trim();
+  v = Number(v);
+  if (isNaN(v)) return currentValue;
+  return Math.max(min, Math.min(max, v));
+}
+
+// Numeric fields that need normalization (strip "%", clamp 0-100)
+const NUMERIC_FIELDS = new Set([
+  "supply", "strength", "morale", "ammo", "fuel",
+  "fatigue", "entrenchment", "cohesion"
+]);
+
+// Fields managed by the engine — LLM proposals are silently dropped
+const MECHANICAL_FIELDS = new Set(["supply"]);
+
+/**
  * Apply validated state updates from an adjudication to the game state.
  * Returns a new game state object (immutable update).
  *
@@ -426,6 +701,8 @@ export async function adjudicateRebuttal(gameState, playerActions, terrainData, 
  * - Position values from LLM (Excel-style "H4") are normalized to comma format ("7,3")
  * - turnLog.actions is now populated with playerActions
  * - Impossible actions (feasibility="impossible") skip state_updates for that entity
+ * - Numeric fields are normalized (strip "%", parse, clamp 0-100) to prevent NaN
+ * - Supply is mechanically managed — LLM proposals are dropped to prevent double-dipping
  */
 export function applyStateUpdates(gameState, adjudication, playerActions = {}) {
   if (!adjudication?.adjudication?.state_updates) return gameState;
@@ -433,15 +710,15 @@ export function applyStateUpdates(gameState, adjudication, playerActions = {}) {
   const updates = adjudication.adjudication.state_updates;
   const newUnits = gameState.units.map(u => ({ ...u }));
 
-  // Collect entities with "impossible" feasibility — they should have no state changes
+  // Collect entities with "impossible" feasibility — skip state changes for THOSE SPECIFIC UNITS only.
+  // Previous bug: matched on actor, blanket-blocking all units from that actor even if only one had impossible orders.
   const impossibleEntities = new Set();
   const assessments = adjudication.adjudication.feasibility_analysis?.assessments || [];
   for (const a of assessments) {
-    if (a.feasibility === "impossible" && a.actor) {
-      // Mark all units belonging to this actor as having impossible orders
-      for (const u of newUnits) {
-        if (u.actor === a.actor) impossibleEntities.add(u.id);
-      }
+    if (a.feasibility === "impossible" && a.action) {
+      // Match the specific unit named in the assessment's action field (e.g., "Thunder Battery move L7→A5")
+      const matchedUnit = newUnits.find(u => a.action.includes(u.name));
+      if (matchedUnit) impossibleEntities.add(matchedUnit.id);
     }
   }
 
@@ -451,6 +728,9 @@ export function applyStateUpdates(gameState, adjudication, playerActions = {}) {
     // Skip state updates for entities with impossible actions
     if (impossibleEntities.has(entity)) continue;
 
+    // Skip mechanically-managed fields — engine handles these, LLM proposals cause double-dipping
+    if (MECHANICAL_FIELDS.has(attribute)) continue;
+
     // Find and update matching unit
     const unitIdx = newUnits.findIndex(u => u.id === entity);
     if (unitIdx !== -1 && attribute in newUnits[unitIdx]) {
@@ -459,6 +739,11 @@ export function applyStateUpdates(gameState, adjudication, playerActions = {}) {
       // Normalize position values: LLM returns Excel-style ("H4"), state uses comma ("7,3")
       if (attribute === "position" && typeof new_value === "string") {
         normalizedValue = labelToCommaPosition(new_value);
+      }
+
+      // Normalize numeric fields: strip "%", parse to number, clamp 0-100
+      if (NUMERIC_FIELDS.has(attribute)) {
+        normalizedValue = normalizeNumericValue(new_value, newUnits[unitIdx][attribute]);
       }
 
       newUnits[unitIdx] = { ...newUnits[unitIdx], [attribute]: normalizedValue };
@@ -484,7 +769,19 @@ export function applyStateUpdates(gameState, adjudication, playerActions = {}) {
     }
   }
 
-  // Build turn log entry — now includes playerActions
+  // Build turn log entry — only store fields the UI actually displays
+  // (narrative, actions, stateUpdates, moderatorNotes).
+  // feasibilityAnalysis, deEscalationAssessment, citations are available
+  // during review via pendingAdjudication but don't need to persist in the log.
+  // Extract per-actor narratives from actor_perspectives for FOW-safe turn history
+  const actorNarratives = {};
+  const perspectives = adjudication.adjudication.actor_perspectives;
+  if (perspectives) {
+    for (const [actorId, persp] of Object.entries(perspectives)) {
+      if (persp.narrative) actorNarratives[actorId] = persp.narrative;
+    }
+  }
+
   const turnLogEntry = {
     turn: gameState.game.turn,
     timestamp: new Date().toISOString(),
@@ -493,10 +790,8 @@ export function applyStateUpdates(gameState, adjudication, playerActions = {}) {
       narrative: adjudication.adjudication.outcome_determination?.narrative || "",
       outcome_type: adjudication.adjudication.outcome_determination?.outcome_type || "",
       stateUpdates: updates,
-      deEscalationAssessment: deEscalation || {},
-      feasibilityAnalysis: adjudication.adjudication.feasibility_analysis || {},
-      citations: adjudication.adjudication.feasibility_analysis?.assessments?.flatMap(a => a.citations || []) || []
     },
+    actorNarratives,  // per-actor FOW-safe narratives for briefings
     moderatorNotes: ""
   };
 
@@ -525,8 +820,10 @@ export function advanceTurn(gameState) {
   if (scaleTier >= 3) {
     newUnits = gameState.units.map(u => {
       if (u.status === "destroyed" || u.status === "eliminated") return u;
+      // Heal invalid supply values (NaN/undefined/string) before arithmetic
+      const currentSupply = (typeof u.supply === "number" && !isNaN(u.supply)) ? u.supply : 100;
       const consumption = getSupplyConsumption(u);
-      const newSupply = Math.max(0, u.supply - consumption);
+      const newSupply = Math.max(0, currentSupply - consumption);
       return newSupply !== u.supply ? { ...u, supply: newSupply } : u;
     });
   }
@@ -564,7 +861,7 @@ export function advanceTurn(gameState) {
   const turnMs = parseTurnDuration(gameState.scenario?.turnDuration);
   const newEnvironment = progressEnvironment(gameState.environment, turnMs);
 
-  return {
+  let result = {
     ...gameState,
     units: newUnits,
     supplyNetwork: newSupplyNetwork,
@@ -575,6 +872,66 @@ export function advanceTurn(gameState) {
       phase: "planning",
       currentDate: newDate || gameState.game.currentDate || ""
     }
+  };
+
+  // Process reinforcement queue — spawn units whose arrival turn has come
+  result = processReinforcementQueue(result);
+
+  return result;
+}
+
+/**
+ * Process the reinforcement queue: promote scheduled reinforcements whose
+ * arrivalTurn <= current turn into the active units array.
+ * Also handles new actor injection with diplomacy/supply initialization.
+ */
+function processReinforcementQueue(gameState) {
+  const queue = gameState.reinforcementQueue || [];
+  if (queue.length === 0) return gameState;
+
+  const currentTurn = gameState.game.turn;
+  const arriving = queue.filter(r => r.arrivalTurn <= currentTurn);
+  const remaining = queue.filter(r => r.arrivalTurn > currentTurn);
+
+  if (arriving.length === 0) return { ...gameState, reinforcementQueue: remaining };
+
+  const scaleTier = SCALE_TIERS[gameState.game?.scale]?.tier || 3;
+  let newUnits = [...gameState.units];
+  let newActors = [...gameState.scenario.actors];
+  let newDiplomacy = { ...(gameState.diplomacy || {}) };
+  let newSupplyNetwork = { ...(gameState.supplyNetwork || {}) };
+
+  for (const reinf of arriving) {
+    // Add new actor if specified and not already present
+    if (reinf.newActor && !newActors.find(a => a.id === reinf.newActor.id)) {
+      newActors.push(reinf.newActor);
+      // Initialize diplomacy pairs for new actor (tier 4+)
+      if (scaleTier >= 4) {
+        for (const existing of newActors) {
+          if (existing.id === reinf.newActor.id) continue;
+          const key = [existing.id, reinf.newActor.id].sort().join("-");
+          if (!newDiplomacy[key]) {
+            newDiplomacy[key] = { status: "neutral", channels: ["none"], agreements: [] };
+          }
+        }
+      }
+      // Initialize supply network for new actor (tier 3+)
+      if (scaleTier >= 3 && !newSupplyNetwork[reinf.newActor.id]) {
+        newSupplyNetwork[reinf.newActor.id] = { depots: [], resupplyRate: 50 };
+      }
+    }
+
+    // Add the unit to active roster
+    newUnits.push(reinf.unit);
+  }
+
+  return {
+    ...gameState,
+    units: newUnits,
+    scenario: { ...gameState.scenario, actors: newActors },
+    diplomacy: newDiplomacy,
+    supplyNetwork: newSupplyNetwork,
+    reinforcementQueue: remaining,
   };
 }
 
@@ -633,12 +990,35 @@ export async function saveGameState(gameState) {
 }
 
 /**
+ * Migrate old save data to current format.
+ * Backfills weaponRangeKm on units that predate the km-based weapon range system.
+ */
+function migrateGameState(gs) {
+  if (!gs?.units) return gs;
+  for (const unit of gs.units) {
+    if (unit.weaponRangeKm) continue;
+    // Try template-specific range first (searches all eras since saves don't store eraId)
+    if (unit.templateId) {
+      const tpl = findTemplateAcrossEras(unit.templateId);
+      if (tpl?.defaults?.weaponRangeKm) {
+        unit.weaponRangeKm = tpl.defaults.weaponRangeKm;
+        continue;
+      }
+    }
+    // Fallback: generic per-type range
+    unit.weaponRangeKm = WEAPON_RANGE_KM[unit.type] || WEAPON_RANGE_KM.infantry;
+  }
+  return gs;
+}
+
+/**
  * Load game state from server.
  */
 export async function loadGameState(file) {
   const resp = await fetch(`/api/game/load?file=${encodeURIComponent(file)}`);
   if (!resp.ok) throw new Error(`Failed to load game: ${resp.statusText}`);
-  return resp.json();
+  const gs = await resp.json();
+  return migrateGameState(gs);
 }
 
 /**
@@ -647,6 +1027,46 @@ export async function loadGameState(file) {
 export async function listSavedGames() {
   const resp = await fetch("/api/game/list");
   return resp.json();
+}
+
+/**
+ * Delete a game save file (server only allows autosave files).
+ */
+export async function deleteGameSave(file) {
+  const resp = await fetch(`/api/game/delete?file=${encodeURIComponent(file)}`, { method: "DELETE" });
+  return resp.json();
+}
+
+/**
+ * Autosave game state with rolling 5-turn window.
+ * Saves as {gameId}_autosave_t{turn}.json, then prunes old autosaves.
+ */
+export async function autosave(gameState) {
+  const gameId = gameState.game.id;
+  const turn = gameState.game.turn;
+  const filename = `${gameId}_autosave_t${turn}.json`;
+
+  await fetch("/api/game/save", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filename, data: gameState })
+  });
+
+  // Prune old autosaves beyond the 5-turn window
+  const AUTOSAVE_WINDOW = 5;
+  const list = await listSavedGames();
+  const prefix = `${gameId}_autosave_t`;
+  const autosaves = list
+    .filter(g => g.file.startsWith(prefix))
+    .sort((a, b) => {
+      const tA = parseInt(a.file.match(/_t(\d+)\.json$/)?.[1] || "0");
+      const tB = parseInt(b.file.match(/_t(\d+)\.json$/)?.[1] || "0");
+      return tB - tA; // newest first
+    });
+
+  for (const old of autosaves.slice(AUTOSAVE_WINDOW)) {
+    await deleteGameSave(old.file).catch(() => {});
+  }
 }
 
 /**

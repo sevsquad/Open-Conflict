@@ -4,14 +4,17 @@
 // Rolls are scale-agnostic; the LLM contextualizes them.
 // ═══════════════════════════════════════════════════════════════
 
+// Bands compressed for per-unit rolls: with ~10 active units per turn,
+// P(≥1 catastrophe) ≈ 18%, P(any bad-or-worse) ≈ 55%.
+// 40% neutral band keeps most rolls unremarkable.
 const FORTUNE_BANDS = [
-  { min: 1,  max: 5,   descriptor: "Catastrophic misfortune" },
-  { min: 6,  max: 20,  descriptor: "Bad luck" },
-  { min: 21, max: 40,  descriptor: "Unfavorable conditions" },
-  { min: 41, max: 60,  descriptor: "Neutral fortune" },
-  { min: 61, max: 80,  descriptor: "Favorable conditions" },
-  { min: 81, max: 95,  descriptor: "Good fortune" },
-  { min: 96, max: 100, descriptor: "Exceptional luck" },
+  { min: 1,  max: 2,   descriptor: "Catastrophic misfortune" },
+  { min: 3,  max: 8,   descriptor: "Bad luck" },
+  { min: 9,  max: 30,  descriptor: "Unfavorable conditions" },
+  { min: 31, max: 70,  descriptor: "Neutral fortune" },
+  { min: 71, max: 92,  descriptor: "Favorable conditions" },
+  { min: 93, max: 98,  descriptor: "Good fortune" },
+  { min: 99, max: 100, descriptor: "Exceptional luck" },
 ];
 
 const WILDCARD_BANDS = [
@@ -20,8 +23,12 @@ const WILDCARD_BANDS = [
   { min: 96, max: 100, descriptor: "Major unexpected event", triggered: true },
 ];
 
+// Crypto-grade RNG — OS-level entropy via CSPRNG, eliminates
+// sequential correlation issues inherent in Math.random()'s xorshift128+.
 function roll100() {
-  return Math.floor(Math.random() * 100) + 1;
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return (buf[0] % 100) + 1;
 }
 
 function lookupBand(roll, bands) {
@@ -53,6 +60,42 @@ export function generateFortuneRolls(actors) {
   };
 
   return { actorRolls, wildCard };
+}
+
+/**
+ * Generate per-unit fortune rolls for all units with active orders.
+ * Units on HOLD (no orders) get no fortune roll — nothing is happening
+ * where luck matters.
+ *
+ * @param {Array} units - Unit objects (need .id, .actor)
+ * @param {Object} allOrders - { actorId: { unitId: { movementOrder, actionOrder } } }
+ * @returns {{ unitRolls: Object, wildCard: Object }}
+ *   unitRolls: { unitId: { roll, descriptor } }
+ */
+export function generateUnitFortuneRolls(units, allOrders = {}) {
+  const unitRolls = {};
+  for (const unit of units) {
+    const actorOrders = allOrders[unit.actor];
+    const unitOrders = actorOrders?.[unit.id];
+    const hasOrders = unitOrders?.movementOrder || unitOrders?.actionOrder;
+
+    if (hasOrders) {
+      const r = roll100();
+      const band = lookupBand(r, FORTUNE_BANDS);
+      unitRolls[unit.id] = { roll: r, descriptor: band.descriptor };
+    }
+    // Units on HOLD get no roll
+  }
+
+  const wcRoll = roll100();
+  const wcBand = lookupBand(wcRoll, WILDCARD_BANDS);
+  const wildCard = {
+    roll: wcRoll,
+    descriptor: wcBand.descriptor,
+    triggered: wcBand.triggered,
+  };
+
+  return { unitRolls, wildCard };
 }
 
 /**

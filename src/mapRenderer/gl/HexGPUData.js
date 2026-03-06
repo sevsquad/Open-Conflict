@@ -17,6 +17,23 @@ const TERRAIN_TYPES = [
   "jungle", "jungle_hills", "jungle_mountains",
   "boreal", "boreal_hills", "boreal_mountains",
   "tundra", "savanna", "savanna_hills", "mangrove",
+  // Aggregated urban (indices 29-32)
+  "suburban", "urban_commercial", "urban_industrial", "urban_dense_core",
+  // Fine-grained: Buildings (indices 33-42)
+  "bldg_light", "bldg_residential", "bldg_commercial", "bldg_highrise",
+  "bldg_institutional", "bldg_religious", "bldg_industrial", "bldg_fortified",
+  "bldg_ruins", "bldg_station",
+  // Fine-grained: Roads & Rail (indices 43-49)
+  "motorway", "arterial", "street", "alley",
+  "road_footpath", "rail_track", "tram_track",
+  // Fine-grained: Open Paved (indices 50-52)
+  "plaza", "surface_parking", "rail_yard",
+  // Fine-grained: Open Green (indices 53-57)
+  "park", "sports_field", "cemetery", "urban_trees", "allotment",
+  // Fine-grained: Urban Water (indices 58-59)
+  "canal", "dock",
+  // Fine-grained: Other (indices 60-64)
+  "bare_ground", "bridge_deck", "ground_embankment", "underpass", "construction_site",
 ];
 
 const TERRAIN_INDEX = {};
@@ -35,6 +52,7 @@ const FEATURE_TYPES = [
   "cliffs", "ridgeline", "treeline",
   "slope_steep", "slope_extreme",
   "building_dense",
+  "courtyard", "metro_entrance",  // indices 30-31 (maxes out uint32 bitmask)
 ];
 
 const FEATURE_BIT = {};
@@ -129,75 +147,115 @@ function smoothElevations(cells, cols, rows) {
   return current;
 }
 
-// Build the instance Float32Array from mapData
-// Returns { instanceData: Float32Array, cellCount: number, smoothedElevMap: Map }
-export function buildInstanceData(mapData) {
-  const { cols, rows, cells } = mapData;
-  const cellCount = cols * rows;
+// Tile size for viewport culling — hexes per tile edge.
+// Each tile is a TILE_SIZE × TILE_SIZE rectangular block of hexes.
+export const TILE_SIZE = 16;
+
+// Pack instance data for a single hex into the Float32Array at the given offset.
+// Reads neighbor data from the full grid (neighbors can be outside the tile).
+function packHexInstance(data, offset, c, r, cells, cols, rows, smoothedElev) {
+  const key = `${c},${r}`;
+  const cell = cells[key];
+
+  // col, row
+  data[offset + 0] = c;
+  data[offset + 1] = r;
+
+  // terrainIndex
+  data[offset + 2] = cell ? (TERRAIN_INDEX[cell.terrain] ?? -1) : -1;
+
+  // elevation — use smoothed value for clean contour rendering
+  data[offset + 3] = smoothedElev.get(key) ?? 0;
+
+  // featureMask
+  let mask = 0;
+  if (cell) {
+    for (const f of getFeats(cell)) {
+      if (FEATURE_BIT[f] !== undefined) mask |= FEATURE_BIT[f];
+    }
+  }
+  data[offset + 4] = mask;
+
+  // infraIndex
+  data[offset + 5] = cell ? (INFRA_INDEX[cell.infrastructure] || 0) : 0;
+
+  // neighborTerrains[6] at offsets 6-11
+  const neighbors = getNeighbors(c, r);
+  for (let i = 0; i < 6; i++) {
+    const [nc, nr] = neighbors[i];
+    if (nc >= 0 && nc < cols && nr >= 0 && nr < rows) {
+      const nCell = cells[`${nc},${nr}`];
+      data[offset + 6 + i] = nCell ? (TERRAIN_INDEX[nCell.terrain] ?? -1) : -1;
+    } else {
+      data[offset + 6 + i] = -1;
+    }
+  }
+
+  // neighborElevations[6] at offsets 12-17
+  for (let i = 0; i < 6; i++) {
+    const [nc, nr] = neighbors[i];
+    if (nc >= 0 && nc < cols && nr >= 0 && nr < rows) {
+      data[offset + 12 + i] = smoothedElev.get(`${nc},${nr}`) ?? -10000;
+    } else {
+      data[offset + 12 + i] = -10000;
+    }
+  }
+}
+
+// Build instance data for a rectangular tile of hexes.
+// colMin/rowMin inclusive, colMax/rowMax exclusive.
+// Neighbor lookups reference the full grid (cells, cols, rows).
+export function buildTileInstanceData(cells, cols, rows, smoothedElev, colMin, colMax, rowMin, rowMax) {
+  const tileCols = colMax - colMin;
+  const tileRows = rowMax - rowMin;
+  const cellCount = tileCols * tileRows;
   const data = new Float32Array(cellCount * INSTANCE_FLOATS);
 
-  // Pre-smooth elevations for GPU upload
-  const smoothedElev = smoothElevations(cells, cols, rows);
-
   let offset = 0;
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const key = `${c},${r}`;
-      const cell = cells[key];
-
-      // col, row
-      data[offset + 0] = c;
-      data[offset + 1] = r;
-
-      // terrainIndex
-      const terrainIdx = cell ? (TERRAIN_INDEX[cell.terrain] ?? -1) : -1;
-      data[offset + 2] = terrainIdx;
-
-      // elevation — use smoothed value for clean contour rendering
-      data[offset + 3] = smoothedElev.get(key) ?? 0;
-
-      // featureMask
-      let mask = 0;
-      if (cell) {
-        for (const f of getFeats(cell)) {
-          if (FEATURE_BIT[f] !== undefined) mask |= FEATURE_BIT[f];
-        }
-      }
-      // Store as float (safe for up to 2^24 integer precision in float32)
-      data[offset + 4] = mask;
-
-      // infraIndex
-      const infra = cell ? (INFRA_INDEX[cell.infrastructure] || 0) : 0;
-      data[offset + 5] = infra;
-
-      // neighborTerrains[6] at offsets 6-11
-      const neighbors = getNeighbors(c, r);
-      for (let i = 0; i < 6; i++) {
-        const [nc, nr] = neighbors[i];
-        if (nc >= 0 && nc < cols && nr >= 0 && nr < rows) {
-          const nCell = cells[`${nc},${nr}`];
-          data[offset + 6 + i] = nCell ? (TERRAIN_INDEX[nCell.terrain] ?? -1) : -1;
-        } else {
-          data[offset + 6 + i] = -1; // out of bounds
-        }
-      }
-
-      // neighborElevations[6] at offsets 12-17 — use smoothed values
-      for (let i = 0; i < 6; i++) {
-        const [nc, nr] = neighbors[i];
-        if (nc >= 0 && nc < cols && nr >= 0 && nr < rows) {
-          const nKey = `${nc},${nr}`;
-          data[offset + 12 + i] = smoothedElev.get(nKey) ?? -10000;
-        } else {
-          data[offset + 12 + i] = -10000; // sentinel: no neighbor
-        }
-      }
-
+  for (let r = rowMin; r < rowMax; r++) {
+    for (let c = colMin; c < colMax; c++) {
+      packHexInstance(data, offset, c, r, cells, cols, rows, smoothedElev);
       offset += INSTANCE_FLOATS;
     }
   }
 
-  return { instanceData: data, cellCount, smoothedElevMap: smoothedElev };
+  return { instanceData: data, cellCount };
+}
+
+// Build the full instance Float32Array from mapData (legacy single-buffer path).
+// Returns { instanceData: Float32Array, cellCount: number, smoothedElevMap: Map }
+export function buildInstanceData(mapData) {
+  const { cols, rows, cells } = mapData;
+  const smoothedElev = smoothElevations(cells, cols, rows);
+  const { instanceData, cellCount } = buildTileInstanceData(
+    cells, cols, rows, smoothedElev, 0, cols, 0, rows
+  );
+  return { instanceData, cellCount, smoothedElevMap: smoothedElev };
+}
+
+// Build all tiles for the grid. Returns { tiles, smoothedElevMap }.
+// Each tile: { instanceData, cellCount, colMin, colMax, rowMin, rowMax }
+export function buildAllTiles(mapData) {
+  const { cols, rows, cells } = mapData;
+  const smoothedElev = smoothElevations(cells, cols, rows);
+  const tiles = [];
+
+  for (let tileRow = 0; tileRow * TILE_SIZE < rows; tileRow++) {
+    for (let tileCol = 0; tileCol * TILE_SIZE < cols; tileCol++) {
+      const colMin = tileCol * TILE_SIZE;
+      const colMax = Math.min(colMin + TILE_SIZE, cols);
+      const rowMin = tileRow * TILE_SIZE;
+      const rowMax = Math.min(rowMin + TILE_SIZE, rows);
+
+      const { instanceData, cellCount } = buildTileInstanceData(
+        cells, cols, rows, smoothedElev, colMin, colMax, rowMin, rowMax
+      );
+
+      tiles.push({ instanceData, cellCount, colMin, colMax, rowMin, rowMax });
+    }
+  }
+
+  return { tiles, smoothedElevMap: smoothedElev };
 }
 
 // Build a feature bitmask from a Set of active feature names
@@ -221,6 +279,78 @@ export function computeElevationRange(mapData) {
   }
   if (min === Infinity) return { min: 0, max: 1000 };
   return { min, max };
+}
+
+// Build instance data for strategic hexes.
+// Same 18-float layout as fine hexes, but:
+//   - col/row are strategic grid coordinates
+//   - terrainIndex is the dominant terrain (used for neighbor blending)
+//   - elevation is the mean elevation
+//   - infraIndex is REPURPOSED as the atlas tile index
+//   - neighbor data comes from adjacent strategic hexes
+// Returns { instanceData: Float32Array, cellCount: number }
+export function buildStrategicInstanceData(strategicGrid, tileIndexMap) {
+  const { cols, rows, cells } = strategicGrid;
+  const cellCount = Object.keys(cells).length;
+  const data = new Float32Array(cellCount * INSTANCE_FLOATS);
+
+  let offset = 0;
+  // Iterate in row-major order matching tileIndexMap ordering
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const key = `${c},${r}`;
+      const cell = cells[key];
+      if (!cell) continue;
+
+      // col, row
+      data[offset + 0] = c;
+      data[offset + 1] = r;
+
+      // terrainIndex — dominant terrain for neighbor blending
+      data[offset + 2] = TERRAIN_INDEX[cell.terrain] ?? -1;
+
+      // elevation — mean
+      data[offset + 3] = cell.elevation || 0;
+
+      // featureMask — aggregated features
+      let mask = 0;
+      if (cell.features) {
+        for (const f of cell.features) {
+          if (FEATURE_BIT[f] !== undefined) mask |= FEATURE_BIT[f];
+        }
+      }
+      data[offset + 4] = mask;
+
+      // infraIndex REPURPOSED as atlas tile index
+      const tileIdx = tileIndexMap.get(key);
+      data[offset + 5] = tileIdx !== undefined ? tileIdx : 0;
+
+      // Neighbor terrains and elevations (from strategic grid neighbors)
+      const neighbors = getNeighbors(c, r);
+      for (let i = 0; i < 6; i++) {
+        const [nc, nr] = neighbors[i];
+        if (nc >= 0 && nc < cols && nr >= 0 && nr < rows) {
+          const nCell = cells[`${nc},${nr}`];
+          data[offset + 6 + i] = nCell ? (TERRAIN_INDEX[nCell.terrain] ?? -1) : -1;
+        } else {
+          data[offset + 6 + i] = -1;
+        }
+      }
+      for (let i = 0; i < 6; i++) {
+        const [nc, nr] = neighbors[i];
+        if (nc >= 0 && nc < cols && nr >= 0 && nr < rows) {
+          const nCell = cells[`${nc},${nr}`];
+          data[offset + 12 + i] = nCell ? (nCell.elevation || 0) : -10000;
+        } else {
+          data[offset + 12 + i] = -10000;
+        }
+      }
+
+      offset += INSTANCE_FLOATS;
+    }
+  }
+
+  return { instanceData: new Float32Array(data.buffer, 0, offset), cellCount: offset / INSTANCE_FLOATS };
 }
 
 export { TERRAIN_TYPES, TERRAIN_INDEX, FEATURE_TYPES, FEATURE_BIT, INFRA_TYPES, INFRA_INDEX };

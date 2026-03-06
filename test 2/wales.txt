@@ -1,0 +1,76 @@
+# TERRAIN MAP
+# 20×23 cells, 0.5km/cell
+# Center: 51.8800, -3.7500
+# Bounds: S51.8351 N51.9249 W-3.8228 E-3.6772
+
+## HOW TO READ THIS DOCUMENT
+This is a hex-grid terrain map encoded for token efficiency.
+COORDINATES: Columns are labeled A-Z, AA-AZ, BA-BZ, etc. (left=west). Rows are numbered 1-N (row 1=north). Cell "M12" = column M, row 12.
+TERRAIN GRID: Each row is RLE-encoded using single-char codes from the LEGEND.
+  RLE format: a number followed by a letter means that letter repeats. 5D = 5 consecutive Deep Water cells. A bare letter means 1 cell.
+  Example: 3|5D2CR means row 3 has 5× D (Deep Water), 2× C (Coastal), 1× R (Forest).
+ELEVATION BANDS: Cells grouped by altitude range. r12[A-M] means row 12, columns A through M fall in that band.
+FEATURES: Same r[cols] notation for widespread features, or individual coords (e.g. E7) for sparse ones.
+  Feature names in parentheses: highway(Main Rd) means that feature is named "Main Rd".
+
+## LEGEND (single-char terrain codes, RLE: 5D = 5 consecutive D)
+# W=Wetland L=Light Veg F=Farmland R=Forest H=Highland G=Forested Hills
+
+## TERRAIN (row 1=north, left=west)
+ 1|2F15LRGL
+ 2|F16LG2L
+ 3|18L2G
+ 4|G17L2G
+ 5|18L2G
+ 6|6L4F8L2G
+ 7|G4L2G2F5L2H3LG
+ 8|GL2G3LG5L3HWHLH
+ 9|3LG9L3H2W2H
+10|9LH2L4H2W2H
+11|2G5LHL2HL3HW4H
+12|LG4L8H2W4H
+13|6L9HW4H
+14|5L15H
+15|5L15H
+16|5L2HLH3L7HL
+17|3H2L3H4L7HL
+18|L2HL3H8L3H2L
+19|L6H3LW5L3HL
+20|5H15L
+21|4H10LH5L
+22|L2H11LH5L
+23|14L2H4L
+
+## ELEVATION: 150m to 772m
+50-200m: r5[A-B,D-E] r6[A-C] r7[A-C] r8[A-D] r9[A] r11[A]
+200-500m: r1[A-T] r2[A-T] r3[A-T] r4[A-T] r5[C,F-T] r6[D-T] r7[D-N,Q-T] r8[E-M,S] r9[B-M] r10[A-I,K-L] r11[B-G,I,L] r12[A-F] r13[A-F] r14[A-E] r15[A-E] r16[A-E,H,J-L,T] r17[D-E,I-L,T] r18[A,D,H-L,N-O,S-T] r19[A,H-P,T] r20[F-T] r21[E-N,P-T] r22[A,D-N,P-T] r23[A-N,Q-T]
+500-1000m: r7[O-P] r8[N-R,T] r9[N-T] r10[J,M-T] r11[H,J-K,M-T] r12[G-T] r13[G-T] r14[F-T] r15[F-T] r16[F-G,I,M-S] r17[A-C,F-H,M-S] r18[B-C,E-G,M,P-R] r19[B-G,Q-S] r20[A-E] r21[A-D,O] r22[B-C,O] r23[O-P]
+
+## FEATURES
+rough_terrain (500): r1[A,A,C,C,T,T] r2[A,A-B,B,G,G,I,I,P,P-Q,Q] r3[B,B,H,H-I,I,P,P,R,R] r4[B,B,D,D,F,F-G,G-H,H,L,L,P,P,R,R] r5[D,D,F,F,H,H-I,I-J,J-K,K] r6[A,A-B,B,D,D-E,E-F,F,I,I-J,J-K,K-L,L,N,N] r7[D,D-E,E,H,H-I,I-J,J-K,K-L,L-M,M-N,N-O,O-P,P-Q,Q-R,R-S,S] r8[B,B,E,E-F,F-G,G,I,I-J,J-K,K-L,L-M,M-N,N,P,P-Q,Q-R,R-S,S-T,T] r9[B,B,E,E-F,F-G,G-H,H-I,I-J,J-K,K-L,L-M,M-N,N-O,O-P,P-Q,Q,S,S-T,T] r10[E,E-F,F-G,G-H,H-I,I-J,J-K,K-L,L-M,M-N,N-O,O-P,P,T,T] r11[E,E-F,F-G,G-H,H-I,I-J,J-K,K-L,L-M,M-N,N-O,O-P,P-Q,Q,T,T] r12[D,D-E,E-F,F,I,I-J,J-K,K-L,L-M,M-N,N-O,O,Q,Q,T,T] r13[D,D-E,E-F,F,J,J,L,L-M,M-N,N-O,O-P,P-Q,Q-R,R] r14[B,B-C,C-D,D-E,E-F,F-G,G-H,H-I,I,K,K-L,L-M,M-N,N,P,P-Q,Q-R,R,T,T] r15[A,A-B,B-C,C-D,D-E,E-F,F,H,H-I,I,K,K-L,L,N,N,Q,Q-R,R] r16[A,A-B,B-C,C-D,D-E,E-F,F-G,G-H,H-I,I-J,J-K,K,M,M-N,N-O,O-P,P-Q,Q-R,R,T,T] r17[D,D-E,E-F,F-G,G-H,H-I,I-J,J,Q,Q-R,R-S,S-T,T] r18[C,C-D,D-E,E,G,G-H,H-I,I,Q,Q-R,R-S,S-T,T] r19[B,B-C,C-D,D,G,G-H,H,R,R-S,S-T,T] r20[B,B,F,F-G,G-H,H,N,N,Q,Q-R,R,T,T] r21[C,C-D,D,F,F-G,G-H,H-I,I-J,J,N,N,R,R-S,S-T,T] r22[A,A-B,B-C,C,E,E-F,F-G,G,I,I-J,J,N,N-O,O,R,R-S,S-T,T] r23[C,C,F,F-G,G-H,H,N,N-O,O,Q,Q,S,S-T,T]
+elevation_advantage (196): r1[A,A-B,B-C,C] r2[A,A] r3[I,I-J,J] r4[H,H-I,I-J,J-K,K-L,L] r5[I,I,L,L] r6[N,N,T,T] r7[O,O-P,P] r8[O,O-P,P,T,T] r9[O,O-P,P] r10[F,F-G,G,J,J,O,O-P,P] r11[G,G-H,H,J,J-K,K,P,P-Q,Q] r12[F,F-G,G-H,H,J,J,L,L-M,M-N,N-O,O-P,P-Q,Q] r13[F,F-G,G-H,H,J,J-K,K-L,L-M,M,O,O-P,P-Q,Q-R,R] r14[F,F-G,G,I,I-J,J-K,K,O,O-P,P-Q,Q] r15[F,F-G,G,J,J,Q,Q-R,R] r16[A,A-B,B,F,F-G,G,Q,Q-R,R] r17[A,A-B,B-C,C,F,F-G,G,Q,Q-R,R] r18[B,B,F,F-G,G,Q,Q-R,R] r19[C,C,F,F-G,G,R,R-S,S] r20[B,B-C,C] r21[C,C,O,O] r22[O,O] r23[O,O-P,P-Q,Q]
+trail (140): r1[B,B-C,C-D,D-E,E-F,F-G,G,Q,Q-R,R] r2[B,B-C,C-D,D,Q,Q-R,R-S,S-T,T] r3[B,B-C,C-D,D,G,G,R,R] r4[C,C-D,D,F,F,S,S-T,T] r5[C,C-D,D-E,E,G,G-H,H,S,S-T,T] r6[A,A,D,D-E,E-F,F-G,G-H,H-I,I-J,J,S,S-T,T] r7[C,C-D,D-E,E-F,F,K,K-L,L,S,S-T,T] r8[D,D-E,E,K,K-L,L] r9[B,B-C,C-D,D-E,E,L,L] r10[B,B-C,C,L,L] r11[C,C,L,L] r12[A,A-B,B-C,C] r13[A,A-B,B-C,C]
+cliffs (100): r7[L,L] r8[M,M] r9[E,E-F,F,I,I,N,N] r10[F,F-G,G,J,J,L,L,O,O,Q,Q] r11[E,E-F,F,I,I,K,K-L,L-M,M,O,O-P,P] r12[F,F-G,G,J,J,M,M-N,N,P,P] r13[D,D-E,E] r14[E,E-F,F] r15[D,D-E,E,R,R] r16[D,D-E,E-F,F,S,S] r17[C,C-D,D-E,E,G,G,R,R-S,S] r18[F,F,H,H,R,R-S,S-T,T] r19[S,S] r20[T,T]
+slope_steep (82): r7[L,L] r8[M,M] r9[I,I,N,N] r10[J,J,O,O,Q,Q] r11[E,E-F,F,I,I,L,L-M,M,O,O-P,P] r12[F,F-G,G,J,J,M,M,P,P] r13[D,D-E,E] r14[E,E-F,F] r15[D,D-E,E,R,R] r16[D,D-E,E-F,F,S,S] r17[C,C,E,E,G,G,R,R-S,S] r18[F,F,H,H,S,S-T,T] r19[S,S] r20[T,T]
+treeline (44): r1[R,R-S,S] r2[R,R] r3[S,S-T,T] r4[A,A,S,S] r5[S,S] r6[S,S-T,T] r7[A,A,F,F-G,G,T,T] r8[A,A,C,C-D,D,H,H] r9[D,D] r11[A,A-B,B] r12[B,B]
+river(River Usk, Afon Hydfer, Afon Sawdde, Afon Twrch) (38): r1[O] r2[N,S-T] r3[N,S] r4[M-N,S] r5[N-P,S] r6[A-B,O] r7[A-B,O] r11[O] r12[N] r13[N-O] r14[M] r15[M] r16[K-L] r17[K-L] r18[I-J] r19[I] r20[G-H] r21[G-H] r22[G] r23[G]
+ridgeline (8): r10[O,O] r15[G,G,R,R] r18[F,F]
+saddle (6): r12[N,N] r21[G,G,S,S]
+dam: M10, M10, L11
+hedgerow: I7, I7
+town(Llanddeusant): G5
+
+## SUMMARY
+Light Veg        278 cells (60.4%)
+Highland         139 cells (30.2%)
+Forested Hills   23 cells (5.0%)
+Wetland          10 cells (2.2%)
+Farmland         9 cells (2.0%)
+Forest           1 cells (0.2%)
+
+## NAMED FEATURES
+river: Afon Twrch (19 cells)
+river: River Usk (10 cells)
+river: Afon Hydfer (5 cells)
+river: Afon Sawdde (4 cells)
+town: Llanddeusant (1 cells)

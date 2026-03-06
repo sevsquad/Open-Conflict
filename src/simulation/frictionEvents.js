@@ -20,8 +20,8 @@ const FRICTION_TABLE = [
     requiresUnitTypes: null, requiresWeather: null, positive: false,
     template: "{actor}'s encrypted communications system has a key synchronization failure. Sensitive traffic is delayed while units revert to backup codes." },
   { id: "comms_intercept", tiers: [2, 5], category: "communications", severity: "moderate",
-    requiresUnitTypes: null, requiresWeather: null, positive: true,
-    template: "{actor}'s signals intelligence unit intercepts enemy radio traffic, revealing the general disposition of opposing forces." },
+    requiresUnitTypes: null, requiresWeather: null, positive: true, revealsDetection: true,
+    template: "{actor}'s signals intelligence unit intercepts enemy radio traffic, providing intelligence on enemy forces in their area of observation." },
 
   // ── Equipment ──
   { id: "vehicle_breakdown", tiers: [2, 4], category: "equipment", severity: "minor",
@@ -51,8 +51,8 @@ const FRICTION_TABLE = [
     requiresUnitTypes: null, requiresWeather: null, positive: true,
     template: "A junior leader in {actor}'s force shows exceptional initiative, exploiting a local opportunity that was not part of the original plan." },
   { id: "deserters_intel", tiers: [2, 5], category: "personnel", severity: "moderate",
-    requiresUnitTypes: null, requiresWeather: null, positive: true,
-    template: "Enemy deserters/prisoners provide {actor} with useful intelligence about opposing force dispositions and morale." },
+    requiresUnitTypes: null, requiresWeather: null, positive: true, revealsDetection: true,
+    template: "Enemy deserters/prisoners provide {actor} with intelligence about nearby opposing forces they are aware of." },
 
   // ── Logistics ──
   { id: "supply_delay", tiers: [3, 6], category: "logistics", severity: "minor",
@@ -122,7 +122,18 @@ const FRICTION_TABLE = [
     template: "A unit in {actor}'s force makes a navigation error and arrives at the wrong location, requiring correction." },
   { id: "enemy_blunder", tiers: [2, 5], category: "intelligence", severity: "moderate",
     requiresUnitTypes: null, requiresWeather: null, positive: true,
-    template: "{actor}'s forces observe what appears to be an enemy coordination failure or blunder, creating a brief window of opportunity." },
+    template: "{actor}'s forces observe what appears to be an enemy coordination failure or blunder among detected enemy units, creating a brief window of opportunity." },
+
+  // ── Detection-Granting Events (FOW mechanic) ──
+  { id: "civilian_tip", tiers: [1, 4], category: "intelligence", severity: "moderate",
+    requiresUnitTypes: null, requiresWeather: null, positive: true, revealsDetection: true,
+    template: "Local civilians report enemy military activity to {actor}'s forces, revealing the location of a previously unknown enemy unit." },
+  { id: "signals_intercept", tiers: [3, 6], category: "intelligence", severity: "moderate",
+    requiresUnitTypes: null, requiresWeather: null, positive: true, revealsDetection: true,
+    template: "{actor}'s electronic warfare assets intercept enemy communications, pinpointing the location and identity of an enemy formation." },
+  { id: "aerial_observation", tiers: [2, 5], category: "intelligence", severity: "moderate",
+    requiresUnitTypes: ["air", "recon"], requiresWeather: ["clear", "overcast"], positive: true, revealsDetection: true,
+    template: "{actor}'s aerial reconnaissance spots enemy forces that were previously concealed, upgrading detection to full identification." },
 ];
 
 // ── Selection logic ──
@@ -167,9 +178,12 @@ export function generateFrictionEvents(gameState, scaleTier) {
 
   if (eligible.length === 0) return { events: [] };
 
-  // Determine count: 1d6 → 1-2=one, 3-5=two, 6=three
+  // Determine count: 1d6 → 1-3=one, 4-5=two, 6=three
+  // Reduced from original (1-2=one, 3-5=two, 6=three) because fortune rolls
+  // already inject ~30% negative outcomes per unit — stacking friction on top
+  // created too many "things going wrong" per turn.
   const countRoll = roll1d6();
-  const targetCount = countRoll <= 2 ? 1 : countRoll <= 5 ? 2 : 3;
+  const targetCount = countRoll <= 3 ? 1 : countRoll <= 5 ? 2 : 3;
   const count = Math.min(targetCount, eligible.length);
 
   // Separate positive and negative events
@@ -179,11 +193,11 @@ export function generateFrictionEvents(gameState, scaleTier) {
   const selected = [];
   const usedIds = new Set();
 
-  // Ensure at least one negative event
-  if (negatives.length > 0) {
-    const neg = pickRandom(negatives);
-    selected.push(neg);
-    usedIds.add(neg.id);
+  // Pick first event randomly (no longer guaranteeing negative — let the dice decide)
+  if (eligible.length > 0) {
+    const first = pickRandom(eligible);
+    selected.push(first);
+    usedIds.add(first.id);
   }
 
   // Fill remaining slots
@@ -217,8 +231,203 @@ export function generateFrictionEvents(gameState, scaleTier) {
       category: evt.category,
       positive: evt.positive,
       affectedActor,
+      revealsDetection: evt.revealsDetection || false,
     };
   });
 
   return { events };
+}
+
+// ── Per-Unit Friction Assignment ──────────────────────────────
+
+/**
+ * Generate per-unit friction events. Each active unit has a 1-in-6 chance
+ * of getting a friction event. Events are filtered to be relevant to
+ * that specific unit's type.
+ *
+ * Some events remain actor-global (weather, political). These are returned
+ * separately.
+ *
+ * @param {Object} gameState - Current game state
+ * @param {number} scaleTier - Current scale tier number
+ * @param {Object} allOrders - { actorId: { unitId: { movementOrder, actionOrder } } }
+ * @param {Set} recentEventIds - event IDs used in last 2-3 turns (for dedup)
+ * @returns {{ unitEvents: Object, globalEvents: Array }}
+ *   unitEvents: { unitId: { id, text, severity, category, positive } }
+ *   globalEvents: [{ id, text, severity, category, positive, affectedActor }]
+ */
+export function generateUnitFrictionEvents(gameState, scaleTier, allOrders = {}, recentEventIds = new Set()) {
+  const actors = gameState.scenario?.actors || [];
+  const units = gameState.units || [];
+  const weather = gameState.environment?.weather || "clear";
+
+  // Global event categories — these affect entire actors, not specific units
+  const GLOBAL_CATEGORIES = new Set(["weather", "political"]);
+
+  // Filter eligible events for this game state
+  const allEligible = FRICTION_TABLE.filter(evt => {
+    if (scaleTier < evt.tiers[0] || scaleTier > evt.tiers[1]) return false;
+    if (evt.requiresWeather && !evt.requiresWeather.includes(weather)) return false;
+    // Exclude events used in recent turns to prevent repetition
+    if (recentEventIds.has(evt.id)) return false;
+    return true;
+  });
+
+  const globalEligible = allEligible.filter(e => GLOBAL_CATEGORIES.has(e.category));
+  const unitEligible = allEligible.filter(e => !GLOBAL_CATEGORIES.has(e.category));
+
+  const unitEvents = {};
+  const usedIds = new Set();
+
+  // Per-unit friction: 1-in-6 chance for each active unit
+  for (const unit of units) {
+    const actorOrders = allOrders[unit.actor];
+    const unitOrders = actorOrders?.[unit.id];
+    const hasOrders = unitOrders?.movementOrder || unitOrders?.actionOrder;
+    if (!hasOrders) continue; // HOLD units don't get friction
+
+    // 1-in-10 chance per active unit (reduced from 1-in-6 to avoid
+    // stacking with fortune rolls which already inject negative outcomes)
+    if (Math.floor(Math.random() * 10) !== 0) continue;
+
+    // Filter to events relevant to this unit's type
+    const relevantEvents = unitEligible.filter(evt => {
+      if (usedIds.has(evt.id)) return false;
+      if (evt.requiresUnitTypes && !evt.requiresUnitTypes.includes(unit.type)) return false;
+      return true;
+    });
+
+    if (relevantEvents.length === 0) continue;
+
+    const evt = pickRandom(relevantEvents);
+    usedIds.add(evt.id);
+
+    const actorName = actors.find(a => a.id === unit.actor)?.name || unit.actor;
+    const text = evt.template
+      .replace(/\{actor\}/g, actorName)
+      .replace(/\{unit\}/g, unit.name);
+
+    unitEvents[unit.id] = {
+      id: evt.id,
+      text,
+      severity: evt.severity,
+      category: evt.category,
+      positive: evt.positive,
+    };
+  }
+
+  // Global friction: one roll for the whole turn, 1-in-6 chance
+  // (reduced from 1-in-3 to reduce friction-fortune overlap)
+  const globalEvents = [];
+  if (globalEligible.length > 0 && roll1d6() === 1) {
+    const pool = globalEligible.filter(e => !usedIds.has(e.id));
+    if (pool.length > 0) {
+      const evt = pickRandom(pool);
+      const affectedActor = actors.length > 0 ? pickRandom(actors).id : null;
+      const actorName = actors.find(a => a.id === affectedActor)?.name || "unknown";
+      const text = evt.template
+        .replace(/\{actor\}/g, actorName)
+        .replace(/\{unit\}/g, "a forward unit");
+
+      globalEvents.push({
+        id: evt.id,
+        text,
+        severity: evt.severity,
+        category: evt.category,
+        positive: evt.positive,
+        affectedActor,
+      });
+    }
+  }
+
+  return { unitEvents, globalEvents };
+}
+
+
+// ── Detection-Granting Mechanic ──────────────────────────────
+
+/**
+ * When a friction event with revealsDetection:true fires, pick an
+ * undetected enemy unit to reveal at Identified tier.
+ *
+ * Priority: Contact-tier enemies first (upgrade to Identified),
+ * then fully undetected enemies. Prefers enemies closer to the
+ * affected actor's units.
+ *
+ * @param {string} actorId - the actor gaining intel
+ * @param {Object} gameState - current game state
+ * @param {Object|null} visibilityState - from computeDetection()
+ * @returns {{ revealedUnitId: string|null, revealedUnit: Object|null }}
+ */
+export function pickUnitToReveal(actorId, gameState, visibilityState) {
+  const actorVis = visibilityState?.actorVisibility?.[actorId];
+  const allUnits = gameState.units || [];
+
+  // Enemies not owned by this actor
+  const enemies = allUnits.filter(u =>
+    u.actor !== actorId &&
+    u.status !== "destroyed" &&
+    u.status !== "eliminated"
+  );
+
+  if (enemies.length === 0) return { revealedUnitId: null, revealedUnit: null };
+
+  const detectedSet = actorVis?.detectedUnits || new Set();
+  const contactSet = actorVis?.contactUnits || new Set();
+
+  // Contact-tier enemies (upgrade to Identified)
+  const contacts = enemies.filter(u => contactSet.has(u.id) && !detectedSet.has(u.id));
+  // Fully undetected enemies
+  const undetected = enemies.filter(u => !detectedSet.has(u.id) && !contactSet.has(u.id));
+
+  // Prefer contacts first (they already have partial info), then undetected
+  const pool = contacts.length > 0 ? contacts : undetected;
+  if (pool.length === 0) return { revealedUnitId: null, revealedUnit: null };
+
+  // Pick randomly from the pool
+  const revealed = pool[Math.floor(Math.random() * pool.length)];
+  return { revealedUnitId: revealed.id, revealedUnit: revealed };
+}
+
+
+/**
+ * Apply detection reveals from friction events to the visibility state.
+ * Call this after generating friction events, before adjudication.
+ *
+ * @param {Array} frictionEvents - generated friction events (with revealsDetection flag)
+ * @param {Object} gameState
+ * @param {Object} visibilityState - mutable — will be modified in place
+ * @returns {Array<{actorId, unitId, unitName, eventId}>} list of reveals for prompt injection
+ */
+export function applyDetectionReveals(frictionEvents, gameState, visibilityState) {
+  const reveals = [];
+
+  for (const evt of frictionEvents) {
+    if (!evt.revealsDetection || !evt.affectedActor) continue;
+
+    const { revealedUnitId, revealedUnit } = pickUnitToReveal(
+      evt.affectedActor, gameState, visibilityState
+    );
+
+    if (!revealedUnitId) continue;
+
+    // Upgrade to Identified tier in visibility state
+    const actorVis = visibilityState?.actorVisibility?.[evt.affectedActor];
+    if (actorVis) {
+      if (!actorVis.detectedUnits) actorVis.detectedUnits = new Set();
+      actorVis.detectedUnits.add(revealedUnitId);
+      // Remove from contact tier if present (now fully identified)
+      if (actorVis.contactUnits) actorVis.contactUnits.delete(revealedUnitId);
+    }
+
+    reveals.push({
+      actorId: evt.affectedActor,
+      unitId: revealedUnitId,
+      unitName: revealedUnit.name,
+      eventId: evt.id,
+      eventText: evt.text,
+    });
+  }
+
+  return reveals;
 }

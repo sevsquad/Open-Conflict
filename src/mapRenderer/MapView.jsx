@@ -9,7 +9,7 @@ import HexGLRenderer from "./gl/HexGLRenderer.js";
 import LineRenderer from "./gl/LineRenderer.js";
 import { buildLinearNetworks } from "./RoadNetwork.js";
 import { buildNameGroups, drawNameLabels, drawCoordLabels } from "./overlays/LabelOverlay.js";
-import { drawUnits, parseUnitPosition } from "./overlays/UnitOverlay.js";
+import { drawUnits, drawFowOverlay, parseUnitPosition } from "./overlays/UnitOverlay.js";
 import { drawHoverHighlight, drawSelectionHighlight } from "./overlays/SelectionOverlay.js";
 import {
   createViewport, screenToCell, zoomAtPoint, panViewport,
@@ -18,6 +18,7 @@ import {
 import { cellPixelsToHexSize, hexDistance, hexToScreen, SQRT3 } from "./HexMath.js";
 import { computeElevationRange } from "./gl/HexGPUData.js";
 import { buildContourLabelData, drawContourLabels } from "./overlays/ContourLabels.js";
+import { generateStrategicAtlas } from "./gl/StrategicAtlas.js";
 
 const CLICK_THRESHOLD = 5;
 const BG_COLOR = "#1A2535";
@@ -34,8 +35,13 @@ const MapView = forwardRef(function MapView({
   selectedUnitId = null,
   ghostUnit = null,
   isSetupMode = false,
-  unitOverlayOptions = null,    // { showFrontLines: bool, ... } passed to drawUnits
+  unitOverlayOptions = null,    // { showFrontLines: bool, fowMode: {...} } passed to drawUnits
   cellSizeKm = null,            // km per hex — enables scale bar and distance labels
+  movePath = null,               // array of {col, row} for route visualization during targeting
+  proposedMoves = null,          // array of { from: "col,row", to: "col,row", color, unitName } for review phase
+  fineMapData = null,            // fine-resolution hex data for atlas painting (dual-res mode)
+  strategicGrid = null,          // from buildStrategicGrid() — enables strategic mode
+  strategicMode = false,         // true = render strategic hexes, false = render fine hexes
   style = {},
 }, ref) {
   const glCanvasRef = useRef(null);
@@ -51,6 +57,8 @@ const MapView = forwardRef(function MapView({
   const elevRangeRef = useRef(null);
   const smoothedElevRef = useRef(null);
   const contourLabelRef = useRef(null);
+  const elevBandsRef = useRef(null);
+  const strategicReadyRef = useRef(false); // true when strategic data is uploaded to GPU
   const [hovCell, setHovCell] = useState(null);
   const [redrawTick, setRedrawTick] = useState(0);
   const rafRef = useRef(null);
@@ -128,6 +136,22 @@ const MapView = forwardRef(function MapView({
     setRedrawTick(t => t + 1);
   }, [D, cols, rows]);
 
+  // ── Upload strategic grid data + atlas when strategicGrid changes ──
+  // fineMapData is used as the atlas source when available (dual-resolution mode),
+  // otherwise falls back to D (display-resolution data, for single-resolution strategic)
+  useEffect(() => {
+    if (!strategicGrid || !D || !rendererRef.current) {
+      strategicReadyRef.current = false;
+      return;
+    }
+
+    const sourceData = fineMapData || D;
+    const atlasResult = generateStrategicAtlas(sourceData, strategicGrid);
+    rendererRef.current.uploadStrategicData(strategicGrid, atlasResult);
+    strategicReadyRef.current = true;
+    setRedrawTick(t => t + 1);
+  }, [strategicGrid, D, fineMapData]);
+
   // ── Re-upload line networks when active features change ──
   useEffect(() => {
     if (!lineRendererRef.current || !preprocessedRef.current.roadNetworks) return;
@@ -160,7 +184,7 @@ const MapView = forwardRef(function MapView({
     setRedrawTick(t => t + 1);
   }, [cols, rows]);
 
-  // ── Render loop ──
+  // ── WebGL render — terrain + lines (does NOT depend on hovCell) ──
   useEffect(() => {
     if (!D || !rendererRef.current) return;
     const { w, h } = containerSizeRef.current;
@@ -173,7 +197,6 @@ const MapView = forwardRef(function MapView({
     if (showElevBands && elevRangeRef.current) {
       const { min, max } = elevRangeRef.current;
       const range = max - min;
-      // Auto-compute contour interval: ~8-12 lines across the range, snapped to nice values
       const rawInterval = range / 10;
       const contourInterval = rawInterval > 200 ? Math.round(rawInterval / 100) * 100
         : rawInterval > 50 ? Math.round(rawInterval / 50) * 50
@@ -190,81 +213,123 @@ const MapView = forwardRef(function MapView({
         contourLabelRef.current._interval = contourInterval;
       }
     }
+    elevBandsRef.current = elevBands;
 
-    // WebGL pass: terrain + lines
-    rendererRef.current.render(viewport, w, h, activeFeatures, elevBands);
-    if (lineRendererRef.current) {
-      lineRendererRef.current.render(viewport, w, h);
+    // Dispatch: strategic mode or fine (tactical) mode
+    if (strategicMode && strategicReadyRef.current && strategicGrid) {
+      const fineSize = D.cellSizeKm || 1;
+      const stratSize = strategicGrid.cellSizeKm;
+
+      let stratViewport;
+      if (Math.abs(fineSize - stratSize) < 0.001) {
+        // Dual-resolution mode: D IS already the strategic/display grid.
+        // Viewport is in D's coords = strategic coords. No transform needed.
+        stratViewport = viewport;
+      } else {
+        // Legacy mode: D is fine data, viewport is in fine grid coords.
+        // Convert fine viewport → strategic grid viewport via pixel space.
+        const fpx = fineSize * SQRT3 * (viewport.centerCol + 0.5 * (Math.round(viewport.centerRow) & 1));
+        const fpy = fineSize * 1.5 * viewport.centerRow;
+        const stratRow = fpy / (stratSize * 1.5);
+        const stratParity = Math.round(stratRow) & 1;
+        const stratCol = fpx / (stratSize * SQRT3) - 0.5 * stratParity;
+        stratViewport = {
+          centerCol: stratCol - strategicGrid._colOffset,
+          centerRow: stratRow - strategicGrid._rowOffset,
+          cellPixels: viewport.cellPixels * (stratSize / fineSize),
+        };
+      }
+      rendererRef.current.renderStrategic(stratViewport, w, h, activeFeatures, elevBands);
+    } else {
+      const visRange = getVisibleRange(viewport, w, h, cols, rows);
+      rendererRef.current.render(viewport, w, h, activeFeatures, elevBands, visRange);
+      if (lineRendererRef.current) {
+        lineRendererRef.current.render(viewport, w, h);
+      }
     }
+  }, [D, redrawTick, cols, rows, activeFeatures, showElevBands, strategicMode, strategicGrid]);
 
-    // Canvas 2D overlay: labels, units, selection
+  // ── Canvas 2D overlay — labels, units, selection, hover ──
+  useEffect(() => {
+    if (!D) return;
+    const { w, h } = containerSizeRef.current;
+    if (w <= 0 || h <= 0) return;
+    const viewport = viewportRef.current;
+
     const overlay = overlayCanvasRef.current;
-    if (overlay) {
-      if (overlay.width !== w || overlay.height !== h) {
-        overlay.width = w;
-        overlay.height = h;
-      }
-      const ctx = overlay.getContext("2d");
-      ctx.clearRect(0, 0, w, h);
+    if (!overlay) return;
+    if (overlay.width !== w || overlay.height !== h) {
+      overlay.width = w;
+      overlay.height = h;
+    }
+    const ctx = overlay.getContext("2d");
+    ctx.clearRect(0, 0, w, h);
 
-      // Name labels
-      const cp = viewport.cellPixels;
-      if (preprocessedRef.current.nameGroups && cp >= 3) {
-        drawNameLabels(ctx, viewport, w, h, preprocessedRef.current.nameGroups, cols, rows);
-      }
-      // Coordinate labels
-      if (cp >= 6) {
-        drawCoordLabels(ctx, viewport, w, h, cols, rows);
-      }
-      // Contour elevation labels (when topo mode is on)
-      if (showElevBands && contourLabelRef.current && cp >= 6) {
-        drawContourLabels(ctx, viewport, w, h, cols, rows, contourLabelRef.current);
-      }
-      // Units
-      if (units || activeGhostUnit) {
-        const drawOpts = isSetupMode
-          ? { ghostUnit: activeGhostUnit, isSetupMode: true }
-          : unitOverlayOptions || null;
-        drawUnits(ctx, units, actorColorMap, viewport, w, h, cols, rows, drawOpts);
-      }
-      // Hover highlight
-      if (hovCell) {
-        drawHoverHighlight(ctx, viewport, w, h, hovCell.c, hovCell.r);
-      }
-      // Selection highlight
-      if (selCell) {
-        drawSelectionHighlight(ctx, viewport, w, h, selCell.c, selCell.r);
-      }
+    const cp = viewport.cellPixels;
 
-      // ── Measurement overlays ──
+    // Name labels
+    if (preprocessedRef.current.nameGroups && cp >= 3) {
+      drawNameLabels(ctx, viewport, w, h, preprocessedRef.current.nameGroups, cols, rows);
+    }
+    // Coordinate labels
+    if (cp >= 6) {
+      drawCoordLabels(ctx, viewport, w, h, cols, rows);
+    }
+    // Contour elevation labels (when topo mode is on)
+    if (showElevBands && contourLabelRef.current && cp >= 6) {
+      drawContourLabels(ctx, viewport, w, h, cols, rows, contourLabelRef.current);
+    }
+    // FOW overlay (semi-transparent tint on non-visible hexes)
+    if (unitOverlayOptions?.fowMode?.visibleCells) {
+      drawFowOverlay(ctx, unitOverlayOptions.fowMode, viewport, w, h, cols, rows);
+    }
+    // Units
+    if (units || activeGhostUnit) {
+      const drawOpts = isSetupMode
+        ? { ghostUnit: activeGhostUnit, isSetupMode: true }
+        : unitOverlayOptions || null;
+      drawUnits(ctx, units, actorColorMap, viewport, w, h, cols, rows, drawOpts);
+    }
+    // Hover highlight
+    if (hovCell) {
+      drawHoverHighlight(ctx, viewport, w, h, hovCell.c, hovCell.r);
+    }
+    // Selection highlight
+    if (selCell) {
+      drawSelectionHighlight(ctx, viewport, w, h, selCell.c, selCell.r);
+    }
 
-      // Scale bar (bottom-left, always visible when cellSizeKm is known)
-      if (cellSizeKm) {
-        drawScaleBar(ctx, cp, cellSizeKm, w, h);
-      }
+    // Movement path visualization (during order targeting)
+    if (movePath && movePath.length > 1) {
+      drawMovePath(ctx, viewport, w, h, movePath);
+    }
 
-      // Ruler line (measure mode: two clicked points)
-      if (measureStart && measureEnd && cellSizeKm) {
-        const dist = hexDistance(measureStart.c, measureStart.r, measureEnd.c, measureEnd.r);
+    // Proposed movement arrows (during adjudication review phase)
+    if (proposedMoves && proposedMoves.length > 0) {
+      drawProposedMoves(ctx, viewport, w, h, proposedMoves);
+    }
+
+    // ── Measurement overlays ──
+    if (cellSizeKm) {
+      drawScaleBar(ctx, cp, cellSizeKm, w, h);
+    }
+    if (measureStart && measureEnd && cellSizeKm) {
+      const dist = hexDistance(measureStart.c, measureStart.r, measureEnd.c, measureEnd.r);
+      const km = (dist * cellSizeKm).toFixed(1);
+      drawMeasureLine(ctx, viewport, w, h, measureStart, measureEnd, `${dist} hex · ${km} km`);
+    } else if (measureStart && hovCell && interactionMode === "measure" && cellSizeKm) {
+      const dist = hexDistance(measureStart.c, measureStart.r, hovCell.c, hovCell.r);
+      const km = (dist * cellSizeKm).toFixed(1);
+      drawMeasureLine(ctx, viewport, w, h, measureStart, hovCell, `${dist} hex · ${km} km`);
+    }
+    if (selCell && hovCell && cellSizeKm && interactionMode !== "measure") {
+      const dist = hexDistance(selCell.c, selCell.r, hovCell.c, hovCell.r);
+      if (dist > 0) {
         const km = (dist * cellSizeKm).toFixed(1);
-        drawMeasureLine(ctx, viewport, w, h, measureStart, measureEnd, `${dist} hex · ${km} km`);
-      } else if (measureStart && hovCell && interactionMode === "measure" && cellSizeKm) {
-        // Live preview line from start to hover
-        const dist = hexDistance(measureStart.c, measureStart.r, hovCell.c, hovCell.r);
-        const km = (dist * cellSizeKm).toFixed(1);
-        drawMeasureLine(ctx, viewport, w, h, measureStart, hovCell, `${dist} hex · ${km} km`);
-      }
-
-      // Hover distance from selected unit
-      if (selCell && hovCell && cellSizeKm && interactionMode !== "measure") {
-        const dist = hexDistance(selCell.c, selCell.r, hovCell.c, hovCell.r);
-        if (dist > 0) {
-          const km = (dist * cellSizeKm).toFixed(1);
-          drawHoverDistance(ctx, viewport, w, h, selCell, hovCell, `${dist} hex · ${km} km`);
-        }
+        drawHoverDistance(ctx, viewport, w, h, selCell, hovCell, `${dist} hex · ${km} km`);
       }
     }
-  }, [D, units, hovCell, selCell, activeGhostUnit, redrawTick, cols, rows, actorColorMap, isSetupMode, activeFeatures, showElevBands, cellSizeKm, measureStart, measureEnd, interactionMode]);
+  }, [D, units, hovCell, selCell, activeGhostUnit, redrawTick, cols, rows, actorColorMap, isSetupMode, activeFeatures, showElevBands, cellSizeKm, measureStart, measureEnd, interactionMode, unitOverlayOptions, movePath, proposedMoves]);
 
   // ── Mouse handlers ──
   const getCellFromEvent = useCallback((e) => {
@@ -392,25 +457,48 @@ const MapView = forwardRef(function MapView({
     // For minimap rendering
     renderMinimap: (minimapCtx, mw, mh) => {
       if (!D || !rendererRef.current) return;
-      // Render a low-res version using WebGL, then copy to minimap canvas
       const renderer = rendererRef.current;
       const mmViewport = {
         centerCol: cols / 2,
         centerRow: rows / 2,
-        // Fit the map into the minimap
         cellPixels: Math.min(mw / (cols + 0.5), mh / (rows * 1.5 / SQRT3 + 0.5 / SQRT3)) * 0.95,
       };
-      renderer.render(mmViewport, mw, mh, activeFeatures);
-      // Copy from WebGL canvas to minimap 2D canvas
+      // Minimap: use strategic render if active, otherwise normal
+      if (strategicMode && strategicReadyRef.current && strategicGrid) {
+        renderer.renderStrategic(mmViewport, mw, mh, activeFeatures);
+      } else {
+        renderer.render(mmViewport, mw, mh, activeFeatures);
+      }
       minimapCtx.drawImage(renderer.gl.canvas, 0, 0, mw, mh);
-      // Restore main viewport render
+      // Restore main viewport — must use the same render path as the main effect
       const { w, h } = containerSizeRef.current;
-      renderer.render(viewportRef.current, w, h, activeFeatures);
-      if (lineRendererRef.current) {
-        lineRendererRef.current.render(viewportRef.current, w, h);
+      if (strategicMode && strategicReadyRef.current && strategicGrid) {
+        const vp = viewportRef.current;
+        const fineSize = D.cellSizeKm || 1;
+        const stratSize = strategicGrid.cellSizeKm;
+        let stratVP;
+        if (Math.abs(fineSize - stratSize) < 0.001) {
+          stratVP = vp;
+        } else {
+          const fpx = fineSize * SQRT3 * (vp.centerCol + 0.5 * (Math.round(vp.centerRow) & 1));
+          const fpy = fineSize * 1.5 * vp.centerRow;
+          const sRow = fpy / (stratSize * 1.5);
+          const sCol = fpx / (stratSize * SQRT3) - 0.5 * (Math.round(sRow) & 1);
+          stratVP = {
+            centerCol: sCol - strategicGrid._colOffset,
+            centerRow: sRow - strategicGrid._rowOffset,
+            cellPixels: vp.cellPixels * (stratSize / fineSize),
+          };
+        }
+        renderer.renderStrategic(stratVP, w, h, activeFeatures, elevBandsRef.current);
+      } else {
+        renderer.render(viewportRef.current, w, h, activeFeatures, elevBandsRef.current);
+        if (lineRendererRef.current) {
+          lineRendererRef.current.render(viewportRef.current, w, h);
+        }
       }
     },
-    // For PNG export
+    // For PNG export — passes elevBands so topo mode exports correctly
     renderExport: (exportWidth, exportHeight) => {
       if (!D || !rendererRef.current) return null;
       const renderer = rendererRef.current;
@@ -420,7 +508,32 @@ const MapView = forwardRef(function MapView({
         centerRow: rows / 2,
         cellPixels: exportCellSize,
       };
-      renderer.render(exportViewport, exportWidth, exportHeight, activeFeatures);
+      renderer.render(exportViewport, exportWidth, exportHeight, activeFeatures, elevBandsRef.current);
+      if (lineRendererRef.current) {
+        lineRendererRef.current.render(exportViewport, exportWidth, exportHeight);
+      }
+      return renderer.gl.canvas;
+    },
+    // Export with elevation always on (regardless of current showElevBands toggle)
+    renderExportElev: (exportWidth, exportHeight) => {
+      if (!D || !rendererRef.current || !elevRangeRef.current) return null;
+      const renderer = rendererRef.current;
+      const exportCellSize = 28;
+      const exportViewport = {
+        centerCol: cols / 2,
+        centerRow: rows / 2,
+        cellPixels: exportCellSize,
+      };
+      // Force elevation bands on for this render
+      const { min, max } = elevRangeRef.current;
+      const range = max - min;
+      const rawInterval = range / 10;
+      const contourInterval = rawInterval > 200 ? Math.round(rawInterval / 100) * 100
+        : rawInterval > 50 ? Math.round(rawInterval / 50) * 50
+        : rawInterval > 10 ? Math.round(rawInterval / 10) * 10
+        : Math.max(5, Math.round(rawInterval));
+      const forceElevBands = { min, max, contourInterval };
+      renderer.render(exportViewport, exportWidth, exportHeight, activeFeatures, forceElevBands);
       if (lineRendererRef.current) {
         lineRendererRef.current.render(exportViewport, exportWidth, exportHeight);
       }
@@ -441,7 +554,7 @@ const MapView = forwardRef(function MapView({
       cctx.drawImage(overlay, 0, 0);
       return composite.toDataURL("image/png");
     },
-  }), [D, cols, rows, activeFeatures, showElevBands]);
+  }), [D, cols, rows, activeFeatures, showElevBands, strategicMode, strategicGrid]);
 
   // Cursor
   const getCursor = () => {
@@ -495,6 +608,119 @@ const MapView = forwardRef(function MapView({
 });
 
 // ── Measurement drawing helpers ──────────────────────────────
+
+/**
+ * Draw a movement path as an amber dashed line through hex centers.
+ * Shows intermediate waypoints as dots and a larger dot at the destination.
+ */
+function drawMovePath(ctx, viewport, w, h, path) {
+  ctx.save();
+
+  // Convert hex coords to screen positions
+  const points = path.map(p => hexToScreen(p.col, p.row, viewport, w, h));
+
+  // Dashed connecting line
+  ctx.strokeStyle = "rgba(245, 158, 11, 0.7)";
+  ctx.lineWidth = 2.5;
+  ctx.setLineDash([6, 4]);
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  for (let i = 0; i < points.length; i++) {
+    if (i === 0) ctx.moveTo(points[i].x, points[i].y);
+    else ctx.lineTo(points[i].x, points[i].y);
+  }
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Intermediate waypoint dots
+  ctx.fillStyle = "rgba(245, 158, 11, 0.5)";
+  for (let i = 1; i < points.length - 1; i++) {
+    ctx.beginPath();
+    ctx.arc(points[i].x, points[i].y, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Destination marker (larger, brighter)
+  if (points.length >= 2) {
+    const dest = points[points.length - 1];
+    ctx.fillStyle = "rgba(245, 158, 11, 0.85)";
+    ctx.beginPath();
+    ctx.arc(dest.x, dest.y, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(245, 158, 11, 1)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+/**
+ * Draw proposed movement arrows during adjudication review phase.
+ * Each proposed move is rendered as a dashed arrow from current position to proposed position.
+ *
+ * @param {Array} moves - [{ from: "col,row", to: "col,row", color: "#hex", unitName: "..." }]
+ */
+function drawProposedMoves(ctx, viewport, w, h, moves) {
+  ctx.save();
+
+  for (const move of moves) {
+    // Parse positions
+    const fromMatch = move.from?.match(/^(\d+),(\d+)$/);
+    const toMatch = move.to?.match(/^(\d+),(\d+)$/);
+    if (!fromMatch || !toMatch) continue;
+
+    const fromPt = hexToScreen(parseInt(fromMatch[1]), parseInt(fromMatch[2]), viewport, w, h);
+    const toPt = hexToScreen(parseInt(toMatch[1]), parseInt(toMatch[2]), viewport, w, h);
+
+    const color = move.color || "rgba(245, 158, 11, 0.7)";
+
+    // Dashed line
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 3]);
+    ctx.beginPath();
+    ctx.moveTo(fromPt.x, fromPt.y);
+    ctx.lineTo(toPt.x, toPt.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Arrowhead at destination
+    const angle = Math.atan2(toPt.y - fromPt.y, toPt.x - fromPt.x);
+    const arrowSize = Math.max(6, viewport.cellPixels * 0.15);
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(toPt.x, toPt.y);
+    ctx.lineTo(
+      toPt.x - arrowSize * Math.cos(angle - Math.PI / 6),
+      toPt.y - arrowSize * Math.sin(angle - Math.PI / 6)
+    );
+    ctx.lineTo(
+      toPt.x - arrowSize * Math.cos(angle + Math.PI / 6),
+      toPt.y - arrowSize * Math.sin(angle + Math.PI / 6)
+    );
+    ctx.closePath();
+    ctx.fill();
+
+    // Unit name label near the midpoint (if zoomed in enough)
+    if (move.unitName && viewport.cellPixels >= 30) {
+      const mx = (fromPt.x + toPt.x) / 2;
+      const my = (fromPt.y + toPt.y) / 2 - 8;
+      ctx.fillStyle = "rgba(0,0,0,0.6)";
+      ctx.font = `${Math.max(8, viewport.cellPixels * 0.1)}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      // Background for readability
+      const textW = ctx.measureText(move.unitName).width;
+      ctx.fillRect(mx - textW / 2 - 2, my - 10, textW + 4, 12);
+      ctx.fillStyle = "#FFF";
+      ctx.fillText(move.unitName, mx, my);
+    }
+  }
+
+  ctx.restore();
+}
+
 
 /**
  * Draw a scale bar in the bottom-left corner of the overlay canvas.

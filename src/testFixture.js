@@ -1,6 +1,6 @@
 // ════════════════════════════════════════════════════════════════
-// TEST FIXTURE — Deterministic 12x15 hex grid for automated testing.
-// No external API dependencies. Covers 15+ terrain types, 10+ features,
+// TEST FIXTURE — Deterministic 12x18 hex grid for automated testing.
+// No external API dependencies. Covers 50+ terrain types, 10+ features,
 // elevation 0-1200m, and named features.
 //
 // Layout (rows top to bottom):
@@ -9,10 +9,11 @@
 //   6-8:  mid-elevation (forest, dense forest, urban cluster)
 //   9-11: highland (forested hills, boreal, jungle)
 //  12-14: high altitude (mountain, peak, desert, tundra)
+//  15-17: urban fine-grained (buildings, roads, open paved/green, urban water)
 // ════════════════════════════════════════════════════════════════
 
 export function getTestFixture() {
-  const cols = 12, rows = 15;
+  const cols = 12, rows = 18;
   const cells = {};
 
   // Fill every cell with a default first, then overwrite interesting ones.
@@ -162,12 +163,59 @@ export function getTestFixture() {
   set(10, 14, "ice", 980);
   set(11, 14, "ice", 1000);
 
+  // ── Row 15-17: Urban fine-grained terrain types ──
+  // Aggregated urban
+  set(0, 15, "suburban", 60, ["road"]);
+  set(1, 15, "urban_commercial", 62, ["road", "building"]);
+  set(2, 15, "urban_industrial", 58, ["railway"]);
+  set(3, 15, "urban_dense_core", 65, ["building_dense", "wall"]);
+  // Fine-grained: Buildings
+  set(4, 15, "bldg_light", 55);
+  set(5, 15, "bldg_residential", 58);
+  set(6, 15, "bldg_commercial", 60);
+  set(7, 15, "bldg_highrise", 62);
+  set(8, 15, "bldg_institutional", 60);
+  set(9, 15, "bldg_religious", 58);
+  set(10, 15, "bldg_industrial", 55);
+  set(11, 15, "bldg_fortified", 70);
+
+  set(0, 16, "bldg_ruins", 50);
+  set(1, 16, "bldg_station", 55, ["railway"]);
+  // Fine-grained: Roads & Rail
+  set(2, 16, "motorway", 52);
+  set(3, 16, "arterial", 54);
+  set(4, 16, "street", 55);
+  set(5, 16, "alley", 56);
+  set(6, 16, "road_footpath", 54);
+  set(7, 16, "rail_track", 55, ["railway"]);
+  set(8, 16, "tram_track", 56);
+  // Fine-grained: Open Paved
+  set(9, 16, "plaza", 55, ["courtyard"]);
+  set(10, 16, "surface_parking", 54);
+  set(11, 16, "rail_yard", 56, ["railway"]);
+
+  // Fine-grained: Open Green
+  set(0, 17, "park", 50);
+  set(1, 17, "sports_field", 50);
+  set(2, 17, "cemetery", 52);
+  set(3, 17, "urban_trees", 55);
+  set(4, 17, "allotment", 48);
+  // Fine-grained: Urban Water
+  set(5, 17, "canal", 45, ["river"]);
+  set(6, 17, "dock", 42, ["port"]);
+  // Fine-grained: Other
+  set(7, 17, "bare_ground", 50);
+  set(8, 17, "bridge_deck", 55, ["bridge"]);
+  set(9, 17, "ground_embankment", 58);
+  set(10, 17, "underpass", 52, ["metro_entrance"]);
+  set(11, 17, "construction_site", 50);
+
   return {
     cols,
     rows,
     cellSizeKm: 1.0,
     widthKm: 12,
-    heightKm: 13,
+    heightKm: 15.6,
     gridType: "hex",
     center: { lat: 49.5, lng: 6.0 },
     bbox: { south: 49.435, north: 49.565, west: 5.92, east: 6.08 },

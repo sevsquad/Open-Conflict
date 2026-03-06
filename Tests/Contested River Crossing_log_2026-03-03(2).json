@@ -1,0 +1,921 @@
+[
+  {
+    "timestamp": "2026-03-03T03:22:07.245Z",
+    "turn": 1,
+    "type": "action_submitted",
+    "data": {
+      "actorId": "actor_1",
+      "actionText": "Blue Force Orders — Turn 1\nCommander's Intent\nClose distance to the Stonebrook bridge at D5 as rapidly as possible. Destroy the enemy recon screen, then seize the bridge with combined arms. Two axes of advance: main effort along the highway corridor directly at D5, supporting effort sweeping south to fix Sentinel Platoon and threaten encirclement. I want forces at the bridge approaches by end of Turn 2 and crossing by Turn 3.\nPriority of Fires\n\nViper Recon at E4 (destroy the screen)\nOn-call against any enemy unit that engages our advancing forces\n\n\nOrders by Unit\nThunder Battery (L7) — HOLD POSITION, FIRE MISSION\nRemain at L7. Open fire on Viper Recon at position E4. Objective is to degrade or destroy the enemy recon screen before our lead elements reach the bridge approaches. If Viper Recon is confirmed destroyed or displaced from E4, shift fires to Red Guard Platoon at C5. Standing order: If any Blue unit reports contact with an enemy unit and requests fire support, Thunder Battery shifts to that target, prioritizing threats to the main effort (Recon/Alpha/Armor) over threats to Bravo.\n1st Recon \"Shadow\" (H4) → Move to F4\nAdvance west along the highway axis. Destination this turn: F4. Screen ahead of the main body. Report all enemy contacts, obstacles, and bridge status at D5. Standing order: If Shadow reaches F4 and the route toward D5 is clear (no enemy in E4 or E5), continue to E4 next turn. If Shadow encounters Viper Recon or any enemy force and is outmatched, withdraw east to G4 (Millfield) and report contact — do not become decisively engaged.\nAlpha Company (I5) → Move to G5\nAdvance west along the highway. Destination this turn: G5. Alpha is the main effort for bridge seizure. Maintain attacking posture. Standing order: If engaged by enemy forces during movement, halt in place, return fire, and call for artillery support from Thunder Battery. If movement to G5 is uncontested, prepare to continue to F5 (Ashbury) next turn. Note: minimize collateral damage in Ashbury (F5) — use directed fires only, no area suppression into the town.\n1st Armor \"Steel\" (J4) → Move to H4\nAdvance west to H4, following behind Recon. Steel is the exploitation force — once the bridge approach is secured or the enemy screen is broken, Armor leads the crossing at D5. Standing order: If Recon reports the bridge approach (E5/D5 area) is lightly defended or enemy has been suppressed by artillery, Steel pushes through Recon and advances aggressively to the bridge. If Recon reports heavy resistance at the bridge approach, Steel holds at its current position and awaits artillery effect before advancing further.\nBravo Company (J6) → Move to H6\nAdvance west to H6. Bravo is the supporting effort, creating a southern threat to pin Sentinel Platoon at C7 and prevent Red from concentrating all forces at the bridge. Standing order: If Bravo reaches H6 without enemy contact, continue west toward G6 next turn. Civilian constraint applies — do NOT fire into Hexville (F7) unless directly receiving fire from that position. If engaged during movement, halt and return fire; do not request artillery into the F7/G7 dense urban area unless situation is critical.\nBlue HQ \"Citadel\" (K8) — HOLD POSITION\nRemain at K8, Camp Ironwood. Maintain command and control over all elements. No movement this turn. Standing order: If any forward unit is destroyed or the tactical situation deteriorates significantly (loss of two or more units), Citadel displaces east to L8 for force preservation."
+    }
+  },
+  {
+    "timestamp": "2026-03-03T03:22:07.245Z",
+    "turn": 1,
+    "type": "action_submitted",
+    "data": {
+      "actorId": "actor_2",
+      "actionText": "Red Force Orders — Turn 1\nCommander's Intent\nDefend the Stonebrook crossings in depth. The bridge at D5 is the decisive point. I want to channel Blue into a kill zone on the eastern bridge approaches (E4-F4-G4 corridor along the highway) while maintaining the ability to counterattack any crossing attempt. Viper Recon serves as a tripwire and falls back before getting decisively engaged.\nOrders by Unit\nViper Recon (E4)\n\nHold current position at E4. Observe and report Blue force movements approaching from the east along the highway and from the north/south.\nStanding Order: When any Blue combat unit (not recon — specifically infantry or armor) moves to F4 or closer along any axis, Viper Recon withdraws west across the bridge to D5, then continues to C4. Do NOT become decisively engaged east of the river. Your job is eyes, not fighting.\nWhile at E4, report any enemy movement within observation range each turn.\n\nRed Guard Platoon (C5 — Westbrook)\n\nMaintain defensive posture in Westbrook. Prepare positions covering the bridge at D5 and the highway approach from the east. Use the urban terrain and buildings for cover.\nStanding Order: If Blue forces cross the bridge and enter D5 or C5, Red Guard engages them immediately with direct fire from prepared positions in C5. Do not advance east of the river.\n\nSentinel Platoon (C7)\n\nRemain dug in at C7. Continue to cover the stream crossing at D7 and the southern river approach along D6-D8.\nStanding Order: If Blue forces attempt to cross at D7 (stream crossing), Sentinel engages them at the crossing point with direct fire. Do not abandon dug-in positions to pursue.\n\nIron Fist Troop (B6)\n\nRemain in reserve at B6. Engines ready, prepared to move on short notice.\nStanding Order — Contingency NORTH: If Blue forces establish a foothold west of the river at D5 or C5 (meaning they have crossed the bridge), Iron Fist counterattacks from B6 to C5 to support Red Guard and push Blue back to the bridge.\nStanding Order — Contingency SOUTH: If Blue forces cross at D7 and push into C7 or west of D7, Iron Fist moves from B6 to C7 to reinforce Sentinel Platoon.\nPriority: Contingency NORTH takes priority over SOUTH. If both crossings are threatened simultaneously, Iron Fist commits north to the bridge.\n\nHammer Battery (B9)\n\nRegister priority fire targets in the following order:\n\nTarget ALPHA: The bridge at D5 and hex E5 (eastern bridge approach on the highway). This is the primary kill zone.\nTarget BRAVO: Hex F4-G4 (highway approach corridor east of the bridge).\nTarget CHARLIE: D7 (stream crossing).\n\n\nFire Mission — Turn 1: Fire preparatory harassment on Target BRAVO (F4-G4 area) to disrupt Blue's approach march along the highway. This should catch their lead elements as they advance.\nStanding Order: Shift fires to Target ALPHA (D5/E5) when Viper Recon reports withdrawal or when Blue forces are observed at E4-E5 vicinity. On my explicit order only, fire on Target CHARLIE.\nDo NOT fire on D5 bridge itself unless I explicitly order bridge denial fires.\n\nRed HQ (Bastion) (A7)\n\nRemain at A7. Maintain communications with all units.\n\nPriorities\n\nPreserve Viper Recon as an intelligence asset — they fall back, not fight.\nMake Blue pay at the bridge crossing with combined artillery and infantry fires.\nKeep Iron Fist uncommitted as long as possible — the armor counterattack is my decisive action and I don't want to commit it early against a feint."
+    }
+  },
+  {
+    "timestamp": "2026-03-03T03:22:07.245Z",
+    "turn": 1,
+    "type": "fortune_rolls",
+    "data": {
+      "actorRolls": {
+        "actor_1": {
+          "roll": 10,
+          "descriptor": "Bad luck"
+        },
+        "actor_2": {
+          "roll": 14,
+          "descriptor": "Bad luck"
+        }
+      },
+      "wildCard": {
+        "roll": 37,
+        "descriptor": "No wild card event",
+        "triggered": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-03T03:22:07.245Z",
+    "turn": 1,
+    "type": "friction_events",
+    "data": {
+      "events": [
+        {
+          "id": "comms_intermittent",
+          "text": "Red Force's communications experience intermittent disruptions, causing delays in coordinating fire support and movement orders.",
+          "severity": "minor",
+          "category": "communications",
+          "positive": false,
+          "affectedActor": "actor_2"
+        },
+        {
+          "id": "terrain_better",
+          "text": "Ground conditions in the area of operations are firmer than expected, allowing faster cross-country movement this turn.",
+          "severity": "minor",
+          "category": "weather",
+          "positive": true,
+          "affectedActor": "actor_1"
+        }
+      ]
+    }
+  },
+  {
+    "timestamp": "2026-03-03T03:22:07.247Z",
+    "turn": 1,
+    "type": "prompt_sent",
+    "data": {
+      "attempt": 1,
+      "systemPromptLength": 8832,
+      "userPromptLength": 28754,
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "temperature": 0.4
+    }
+  },
+  {
+    "timestamp": "2026-03-03T03:25:00.359Z",
+    "turn": 1,
+    "type": "response_received",
+    "data": {
+      "attempt": 1,
+      "contentLength": 32011,
+      "usage": {
+        "input": 11085,
+        "output": 8192
+      },
+      "model": "claude-sonnet-4-6",
+      "stop_reason": "max_tokens"
+    }
+  },
+  {
+    "timestamp": "2026-03-03T03:25:00.359Z",
+    "turn": 1,
+    "type": "error",
+    "data": {
+      "attempt": 1,
+      "error": "LLM response truncated (hit 8192 token output limit, requested 7511)"
+    }
+  },
+  {
+    "timestamp": "2026-03-03T03:25:00.359Z",
+    "turn": 1,
+    "type": "prompt_sent",
+    "data": {
+      "attempt": 2,
+      "systemPromptLength": 8832,
+      "userPromptLength": 28754,
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "temperature": 0.4
+    }
+  },
+  {
+    "timestamp": "2026-03-03T03:26:44.595Z",
+    "turn": 1,
+    "type": "response_received",
+    "data": {
+      "attempt": 2,
+      "contentLength": 20348,
+      "usage": {
+        "input": 11131,
+        "output": 5200
+      },
+      "model": "claude-sonnet-4-6",
+      "stop_reason": "end_turn"
+    }
+  },
+  {
+    "timestamp": "2026-03-03T03:26:44.595Z",
+    "turn": 1,
+    "type": "validation_result",
+    "data": {
+      "attempt": 2,
+      "valid": true,
+      "errors": []
+    }
+  },
+  {
+    "timestamp": "2026-03-03T03:26:44.596Z",
+    "turn": 1,
+    "type": "validation_result",
+    "data": {
+      "type": "state_updates",
+      "valid": false,
+      "errors": [
+        "State mismatch for unit_preset_1.position: LLM says old_value is \"H4\", but current state is \"7,3\"",
+        "State mismatch for unit_preset_1.strength: LLM says old_value is \"100%\", but current state is 100",
+        "State mismatch for unit_preset_2.position: LLM says old_value is \"I5\", but current state is \"8,4\"",
+        "State mismatch for unit_preset_3.position: LLM says old_value is \"J6\", but current state is \"9,5\"",
+        "State mismatch for unit_preset_4.position: LLM says old_value is \"J4\", but current state is \"9,3\"",
+        "State mismatch for unit_preset_5.supply: LLM says old_value is \"100%\", but current state is 100",
+        "State mismatch for unit_preset_7.strength: LLM says old_value is \"100%\", but current state is 100",
+        "State mismatch for unit_preset_11.supply: LLM says old_value is \"100%\", but current state is 100"
+      ],
+      "warnings": []
+    }
+  },
+  {
+    "timestamp": "2026-03-03T03:42:17.560Z",
+    "turn": 2,
+    "type": "action_submitted",
+    "data": {
+      "actorId": "actor_2",
+      "actionText": "Red Force Orders — Turn 2\nCommander's Intent\nThe intelligence picture is now clear: Blue's main effort is the highway corridor (Shadow-Alpha-Steel, axis H4-G4-F4-E4-D5), with Bravo as a supporting effort on the southern axis through H6. Viper has done its job. I'm pulling them back now before they get pinned, and shifting Hammer's fires onto the bridge approach to punish Blue as they advance into the vacated ground. No other positions change — we're not yet at the decisive moment.\nOrders by Unit\nViper Recon (E4)\n\nWithdraw immediately at the start of the turn. Route: E4 → cross bridge at D5 → continue to C4. Do not linger at D5.\nOnce at C4, adopt an observation posture covering the northern river bank, specifically the river crossing at D3 and the bridge at D5 from the northwest.\nStanding Order (revised): If any Blue unit enters C4, withdraw to B4. If B4 is also threatened, withdraw to B3. Do not become decisively engaged — Viper's value is as eyes, not a fighting force.\n\nHammer Battery (B9)\n\nFire Mission — Turn 2: As soon as Viper clears E4, execute fires on Target ALPHA: hexes E4 and E5 (the eastern bridge approach). Purpose is to catch Blue's lead elements as they advance into the ground Viper just vacated. This should be a sustained suppression mission, not a single salvo — I want rounds landing across the turn to disrupt Blue's ability to mass at the bridge approach.\nStanding Order (updated): If Blue forces reach D5 (the bridge hex itself), shift fires to D5 and E5 to deny the crossing. Confirm with Red HQ before firing directly on the bridge hex, unless comms are disrupted, in which case Hammer Battery commander has authority to engage D5 at his discretion.\nSecondary Target: If Hammer has capacity for a secondary mission, harass F6 to slow Bravo's approach on the southern axis. Priority remains Target ALPHA.\n\nRed Guard Platoon (C5 — Westbrook)\n\nHold position. Continue improving defensive preparations covering the bridge at D5 from the west bank.\nNo change to standing orders from Turn 1. Engage any Blue unit that crosses to D5 or enters C5.\n\nSentinel Platoon (C7)\n\nHold position, remain dug in. Continue covering stream crossing at D7.\nNo change to standing orders from Turn 1.\n\nIron Fist Troop (B6)\n\nRemain in reserve. No change to posture.\nStanding orders from Turn 1 remain in effect (Contingency NORTH to C5, Contingency SOUTH to C7, NORTH takes priority).\n\nRed HQ (Bastion) (A7)\n\nRemain at A7. Maintain communications with all units. Priority: ensure Hammer Battery fire mission coordination is clean this turn — I don't want a repeat of the Turn 1 comms degradation delaying fires."
+    }
+  },
+  {
+    "timestamp": "2026-03-03T03:42:17.560Z",
+    "turn": 2,
+    "type": "action_submitted",
+    "data": {
+      "actorId": "actor_1",
+      "actionText": "Blue Force Orders — Turn 2\nCommander's Intent\nThis is the setup turn for the decisive assault. We close to contact range on the bridge approaches and position for a combined-arms assault on D5 next turn. Destroy or displace Viper Recon, suppress the western bank defense, and get armor and infantry within striking distance of the bridge. I want Steel and Alpha within one hex of D5 by end of this turn.\nPriority of Fires\n\nRed Guard Platoon at C5 (suppress the bridge's western anchor)\nOn-call to any target engaging our advancing forces\n\n\nOrders by Unit\nThunder Battery (L7) — FIRE MISSION: RED GUARD PLATOON AT C5\nShift fires from Viper Recon (no longer worth the ammunition — we'll overrun them with armor). New target: Red Guard Platoon at C5 (Westbrook). Objective is suppression, not destruction — degrade their ability to contest our bridge approach and crossing. Sustained fire throughout the turn. Standing order (updated): Fire coordination line shifts west to Column E this turn, reflecting our advance. Do not fire east of Column E without explicit clearance. If any Blue unit calls for fire support against a target west of Column E, shift to that target. Priority remains threats to Steel and Alpha on the main axis. Note to adjudicator: Thunder Battery supply showed NaN last turn — requesting clarification on remaining ammunition. Assume Thunder has sufficient supply to execute this fire mission; if supply is critically low, Thunder should fire a reduced mission rather than no mission.\n1st Recon \"Shadow\" (F4) → Move to E5\nMove southwest from F4 to E5. This accomplishes two things: scouts the bridge at D5 from the adjacent hex (report bridge condition, any demolition preparations, any defenders ON the bridge or at D5 itself), and clears F4 for Steel's arrival. Shadow is to observe and report, not engage. Standing order: If Shadow observes enemy engineers or demolition activity at the D5 bridge, report immediately to all Blue units AND engage with direct fire to disrupt demolition — this is the one exception to Shadow's observe-only posture. If Shadow takes fire from Red Guard at C5 or any other unit while at E5, withdraw east to F5 and report. Do NOT become decisively engaged.\n1st Armor \"Steel\" (H4) → Move to F4, CHANGE POSTURE TO ATTACKING\nAdvance west along the highway axis from H4 to F4 (2 hexes, same distance Shadow covered last turn on the same route). Steel is no longer in reserve — posture changes to attacking. Steel is now the lead element on the main axis. At F4, Steel is adjacent to Viper Recon at E4 and one hex from the bridge approach. Standing order: If Viper Recon is still at E4 when Steel arrives at F4, Steel is authorized to advance into E4 and destroy Viper Recon by direct assault — armor battalion vs. recon company should be decisive. If Viper has already withdrawn from E4 by the time Steel reaches F4, Steel continues to E4 if movement allowance permits. If Steel reaches E4 and the bridge at D5 is undefended or lightly defended, Steel pushes immediately to D5 to seize the bridge. Do not wait for Alpha — speed is critical to prevent bridge demolition.\nAlpha Company (G5) → Move to F5 (Ashbury)\nAdvance one hex west to F5. Alpha enters Ashbury along the highway. Attacking posture maintained. Alpha's presence at F5 puts infantry adjacent to Viper at E4 (which should trigger any withdrawal conditions Red has set) and positions Alpha one hex from the bridge at D5. Standing order: Civilian constraint remains in effect — directed fire only within Ashbury, no area suppression. If Alpha reaches F5 and Steel has already cleared E4, Alpha advances to E5 or D5 to reinforce Steel at the bridge. If Alpha is engaged by enemy forces at F5, hold position, return fire, and request artillery support.\nBravo Company (H6) → Move to G6\nContinue west on the southern axis to G6. Bravo is now adjacent to Hexville (F7) and threatening the flank of any Red defense oriented toward the bridge. Standing order: Do NOT enter Hexville (F7) or the dense urban terrain at G7 — bypass to the north if advancing further west. Civilian constraint on Hexville remains in effect. If Bravo observes Sentinel Platoon (last known C7) moving east or north toward the bridge, report immediately and engage if opportunity presents. If Bravo receives fire from Sentinel Platoon, halt, return fire, and request artillery support.\nBlue HQ \"Citadel\" (K8) — HOLD POSITION\nRemain at K8. Maintain command and control. Standing order unchanged: Displace to L8 only if two or more forward units are destroyed.\n\nCoordination & Sequencing\n\nOrder of movement on main axis: Shadow moves first (clears F4), then Steel advances to F4. This avoids stacking and ensures Shadow is scouting ahead.\nAxis Main Effort: F4 → E4 → D5. Steel leads, Alpha follows.\nAxis Supporting Effort: H6 → G6 → F6. Bravo alone, fixing/screening.\nFire coordination line: Column E (shifted west from Column F last turn).\nBridge standing order remains: No Blue unit is authorized to destroy the bridge at D5. If Red attempts demolition, nearest Blue unit assaults immediately regardless of other orders."
+    }
+  },
+  {
+    "timestamp": "2026-03-03T03:42:17.560Z",
+    "turn": 2,
+    "type": "fortune_rolls",
+    "data": {
+      "actorRolls": {
+        "actor_1": {
+          "roll": 5,
+          "descriptor": "Catastrophic misfortune"
+        },
+        "actor_2": {
+          "roll": 91,
+          "descriptor": "Good fortune"
+        }
+      },
+      "wildCard": {
+        "roll": 18,
+        "descriptor": "No wild card event",
+        "triggered": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-03T03:42:17.560Z",
+    "turn": 2,
+    "type": "friction_events",
+    "data": {
+      "events": [
+        {
+          "id": "comms_intermittent",
+          "text": "Red Force's communications experience intermittent disruptions, causing delays in coordinating fire support and movement orders.",
+          "severity": "minor",
+          "category": "communications",
+          "positive": false,
+          "affectedActor": "actor_2"
+        }
+      ]
+    }
+  },
+  {
+    "timestamp": "2026-03-03T03:42:17.563Z",
+    "turn": 2,
+    "type": "prompt_sent",
+    "data": {
+      "attempt": 1,
+      "systemPromptLength": 8832,
+      "userPromptLength": 31051,
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "temperature": 0.4
+    }
+  },
+  {
+    "timestamp": "2026-03-03T03:45:10.018Z",
+    "turn": 2,
+    "type": "response_received",
+    "data": {
+      "attempt": 1,
+      "contentLength": 32969,
+      "usage": {
+        "input": 11531,
+        "output": 8192
+      },
+      "model": "claude-sonnet-4-6",
+      "stop_reason": "max_tokens"
+    }
+  },
+  {
+    "timestamp": "2026-03-03T03:45:10.018Z",
+    "turn": 2,
+    "type": "error",
+    "data": {
+      "attempt": 1,
+      "error": "LLM response truncated (hit 8192 token output limit, requested 7511)"
+    }
+  },
+  {
+    "timestamp": "2026-03-03T03:45:10.018Z",
+    "turn": 2,
+    "type": "prompt_sent",
+    "data": {
+      "attempt": 2,
+      "systemPromptLength": 8832,
+      "userPromptLength": 31051,
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "temperature": 0.4
+    }
+  },
+  {
+    "timestamp": "2026-03-03T03:46:50.240Z",
+    "turn": 2,
+    "type": "response_received",
+    "data": {
+      "attempt": 2,
+      "contentLength": 19825,
+      "usage": {
+        "input": 11577,
+        "output": 5253
+      },
+      "model": "claude-sonnet-4-6",
+      "stop_reason": "end_turn"
+    }
+  },
+  {
+    "timestamp": "2026-03-03T03:46:50.240Z",
+    "turn": 2,
+    "type": "validation_result",
+    "data": {
+      "attempt": 2,
+      "valid": true,
+      "errors": []
+    }
+  },
+  {
+    "timestamp": "2026-03-03T03:46:50.240Z",
+    "turn": 2,
+    "type": "validation_result",
+    "data": {
+      "type": "state_updates",
+      "valid": false,
+      "errors": [
+        "State mismatch for unit_preset_7.position: LLM says old_value is \"E4\", but current state is \"4,3\"",
+        "State mismatch for unit_preset_1.position: LLM says old_value is \"F4\", but current state is \"5,3\"",
+        "State mismatch for unit_preset_4.position: LLM says old_value is \"H4\", but current state is \"7,3\"",
+        "State mismatch for unit_preset_2.position: LLM says old_value is \"G5\", but current state is \"6,4\"",
+        "State mismatch for unit_preset_3.position: LLM says old_value is \"H6\", but current state is \"7,5\"",
+        "State mismatch for unit_preset_8.entrenchment: LLM says old_value is \"30%\", but current state is 30",
+        "State mismatch for unit_preset_11.supply: LLM says old_value is \"NaN%\", but current state is null",
+        "State mismatch for unit_preset_5.supply: LLM says old_value is \"NaN%\", but current state is null"
+      ],
+      "warnings": []
+    }
+  },
+  {
+    "timestamp": "2026-03-03T03:55:37.106Z",
+    "turn": 2,
+    "type": "rebuttal_submitted",
+    "data": {
+      "rebuttals": {
+        "actor_1": "Challenge 1: Double-dipping on the fortune roll\nThe fortune roll of 5 was narratively manifested as a specific event — a catastrophic wheel failure causing a traffic jam on the highway axis. That's a good, historically grounded result. No issue there.\nBut then Thunder Battery's fire mission against C5 is also \"badly degraded by Blue's catastrophic fortune.\" Thunder Battery is at L7, operating independently, 10+ km from the traffic jam. The low fortune roll already had its concrete manifestation in the highway congestion. Applying it a second time to a completely separate unit performing a completely separate action feels like the fortune roll is being treated as a global debuff to every Blue action rather than a specific event. If fortune is meant to represent a single dominant piece of bad luck per turn, it shouldn't also tank an independent fire mission. If it's meant to degrade everything proportionally, that should be stated as a rule.\nI'd ask the adjudicator to re-evaluate Thunder's fire mission against C5 independently, or at minimum give it a less severe penalty than \"minimal effect.\"\nChallenge 2: Shadow's hex position\n\"Straddles the F4/E5 boundary\" isn't a valid state in a hex-based game. Shadow should be in F4 or E5, not both. If the wheel failure stopped the advance, Shadow is in F4. If Shadow partially entered E5 before the failure, Shadow is in E5. This matters because it determined whether Shadow took Hammer's barrage. The current ruling has Shadow simultaneously in two hexes, taking fire in one and retreating to the other.",
+        "actor_2": ""
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-03T03:55:37.106Z",
+    "turn": 2,
+    "type": "rebuttal_prompt_sent",
+    "data": {
+      "attempt": 1
+    }
+  },
+  {
+    "timestamp": "2026-03-03T03:57:31.433Z",
+    "turn": 2,
+    "type": "rebuttal_response_received",
+    "data": {
+      "attempt": 1,
+      "contentLength": 19114,
+      "usage": {
+        "input": 16584,
+        "output": 4850
+      },
+      "stop_reason": "end_turn"
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:07:45.207Z",
+    "turn": 3,
+    "type": "action_submitted",
+    "data": {
+      "actorId": "actor_2",
+      "actionText": "Red Force Orders — Turn 3 (REVISED)\nCommander's Intent — UPDATED\nDivision confirms via thermal recon that Blue is using the fog to rush the bridge. This is the decisive moment. though we no longer have access to the thermals I am committing Iron Fist forward to C5 now to reinforce the bridge defense before Blue arrives. Red Guard is suppressed — I cannot rely on suppressed infantry alone to stop an armored crossing. Every other unit executes as planned but with heightened readiness.\nRevised Orders\nIron Fist Troop (B6)\n\nMove immediately from B6 to C5 (Westbrook). This is a 1-hex move through farmland/urban terrain — achievable even in fog. Take up hull-down positions in Westbrook using the buildings for cover, oriented to engage anything crossing the bridge at D5. You are now the primary anti-armor element at the bridge.\nEngagement authority: Engage any Blue unit on or exiting the bridge at D5 with direct fire. In fog, this is a close-range fight — roughly 1km from C5 to D5. Armor main guns are effective at this range regardless of visibility. Coordinate with Red Guard to deconflict positions within C5 — Red Guard covers infantry, Iron Fist covers armor.\nStanding Order — Contingency SOUTH is now suspended. Iron Fist is committed north. Sentinel is on its own at D7.\n\nHammer Battery (B9)\n\nShift fires forward. New primary target: D5 and E5. If Blue is breaking for the bridge, E4 is behind them. I want rounds landing on the bridge approach (E5) and the bridge hex itself (D5, eastern bank). Blue has to funnel through this point.\nClarification for adjudicator: Hammer is firing on the eastern side of D5 and E5 — the approach and the bridge surface. Intent is to catch Blue forces as they mass to cross and while on the bridge. Accept risk of rounds landing near own forces at C5 — the river provides a natural delineation between friendly and enemy positions, and 1km separation with the river as a linear reference should allow Hammer to keep fires on the eastern bank.\nSustained fire. Expend ammunition freely. This is the decisive moment — conservation is no longer a priority.\nStanding Order: If Red HQ or Iron Fist reports Blue forces have crossed to the western bank (C5 or west of D5), cease fire immediately to avoid fratricide. Hammer commander does NOT need HQ confirmation to cease — use judgment based on any report of friendlies in contact west of the river.\n\nRed Guard Platoon (C5) [SUPPRESSED]\n\nYou are being reinforced by Iron Fist. Continue recovery from suppression. Even if suppressed, if Blue infantry appears at the bridge or in C5, engage at close range. Fog and suppression both limit you, but this is point-blank defense of your position — fire at anything that isn't Red.\nCoordinate with Iron Fist on sectors within Westbrook: Red Guard covers the highway and dismounted approaches, Iron Fist covers the bridge with main guns.\n\nViper Recon (C4)\n\nHeightened alert. Division confirms Blue is moving. Listen hard. Report ANY contact — sound, thermal bloom, engine noise — at D4, D5, or D3 immediately.\nNew task: If you detect Blue forces at D3 (river crossing, north), report to Red HQ immediately AND withdraw to B4. Do not attempt to engage — you cannot stop a crossing force.\n\nSentinel Platoon (C7)\n\nHold dug in. You are now operating independently — Iron Fist is committed north and cannot reinforce you.\nStanding Order unchanged: Engage at D7 stream crossing. Hold position. If overwhelmed, withdraw to B7, no further.\n\nRed HQ (Bastion) (A7)\n\nRemain at A7. Monitor all nets. Priority: confirm Iron Fist arrives at C5 and is set before Blue reaches the bridge."
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:07:45.207Z",
+    "turn": 3,
+    "type": "action_submitted",
+    "data": {
+      "actorId": "actor_1",
+      "actionText": "Blue Force Orders — Turn 3\nCommander's Intent\nThe fog is a gift. Poor visibility degrades Red's observation, their artillery spotting, and their ability to coordinate a response to our advance. This is the best window we're going to get to close on the bridge. Steel pushes to the bridge approaches under fog cover, Alpha follows in support, Thunder keeps Red Guard's heads down. This is the assault turn — we seize D5 or die trying.\nPriority of Fires\n\nRed Guard Platoon at C5 (sustain suppression — this is critical)\nOn-call against Iron Fist Troop at B6 if they move east toward the bridge\n\n\nOrders by Unit\nThunder Battery — AMENDED FIRE MISSION\nCancel suppression of Red Guard at C5. New target: the C5-C6 corridor. If Iron Fist is moving east from B6 toward the bridge, C6 and C5 are the most likely route. Drop fires on C6 first — catch them in the open during movement, which is when armor is most vulnerable to artillery. If Thunder has to choose between C5 and C6, prioritize C6 (Iron Fist in transit) over C5 (Red Guard already suppressed and stationary). Standing order updated: If any Blue unit gains eyes on Iron Fist and reports a specific hex location, Thunder shifts all fires to that confirmed position immediately, regardless of prior target.\n1st Armor \"Steel\" — AMENDED ASSAULT ORDERS\nOrders to advance E4 → D5 remain in effect, but the conditional logic changes. Steel should expect to encounter enemy armor at or near D5. Revised standing order: If Steel reaches E4 and observes Iron Fist ON D5 (the bridge hex), Steel does NOT assault a defended bridge head-on into an armor battalion. Steel holds at E4 and calls for sustained artillery on Iron Fist's position. If Iron Fist is at C5 or C6 (west of the river, not on the bridge itself), Steel pushes to D5 immediately — we want to be ON the bridge before Iron Fist reaches it. Speed is everything. Getting to D5 first means Iron Fist has to counterattack US across a bridge rather than the reverse. If the situation at D5 is unclear due to fog, Steel advances to D5 anyway — the risk of meeting Iron Fist on the bridge is less than the risk of letting them establish there unopposed. We have a 3-turn clock. Accept the contact.\nAlpha Company — AMENDMENT\nOrders to advance to E5 remain unchanged. Additional order: Alpha is now designated as the bridgehead force. Once Steel secures D5, Alpha crosses the bridge and moves to C5 to establish the bridgehead position. Alpha should be prepared to assault C5 even if Red Guard is still present — Red Guard is a suppressed infantry battalion, and Alpha at full strength with armor support from Steel on D5 should be able to carry the position. Standing order added: If Steel becomes decisively engaged on or near D5 and cannot continue the assault, Alpha assumes main effort and pushes to D5 to continue the attack. The assault does not stop because Steel is engaged — we have 3 turns.\n1st Recon \"Shadow\" (F4) — RECOVER AND REPOSITION TO E4\nShadow is currently suppressed. Primary order: recover from suppression this turn. prioritize protecting the unit but Shadow should clear the highway at F4 asap to avoid blocking Steel's movement (move off-road within F4 if necessary to give Steel clear passage). Standing order: Once suppression clears, Shadow advances to E4 to establish an observation post. Shadow's mission shifts to forward observation for Thunder Battery — from E4, Shadow can observe C5 (Red Guard), C4 (Viper), and the D5 bridge area, significantly improving Thunder's fire accuracy. If Shadow cannot recover from suppression this turn, Shadow holds at F4 in a defending posture and does not attempt to move. Explicit priority: Getting out of Steel's way at F4 is the first task. Shadow should move to the northern or southern edge of the F4 hex (off the highway/road) to ensure Steel's column can pass through without another traffic jam. If Shadow must be adjudicated as occupying F4 and blocking movement, Shadow displaces to G4 (Millfield) to clear the hex entirely.\nBravo Company (G6) → ADVANCE TO F6\nContinue west on the southern axis to F6. This puts Bravo adjacent to Hexville (F7) and adjacent to E5 and E6 — threatening the southern approach to the river. Bravo's role is threefold: fix Sentinel Platoon at C7 (who must watch Bravo's approach), threaten a secondary crossing or flanking movement, and serve as a reserve if the main assault at D5 stalls. Standing order: Do NOT enter Hexville (F7) — civilian constraint remains in effect. If Bravo observes Iron Fist Troop moving from B6 toward the bridge (C5/D5 area), report immediately. If Sentinel Platoon advances east from C7 toward Bravo's position, Bravo halts and engages from F6 — the building at F6 provides defensive advantage. Do not request artillery into F7/G7 dense urban area.\nBlue HQ \"Citadel\" (K8) — HOLD POSITION\nRemain at K8. Standing order unchanged: Displace to L8 only if two or more forward units are destroyed.\n\nCoordination & Sequencing\n\nMovement priority at F4: Shadow clears the road FIRST, then Steel passes through. This is explicitly ordered to prevent a repeat of the Turn 2 traffic jam.\nAssault axis: F4 → E4 → D5. Steel leads, Alpha follows one hex behind.\nSupporting axis: G6 → F6. Bravo screens south.\nFire coordination line: Column D (shifted west again). Thunder does not fire east of Column D.\nBridge standing order remains in full effect: No Blue unit destroys the bridge. Nearest unit assaults to prevent demolition if attempted.\nFog exploitation: All units advance aggressively. Poor visibility favors the attacker at close range. Expect degraded enemy observation and artillery accuracy. Accept the risk that we also have degraded observation — we know where we're going, Red doesn't know exactly when we're coming.\n\nPlayer note to LLM Adjudicator there seems to be a bug with supplies, ignore for now, assume full supplies for all units on both side."
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:07:45.207Z",
+    "turn": 3,
+    "type": "fortune_rolls",
+    "data": {
+      "actorRolls": {
+        "actor_1": {
+          "roll": 89,
+          "descriptor": "Good fortune"
+        },
+        "actor_2": {
+          "roll": 71,
+          "descriptor": "Favorable conditions"
+        }
+      },
+      "wildCard": {
+        "roll": 5,
+        "descriptor": "No wild card event",
+        "triggered": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:07:45.207Z",
+    "turn": 3,
+    "type": "friction_events",
+    "data": {
+      "events": [
+        {
+          "id": "sensor_malfunction",
+          "text": "Red Force's surveillance/sensor equipment suffers intermittent failures, creating gaps in the reconnaissance picture.",
+          "severity": "minor",
+          "category": "equipment",
+          "positive": false,
+          "affectedActor": "actor_2"
+        },
+        {
+          "id": "enemy_blunder",
+          "text": "Red Force's forces observe what appears to be an enemy coordination failure or blunder, creating a brief window of opportunity.",
+          "severity": "moderate",
+          "category": "intelligence",
+          "positive": true,
+          "affectedActor": "actor_2"
+        },
+        {
+          "id": "vehicle_breakdown",
+          "text": "A key vehicle in Blue Force's formation throws a track / suffers engine failure, briefly blocking a road and causing a traffic jam in the column.",
+          "severity": "minor",
+          "category": "equipment",
+          "positive": false,
+          "affectedActor": "actor_1"
+        }
+      ]
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:07:45.211Z",
+    "turn": 3,
+    "type": "prompt_sent",
+    "data": {
+      "attempt": 1,
+      "systemPromptLength": 8832,
+      "userPromptLength": 35786,
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "temperature": 0.4
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:10:50.504Z",
+    "turn": 3,
+    "type": "response_received",
+    "data": {
+      "attempt": 1,
+      "contentLength": 32324,
+      "usage": {
+        "input": 12636,
+        "output": 8192
+      },
+      "model": "claude-sonnet-4-6",
+      "stop_reason": "max_tokens"
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:10:50.504Z",
+    "turn": 3,
+    "type": "error",
+    "data": {
+      "attempt": 1,
+      "error": "LLM response truncated (hit 8192 token output limit, requested 7511)"
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:10:50.504Z",
+    "turn": 3,
+    "type": "prompt_sent",
+    "data": {
+      "attempt": 2,
+      "systemPromptLength": 8832,
+      "userPromptLength": 35786,
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "temperature": 0.4
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:13:12.696Z",
+    "turn": 3,
+    "type": "response_received",
+    "data": {
+      "attempt": 2,
+      "contentLength": 26337,
+      "usage": {
+        "input": 12682,
+        "output": 7016
+      },
+      "model": "claude-sonnet-4-6",
+      "stop_reason": "end_turn"
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:13:12.697Z",
+    "turn": 3,
+    "type": "validation_result",
+    "data": {
+      "attempt": 2,
+      "valid": true,
+      "errors": []
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:13:12.697Z",
+    "turn": 3,
+    "type": "validation_result",
+    "data": {
+      "type": "state_updates",
+      "valid": false,
+      "errors": [
+        "State mismatch for unit_preset_1.position: LLM says old_value is \"F4\", but current state is \"5,3\"",
+        "State mismatch for unit_preset_4.position: LLM says old_value is \"F4\", but current state is \"5,3\"",
+        "State mismatch for unit_preset_4.strength: LLM says old_value is \"100%\", but current state is 100",
+        "State mismatch for unit_preset_2.position: LLM says old_value is \"F5\", but current state is \"5,4\"",
+        "State mismatch for unit_preset_3.position: LLM says old_value is \"G6\", but current state is \"6,5\"",
+        "State mismatch for unit_preset_10.position: LLM says old_value is \"B6\", but current state is \"1,5\""
+      ],
+      "warnings": []
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:21:54.410Z",
+    "turn": 3,
+    "type": "rebuttal_submitted",
+    "data": {
+      "rebuttals": {
+        "actor_1": "Challenge: Alpha's Status at E5\nAlpha is infantry in movement through the \"trailing edge\" of Hammer's suppression zone, in fog that the adjudicator already ruled degrades Hammer's accuracy. The adjudicator notes Hammer is working off Viper's \"general audio contact only, not precise coordinates\" and that \"fog-degraded fires are unlikely to cause significant casualties to infantry in movement.\" If the fires are that degraded, suppressing a full-strength infantry battalion moving through the fringe of the impact zone is a stretch. Disrupted, sure — suppressed feels like it's doing too much work for what the narrative describes as marginal fires. This matters a lot because Alpha is the bridgehead force. If Alpha is suppressed next turn, I can't establish the bridgehead within Division's timeline.\n\nReds rebuttal to Blue's challenge: \n\nBlue is conflating accuracy with suppression effect, and those are different things. Hammer is firing sustained area denial on pre-registered coordinates at E5 — the battery doesn't need to see Alpha or know precisely where they are. The rounds are landing on E5 regardless. Alpha walked into an active beaten zone.\nSuppression isn't about whether rounds land close enough to cause casualties. It's about whether the volume of incoming fire in your area forces you to take cover and degrades your ability to execute your mission. A full-strength infantry battalion advancing in the open through a hex that's actively receiving sustained artillery fire — even fog-degraded, even at the trailing edge — is going to go to ground. That's what infantry does when shells are landing around them. That's suppression.\nBlue's own framing supports this: they concede \"disrupted, sure.\" The difference between disrupted and suppressed for infantry advancing through an active artillery zone is marginal. If the fires are enough to disrupt a battalion's movement and coordination, they're enough to suppress it — especially for troops who are advancing into fire rather than already dug in.\nThat said, I'll acknowledge this is a judgment call and I'd accept the adjudicator ruling either way. What I'd push back on is any ruling that Alpha passes through E5 completely unaffected. The floor here should be disrupted at minimum.",
+        "actor_2": ""
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:21:54.410Z",
+    "turn": 3,
+    "type": "rebuttal_prompt_sent",
+    "data": {
+      "attempt": 1
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:24:38.689Z",
+    "turn": 3,
+    "type": "rebuttal_response_received",
+    "data": {
+      "attempt": 1,
+      "contentLength": 26577,
+      "usage": {
+        "input": 19493,
+        "output": 6792
+      },
+      "stop_reason": "end_turn"
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:24:38.689Z",
+    "turn": 3,
+    "type": "rebuttal_prompt_sent",
+    "data": {
+      "attempt": 2
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:27:07.865Z",
+    "turn": 3,
+    "type": "rebuttal_response_received",
+    "data": {
+      "attempt": 2,
+      "contentLength": 25203,
+      "usage": {
+        "input": 26313,
+        "output": 6446
+      },
+      "stop_reason": "end_turn"
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:27:07.865Z",
+    "turn": 3,
+    "type": "rebuttal_prompt_sent",
+    "data": {
+      "attempt": 3
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:29:29.218Z",
+    "turn": 3,
+    "type": "rebuttal_response_received",
+    "data": {
+      "attempt": 3,
+      "contentLength": 25288,
+      "usage": {
+        "input": 25967,
+        "output": 6441
+      },
+      "stop_reason": "end_turn"
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:31:32.625Z",
+    "turn": 3,
+    "type": "rebuttal_submitted",
+    "data": {
+      "rebuttals": {
+        "actor_1": "Challenge: Alpha's Status at E5\nAlpha is infantry in movement through the \"trailing edge\" of Hammer's suppression zone, in fog that the adjudicator already ruled degrades Hammer's accuracy. The adjudicator notes Hammer is working off Viper's \"general audio contact only, not precise coordinates\" and that \"fog-degraded fires are unlikely to cause significant casualties to infantry in movement.\" If the fires are that degraded, suppressing a full-strength infantry battalion moving through the fringe of the impact zone is a stretch. Disrupted, sure — suppressed feels like it's doing too much work for what the narrative describes as marginal fires. This matters a lot because Alpha is the bridgehead force. If Alpha is suppressed next turn, I can't establish the bridgehead within Division's timeline.\n\nBlue is conflating accuracy with suppression effect, and those are different things. Hammer is firing sustained area denial on pre-registered coordinates at E5 — the battery doesn't need to see Alpha or know precisely where they are. The rounds are landing on E5 regardless. Alpha walked into an active beaten zone.\nSuppression isn't about whether rounds land close enough to cause casualties. It's about whether the volume of incoming fire in your area forces you to take cover and degrades your ability to execute your mission. A full-strength infantry battalion advancing in the open through a hex that's actively receiving sustained artillery fire — even fog-degraded, even at the trailing edge — is going to go to ground. That's what infantry does when shells are landing around them. That's suppression.\nBlue's own framing supports this: they concede \"disrupted, sure.\" The difference between disrupted and suppressed for infantry advancing through an active artillery zone is marginal. If the fires are enough to disrupt a battalion's movement and coordination, they're enough to suppress it — especially for troops who are advancing into fire rather than already dug in.\nThat said, I'll acknowledge this is a judgment call and I'd accept the adjudicator ruling either way. What I'd push back on is any ruling that Alpha passes through E5 completely unaffected. The floor here should be disrupted at minimum.",
+        "actor_2": ""
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:31:32.625Z",
+    "turn": 3,
+    "type": "rebuttal_prompt_sent",
+    "data": {
+      "attempt": 1
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:34:04.072Z",
+    "turn": 3,
+    "type": "rebuttal_response_received",
+    "data": {
+      "attempt": 1,
+      "contentLength": 24485,
+      "usage": {
+        "input": 19480,
+        "output": 6331
+      },
+      "stop_reason": "end_turn"
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:49:00.056Z",
+    "turn": 4,
+    "type": "action_submitted",
+    "data": {
+      "actorId": "actor_2",
+      "actionText": "Red Guard Platoon (C5) [READY]\n\nSupport Iron Fist's engagement with any anti-armor weapons available against Steel at D5. (short range AT4 equivalents)\nPrimary task this turn: Watch for Alpha infantry attempting to advance from E5 toward D5. Alpha is disrupted but not suppressed — they could attempt to push infantry to the bridge to support Steel or to cross under armor cover. If dismounted infantry appears at D5 or on the bridge, Red Guard engages with all available weapons.\nSecondary task: Observe D6 riverbank for any dismounted crossing attempt south of the bridge.\nSame Thunder preparation as Iron Fist: Use Westbrook's buildings for cover, rotate positions.\n\nHammer Battery (B9)\n\nFire Mission — Turn 4: Maximum sustained fire on D5 and E5. Priority target is D5 (Steel). Secondary target is E5 (Alpha). Ammunition expenditure is unrestricted. Two turns remain — fire everything we have.\nClear weather and Viper observation from C4 means this should be the most accurate fire mission of the game. Viper provides corrections in real time.\nSpecific instruction: Walk fires between D5 and E5 across the turn. Purpose is to keep Steel suppressed at D5 AND prevent Alpha from advancing from E5 to D5 to reinforce the bridge assault. I want that 2km corridor from E5 to D5 to be impassable.\nStanding Order: If any Blue unit is reported crossing to the western bank (C5 or west), cease fire on D5 immediately to avoid fratricide. Shift all fires to E5.\n\nViper Recon (C4)\n\nPrimary mission: Forward observer for Hammer Battery. Clear weather restores full observation capability. Viper has direct line of sight to D5 and E5 from C4 at ~1km range. Provide real-time corrections to Hammer. This is the most important thing Viper does all game — accurate observed fires on suppressed armor in the open.\nSecondary mission: Observe D3 river crossing and D4 riverbank for any Blue flanking attempt to the north. Shadow is at E4 — if Shadow moves toward D3 or D4, report immediately.\nStanding Order: If Blue enters C4, withdraw to B4.\n\nSentinel Platoon (C7)\n\nBravo is at F6, two hexes from your position. Expect contact at D7 stream crossing this turn or next. Remain dug in.\nStanding Order unchanged: Engage at D7. Hold C7. If overwhelmed, withdraw to B7.\nNew instruction: If Bravo bypasses D7 entirely and moves to E6 or D6 to attempt crossing closer to the bridge, report immediately but hold position at C7. Do not pursue. Sentinel's job is to hold C7 and deny D7, not to chase Bravo along the river.\n\nRed HQ (Bastion) (A7)\n\nRemain at A7. Coordinate combined direct and indirect fires on D5. Monitor Sentinel's sector. Report to Division CP that the bridge is denied, Steel is suppressed at D5, and Red Force is combat-effective."
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:49:00.056Z",
+    "turn": 4,
+    "type": "action_submitted",
+    "data": {
+      "actorId": "actor_1",
+      "actionText": "Blue Force Orders — Turn 4\nCommander's Intent\nWe are on the bridge. We hold the eastern bank. The fog is gone but dusk is coming — we use the remaining light to deliver the heaviest possible fires on C5, then push across. Shadow is finally in position as a forward observer and this is the first turn we can deliver accurate artillery. We will make it count. Steel recovers and crosses. Alpha reinforces the bridge. Bravo threatens a southern crossing to split Red's defense. We cross this turn or we set conditions so the follow-on forces cross next turn. There is no third option.\nPriority of Fires\n\nIron Fist / Red Guard combined position at C5 — EVERYTHING WE HAVE\nNo secondary target. Every round goes into C5 until told otherwise.\n\n\nOrders by Unit\nThunder Battery (L7) — FIRE MISSION: C5, OBSERVED FIRE, SUSTAINED\nShadow is at E4, ready, in observation posture. Shadow has direct line of sight to C5 at approximately 1km range. For the first time in this battle, Thunder has a forward observer. Thunder fires on C5 (Westbrook) with observed, adjusted fire for the entire turn. Shadow calls corrections. The objective is suppression and attrition of Iron Fist and Red Guard — both are co-located in a light urban hex, which means they're concentrated. C5 has buildings, which provide cover, but also channelize movement and create secondary fragmentation effects from artillery hits on structures. Note: C5 is Westbrook, NOT Ashbury or Hexville — no civilian constraint applies. Thunder is authorized to fire for effect without restriction. Standing order: Do not shift fires from C5 for any reason unless Steel reports it is physically ON C5 (i.e., has crossed the bridge and entered the hex). If Steel crosses, Thunder shifts fires to B6 to block any counterattack route. Fire coordination line: Column C. Do not fire east of Column C.\n1st Recon \"Shadow\" (E4) — FORWARD OBSERVER FOR THUNDER BATTERY\nShadow's sole mission this turn is calling and adjusting artillery fire onto C5. Shadow remains at E4 in observing posture. Do not move. Do not engage directly. Shadow observes fall of shot, radios corrections to Thunder, and reports any enemy movement — specifically if Iron Fist displaces from C5, if Viper at C4 moves, or if any enemy element approaches the bridge from the west. Standing order: If Shadow observes Iron Fist pulling back from C5 (west toward B5 or B6), report immediately. If Viper at C4 moves south toward C5 to reinforce, report immediately and request Thunder shift some fires to the C4-C5 route. If any enemy element approaches D5 (the bridge) while Steel is suppressed, Shadow engages with direct fire — this is the only circumstance in which Shadow fires its weapons this turn.\n1st Armor \"Steel\" (D5) — RECOVER, THEN ASSAULT C5\nSteel is suppressed and taking direct fire from Iron Fist at C5 with AT-armed infantry among the defenders. Immediate action: Steel returns fire from D5 onto C5 — the tanks have a direct line of fire across the bridge at 1km. Even suppressed, Steel's tanks can engage from hull-down or partial defilade positions on the eastern bank. Steel's gunners target Iron Fist's vehicles first — kill the armor, the infantry AT weapons become the secondary problem. Recovery: Steel uses the cover of Thunder's observed fires on C5 to recover from suppression. When Iron Fist and Red Guard are suppressed or degraded by Thunder's fires, Steel assaults across the bridge into C5. Standing order: Steel does NOT assault until Thunder's fires have had observable effect on C5 — defined as visible displacement, destruction of vehicles, or cessation of direct fire from C5. Shadow, as forward observer, confirms when this condition is met and radios Steel directly. If Thunder's fires do NOT achieve observable suppression of C5 by the midpoint of the turn, Steel holds at D5 and continues direct fire engagement from the eastern bank — we do not send armor across a bridge into unsuppressed combined arms defense. If Steel does assault: Steel crosses the bridge at maximum speed, enters C5, and engages Iron Fist at close range. Once in C5 among the buildings, the AT-4 threat is reduced because engagement ranges collapse and Steel's tanks can use buildings as cover. Close quarters armor combat favors whoever arrives with more mass — and Steel is a full battalion. Posture: attacking.\nAlpha Company (E5) → MOVE TO D5\nAlpha advances one hex west from E5 to D5. Alpha is disrupted but can still move. At D5, Alpha joins Steel on the bridge position. Alpha's infantry is critical for two reasons: clearing AT-armed infantry once we're across, and providing close protection for Steel's tanks against dismounted AT teams during the crossing. Standing order: If Steel assaults across the bridge this turn, Alpha follows immediately into C5. Alpha's infantry clears buildings and engages Red Guard's AT teams while Steel's tanks engage Iron Fist's armor. This is combined arms — tanks need infantry in urban terrain, and this is exactly why. If Steel does NOT assault this turn, Alpha digs in at D5 alongside Steel and prepares for a Turn 5 assault or for hand-off to follow-on forces. Note: Alpha is at 59% supply. This is enough for one major engagement but not a sustained fight. Alpha needs to be decisive — get into C5, clear it, and hold for resupply from follow-on forces.\nBravo Company (F6) → MOVE TO E6, PREPARE SOUTHERN CROSSING\nBravo moves from F6 to E6. From E6, Bravo is adjacent to D7 which has a stream crossing feature. Standing order: Bravo does NOT attempt the stream crossing this turn — the move to E6 is the setup. If the main assault at D5 succeeds and Steel/Alpha are in C5 next turn, Bravo crosses at D7 to reinforce the bridgehead from the south. If the main assault fails, Bravo attempts the D7 stream crossing next turn as the secondary axis to establish ANY foothold across the river. Explicit question for adjudicator: Is the stream crossing at D7 fordable by infantry without engineer support? If yes, Bravo can cross unassisted. If no, Bravo needs engineers from the follow-on force. I need to know this before Turn 5 planning. Additional: Bravo's movement to E6 clears F6 for any follow-on forces staging from Hexville/G6 area. Bravo should be clear of F6 before the infantry brigade finishes detraining at G6.\nBlue HQ \"Citadel\" (K8) — HOLD POSITION, RELAY TO DIVISION\nRemain at K8. Division CP is mobile toward Hexville — expect intermittent comms. Message to Division: \"Steel holds eastern bridge at D5 under direct fire from enemy armor and AT infantry at C5. Assaulting this turn under artillery suppression"
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:49:00.056Z",
+    "turn": 4,
+    "type": "fortune_rolls",
+    "data": {
+      "actorRolls": {
+        "actor_1": {
+          "roll": 31,
+          "descriptor": "Unfavorable conditions"
+        },
+        "actor_2": {
+          "roll": 58,
+          "descriptor": "Neutral fortune"
+        }
+      },
+      "wildCard": {
+        "roll": 57,
+        "descriptor": "No wild card event",
+        "triggered": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:49:00.056Z",
+    "turn": 4,
+    "type": "friction_events",
+    "data": {
+      "events": [
+        {
+          "id": "comms_total_failure",
+          "text": "Red Force's primary radio net goes down completely. Units must rely on runners and visual signals until repairs are made.",
+          "severity": "major",
+          "category": "communications",
+          "positive": false,
+          "affectedActor": "actor_2"
+        }
+      ]
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:49:00.059Z",
+    "turn": 4,
+    "type": "prompt_sent",
+    "data": {
+      "attempt": 1,
+      "systemPromptLength": 8832,
+      "userPromptLength": 38903,
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "temperature": 0.4
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:52:05.025Z",
+    "turn": 4,
+    "type": "response_received",
+    "data": {
+      "attempt": 1,
+      "contentLength": 33704,
+      "usage": {
+        "input": 13386,
+        "output": 8192
+      },
+      "model": "claude-sonnet-4-6",
+      "stop_reason": "max_tokens"
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:52:05.025Z",
+    "turn": 4,
+    "type": "error",
+    "data": {
+      "attempt": 1,
+      "error": "LLM response truncated (hit 8192 token output limit, requested 7511)"
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:52:05.025Z",
+    "turn": 4,
+    "type": "prompt_sent",
+    "data": {
+      "attempt": 2,
+      "systemPromptLength": 8832,
+      "userPromptLength": 38903,
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "temperature": 0.4
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:54:15.750Z",
+    "turn": 4,
+    "type": "response_received",
+    "data": {
+      "attempt": 2,
+      "contentLength": 24308,
+      "usage": {
+        "input": 13432,
+        "output": 6175
+      },
+      "model": "claude-sonnet-4-6",
+      "stop_reason": "end_turn"
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:54:15.751Z",
+    "turn": 4,
+    "type": "validation_result",
+    "data": {
+      "attempt": 2,
+      "valid": true,
+      "errors": []
+    }
+  },
+  {
+    "timestamp": "2026-03-03T08:54:15.751Z",
+    "turn": 4,
+    "type": "validation_result",
+    "data": {
+      "type": "state_updates",
+      "valid": false,
+      "errors": [
+        "State mismatch for unit_preset_4.supply: LLM says old_value is \"74%\", but current state is 74",
+        "State mismatch for unit_preset_2.position: LLM says old_value is \"E5\", but current state is \"4,4\"",
+        "State mismatch for unit_preset_2.strength: LLM says old_value is \"100%\", but current state is 100",
+        "State mismatch for unit_preset_2.supply: LLM says old_value is \"59%\", but current state is 59",
+        "State mismatch for unit_preset_3.position: LLM says old_value is \"F6\", but current state is \"5,5\"",
+        "State mismatch for unit_preset_10.strength: LLM says old_value is \"100%\", but current state is 100",
+        "State mismatch for unit_preset_8.strength: LLM says old_value is \"100%\", but current state is 100",
+        "State mismatch for unit_preset_11.supply: LLM says old_value is \"NaN%\", but current state is null",
+        "State mismatch for unit_preset_5.supply: LLM says old_value is \"NaN%\", but current state is null"
+      ],
+      "warnings": []
+    }
+  },
+  {
+    "timestamp": "2026-03-03T09:08:23.708Z",
+    "turn": 5,
+    "type": "action_submitted",
+    "data": {
+      "actorId": "actor_1",
+      "actionText": "Blue Force Orders — Turn 5\nCommander's Intent\nThis is it. Steel is recovered. Iron Fist and Red Guard are both suppressed. It's night — which degrades their hull-down advantage and AT engagement range. Follow-on forces arrive next turn. We assault C5 with everything we have from two directions simultaneously. Steel and Alpha across the bridge at D5. Bravo fords at D7 and hits C5 or D6 from the south. Thunder keeps pounding C5 until our forces are on top of them. No conditional logic. No waiting. Cross the river. Take Westbrook.\nPriority of Fires\n\nC5 — sustained observed fire until Steel enters the hex\nShift to B5/B6 the moment Steel reports entering C5\n\n\nOrders by Unit\nThunder Battery (L7) — FIRE MISSION: C5, OBSERVED, MAXIMUM RATE\nShadow at E4 continues as forward observer. Fire on C5 at maximum rate. Both Iron Fist and Red Guard are suppressed — the objective is to keep them suppressed through the assault and inflict maximum attrition before Steel arrives. Shadow has had a full turn to fix the radio handset and re-establish reliable comms with Thunder. This should be our most effective fire mission of the campaign: experienced FO, registered target, known enemy positions, sustained fire. Ceasefire trigger: Thunder ceases fire on C5 when Steel reports \"crossing\" — meaning Steel's lead elements are on the bridge moving west. Shadow confirms visually. After ceasefire on C5, Thunder shifts fires immediately to B5 to block any withdrawal or reinforcement route from the west. Standing order: If Shadow reports Viper Recon at C4 moving south to reinforce C5, Thunder splits fires between C5 and C4. If Hammer Battery fires are observed landing on D5 during the assault, Thunder does NOT shift to counter-battery — stay on C5, suppressing the defense is more important than silencing Hammer.\n1st Armor \"Steel\" (D5) — ASSAULT ACROSS THE BRIDGE INTO C5\nSteel is ready, 82% strength, attacking posture. Iron Fist at C5 is suppressed at 88%. This is the best correlation of forces we're going to get. Steel assaults across the bridge into C5. This is an unconditional order. No waiting for observable effect. Go. Coordinate with Thunder: Steel advances when Thunder's fires are landing on C5, using the artillery as cover. As Steel's lead platoon reaches the midpoint of the bridge, Thunder shifts fires per the ceasefire trigger above. Steel enters C5 and engages Iron Fist at close range among the buildings. At close quarters in an urban environment at night, the hull-down advantage disappears — this becomes a brawl, and Steel has mass. Standing order: Once in C5, Steel's priority targets are Iron Fist's vehicles. Destroy the armor. Red Guard infantry with AT weapons are Alpha's problem. If Iron Fist breaks and withdraws west (toward B5 or B6), Steel pursues ONE hex only — do not overextend beyond C5 until Alpha is across and the bridgehead is consolidated. If Iron Fist counterattacks, Steel fights in place in C5 using the buildings for cover.\nAlpha Company (D5) — FOLLOW STEEL ACROSS THE BRIDGE, CLEAR C5\nAlpha is disrupted at 85% but can still fight. Alpha follows Steel across the bridge — Steel leads with armor, Alpha follows immediately behind. Alpha's mission in C5 is infantry clearance. Steel kills the tanks, Alpha clears the buildings. Red Guard's AT teams are the primary threat to Steel's tanks in urban terrain — Alpha's infantry finds and eliminates those teams. Sequencing: Alpha begins crossing when Steel's last element clears the eastern end of the bridge. This prevents stacking on the bridge itself. Alpha should arrive in C5 within 30-60 minutes of Steel. Standing order: Once in C5, Alpha establishes defensive positions in the buildings on the eastern edge of Westbrook, oriented west, to anchor the bridgehead. Alpha is the bridgehead garrison — hold C5 at all costs. If Steel pursues Iron Fist west, Alpha does NOT follow. Alpha holds C5.\nBravo Company (E6) → FORD AT D7, THEN ADVANCE TO D6 OR C6\nBravo is at full strength, ready, and the stream crossing at D7 is confirmed infantry-fordable. Bravo fords the Stonebrook at D7 this turn. The crossing puts Bravo on the western bank south of the bridge, flanking the C5 defense from an unexpected direction. After crossing, Bravo advances to D6 (farmland on the western bank, adjacent to C5 from the south). From D6, Bravo can either reinforce the C5 assault from the south or block any Sentinel Platoon movement north from C7. Timing: Bravo begins the ford simultaneously with Steel's bridge assault. The dual crossing creates two problems for Red at once — they cannot orient their suppressed defense in both directions. Standing order: If Sentinel Platoon at C7 moves to contest the D7 crossing, Bravo fights through. Bravo is full-strength infantry against full-strength infantry, but Bravo has momentum and Sentinel has been static for 5 turns. If Bravo successfully crosses and reaches D6, Bravo engages Red Guard's southern flank in C5 — catching them between Steel/Alpha from the east and Bravo from the south. If Bravo reaches D6 and C5 has already fallen, Bravo advances to C6 to expand the bridgehead south.\n1st Recon \"Shadow\" (E4) — FORWARD OBSERVER, THEN DISPLACEMENT\nShadow continues FO duties for Thunder until the ceasefire trigger is met (Steel crossing). Once Thunder shifts fires from C5 to B5, Shadow's FO mission shifts to observing B5 and reporting any enemy movement from the west. Standing order: If Shadow observes Viper Recon at C4 withdrawing or repositioning, report but do not engage — Viper is not a threat to the assault. If Shadow observes any enemy element approaching D5 from the north (via D4 or D3), engage with direct fire to protect the bridge. After the assault, Shadow moves to D5 to direct follow-on force traffic across the bridge — Shadow becomes the traffic control point to prevent the same congestion that plagued us at F4.\nBlue HQ \"Citadel\" (K8) — HOLD, RELAY TO DIVISION\nRemain at K8. Message to Division:\"Highway clear from east to E4. No obstruction at F4. Lead elements can proceed at best speed to E4-E5 staging area. Bridge assault underway — expect bridgehead at C5 within 4 hours.\""
+    }
+  },
+  {
+    "timestamp": "2026-03-03T09:08:23.708Z",
+    "turn": 5,
+    "type": "action_submitted",
+    "data": {
+      "actorId": "actor_2",
+      "actionText": "Red Force Orders — Turn 5Commander's IntentNight has fallen with both sides suppressed at the bridge. This is a recovery turn for me — I need Iron Fist and Red Guard back in the fight before Blue can organize a dawn assault. The night makes a bridge crossing extremely unlikely, which buys me time. But Bravo at E6 is now one hex from the stream crossing at D7, and that's a new axis of attack I have to address. Hammer keeps pounding D5 to prevent Blue from using the night to reorganize.Orders by UnitHammer Battery (B9)\n\nFire Mission — Turn 5: Maximum sustained fire on D5. Steel and Alpha are consolidated at the bridge. Keep rounds landing on them all night. Purpose is twofold: attrit Blue's combat power at D5 and prevent them from using the night to reorganize, resupply, or prepare an assault.\nObservation: Visibility is good and overcast — Viper at C4 has line of sight to D5 at 1km. With comms restored (no friction event noted), Viper should be able to provide observed fire corrections to Hammer via Red HQ relay at A7. This is the first turn since Turn 2 where we might get a clean observed fire loop. Viper observes → reports to Red HQ at A7 → HQ relays to Hammer at B9. Adjudicator: I want to confirm this relay chain is functioning this turn.\nSecondary mission: If Hammer has ammunition for a secondary mission, harass E6 to disrupt Bravo's staging. Priority remains D5.\nIron Fist Troop (C5) [SUPPRESSED, 88%]\n\nPriority: recover from suppression. Button up, stay in hull-down positions, minimize exposure. Do not engage D5 with direct fire unless Blue attempts to cross the bridge. Night + urban cover should facilitate recovery.\nStanding Order: If any Blue armored or infantry unit begins crossing the bridge (enters the western half of D5 or C5), engage immediately with main guns regardless of suppression status. Point-blank defense overrides recovery posture.\nRed Guard Platoon (C5) [SUPPRESSED, 90%]\n\nPriority: recover from suppression. Same as Iron Fist — use buildings, minimize exposure, recover.\nStanding Order: Engage any Blue infantry attempting to cross the bridge or enter C5. AT teams remain ready to engage armor.\nViper Recon (C4)\n\nPrimary task this turn: forward observer for Hammer Battery. You have good visibility and line of sight to D5 at 1km range. Observe fall of shot and relay corrections to Red HQ at A7 for transmission to Hammer at B9. This is the most important thing you do this turn — accurate observed fire on D5 could be devastating to Blue's consolidated position.\nSecondary task: Continue monitoring D3 (river crossing) and D4 for any Blue flanking movement.\nStanding Order unchanged: Withdraw to B4 if threatened.\nSentinel Platoon (C7)\n\nAlert: Bravo Company is at E6, one hex from D6 and two hexes from D7. Bravo is now a credible threat to the southern crossing.\nRemain dug in at C7. Maintain readiness to engage at D7 stream crossing.\nNew standing order: If Bravo or any Blue unit is observed at D6 or D7, report to Red HQ immediately and engage any unit attempting to ford at D7. Do NOT leave dug-in positions to advance toward D6 — let them come to you at the crossing point.\nNight consideration: Sentinel should establish listening posts oriented toward E6 and D7 to detect Bravo's approach in darkness.\nRed HQ (Bastion) (A7)\n\nCritical task: serve as communications relay between Viper at C4 and Hammer at B9. This is the priority for HQ this turn. Ensure fire corrections flow smoothly.\nMonitor all nets. Track Bravo's movement on the southern axis."
+    }
+  },
+  {
+    "timestamp": "2026-03-03T09:08:23.708Z",
+    "turn": 5,
+    "type": "fortune_rolls",
+    "data": {
+      "actorRolls": {
+        "actor_1": {
+          "roll": 41,
+          "descriptor": "Neutral fortune"
+        },
+        "actor_2": {
+          "roll": 100,
+          "descriptor": "Exceptional luck"
+        }
+      },
+      "wildCard": {
+        "roll": 68,
+        "descriptor": "No wild card event",
+        "triggered": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-03T09:08:23.708Z",
+    "turn": 5,
+    "type": "friction_events",
+    "data": {
+      "events": [
+        {
+          "id": "false_intel",
+          "text": "Blue Force receives a false intelligence report suggesting enemy activity where there is none, potentially diverting attention from the real threat.",
+          "severity": "moderate",
+          "category": "intelligence",
+          "positive": false,
+          "affectedActor": "actor_1"
+        }
+      ]
+    }
+  },
+  {
+    "timestamp": "2026-03-03T09:08:23.709Z",
+    "turn": 5,
+    "type": "prompt_sent",
+    "data": {
+      "attempt": 1,
+      "systemPromptLength": 8832,
+      "userPromptLength": 40632,
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "temperature": 0.4
+    }
+  },
+  {
+    "timestamp": "2026-03-03T09:11:19.204Z",
+    "turn": 5,
+    "type": "response_received",
+    "data": {
+      "attempt": 1,
+      "contentLength": 33771,
+      "usage": {
+        "input": 13933,
+        "output": 8192
+      },
+      "model": "claude-sonnet-4-6",
+      "stop_reason": "max_tokens"
+    }
+  },
+  {
+    "timestamp": "2026-03-03T09:11:19.204Z",
+    "turn": 5,
+    "type": "error",
+    "data": {
+      "attempt": 1,
+      "error": "LLM response truncated (hit 8192 token output limit, requested 7511)"
+    }
+  },
+  {
+    "timestamp": "2026-03-03T09:11:19.204Z",
+    "turn": 5,
+    "type": "prompt_sent",
+    "data": {
+      "attempt": 2,
+      "systemPromptLength": 8832,
+      "userPromptLength": 40632,
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "temperature": 0.4
+    }
+  },
+  {
+    "timestamp": "2026-03-03T09:13:14.391Z",
+    "turn": 5,
+    "type": "response_received",
+    "data": {
+      "attempt": 2,
+      "contentLength": 22704,
+      "usage": {
+        "input": 13979,
+        "output": 5504
+      },
+      "model": "claude-sonnet-4-6",
+      "stop_reason": "end_turn"
+    }
+  },
+  {
+    "timestamp": "2026-03-03T09:13:14.391Z",
+    "turn": 5,
+    "type": "validation_result",
+    "data": {
+      "attempt": 2,
+      "valid": true,
+      "errors": []
+    }
+  },
+  {
+    "timestamp": "2026-03-03T09:13:14.391Z",
+    "turn": 5,
+    "type": "validation_result",
+    "data": {
+      "type": "state_updates",
+      "valid": false,
+      "errors": [
+        "State mismatch for unit_preset_3.position: LLM says old_value is \"E6\", but current state is \"4,5\""
+      ],
+      "warnings": []
+    }
+  }
+]

@@ -1,14 +1,15 @@
-import { useReducer, useEffect, useCallback, useState } from "react";
+import { useReducer, useEffect, useCallback, useState, useRef, useMemo } from "react";
 import { colors, typography, radius, animation, space } from "../theme.js";
 import { Button, Badge } from "../components/ui.jsx";
 import { ACTOR_COLORS } from "../terrainColors.js";
 import { createGame, getProviders } from "./orchestrator.js";
 import { cellToPositionString, parseUnitPosition } from "../mapRenderer/overlays/UnitOverlay.js";
-import { getQuickstartPreset } from "./presets.js";
+import { getPresetsForMap, getPresetById } from "./presets.js";
 import { SCALE_TIERS, getDefaultEchelon, DEFAULT_ENVIRONMENT, getUnitFieldsForScale } from "./schemas.js";
 import SimMap from "./SimMap.jsx";
 import SetupLeftSidebar from "./SetupLeftSidebar.jsx";
 import SetupRightSidebar from "./SetupRightSidebar.jsx";
+import { buildStrategicGrid } from "../mapRenderer/StrategicGrid.js";
 
 // ═══════════════════════════════════════════════════════════════
 // SIM SETUP CONFIGURE — Step 2: Map-centric sandbox setup
@@ -47,12 +48,19 @@ function createInitialState(terrainData, selectedMap) {
     model: "",
     temperature: 0.4,
 
+    // Era selections (per-actor dropdown state, keyed by actorId → eraId)
+    eraSelections: {},
+
     // Interaction
     interactionMode: "navigate",
-    placementPayload: null, // { actorId, unitType }
+    placementPayload: null, // { actorId, unitType, template? }
     selectedUnitId: null,
     selectedCell: null, // { c, r } — cell being edited in terrain edit mode
     ghostCell: null,
+
+    // Strategic overlay (optional multi-scale rendering)
+    strategicEnabled: false,
+    strategicHexSizeKm: 5, // default strategic hex size
 
     // UI
     leftSidebarOpen: true,
@@ -117,14 +125,19 @@ function setupReducer(state, action) {
         }),
       };
 
+    case "SET_ACTOR_ERA":
+      return { ...state, eraSelections: { ...state.eraSelections, [action.actorId]: action.eraId } };
+
     case "ADD_UNIT": {
       const tierNum = SCALE_TIERS[state.scale]?.tier || 3;
       const scaleFields = getUnitFieldsForScale(tierNum);
+      const tpl = action.template;
       const newUnit = {
         id: `unit_${Date.now()}_${++unitCounter}`,
         actor: action.actorId,
-        name: "",
+        name: tpl?.name || "",
         type: action.unitType || "infantry",
+        templateId: tpl?.templateId || null,
         echelon: getDefaultEchelon(state.scale),
         posture: "ready",
         position: action.position || "",
@@ -133,6 +146,7 @@ function setupReducer(state, action) {
         status: "ready",
         notes: "",
         ...scaleFields,
+        ...(tpl?.defaults || {}),
       };
       return {
         ...state,
@@ -175,7 +189,7 @@ function setupReducer(state, action) {
       return {
         ...state,
         interactionMode: "place_unit",
-        placementPayload: { actorId: action.actorId, unitType: action.unitType },
+        placementPayload: { actorId: action.actorId, unitType: action.unitType, template: action.template || null },
         selectedUnitId: null,
       };
 
@@ -266,9 +280,21 @@ function setupReducer(state, action) {
 
 // ── Component ────────────────────────────────────────────────
 
-export default function SimSetupConfigure({ terrainData, selectedMap, onBack, onStart }) {
+export default function SimSetupConfigure({ terrainData, selectedMap, onBack, onStart, initialPresetId }) {
   const [state, dispatch] = useReducer(setupReducer, createInitialState(terrainData, selectedMap));
   const [providers, setProviders] = useState([]);
+
+  // Auto-apply preset if launched from quick-start
+  const presetApplied = useRef(false);
+  useEffect(() => {
+    if (initialPresetId && !presetApplied.current) {
+      const preset = getPresetById(initialPresetId);
+      if (preset) {
+        dispatch({ type: "LOAD_PRESET", preset });
+        presetApplied.current = true;
+      }
+    }
+  }, [initialPresetId]);
 
   // Deep-clone terrain so edits don't mutate the parent's object
   const [editableTerrainData, setEditableTerrainData] = useState(() => ({
@@ -306,7 +332,9 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
       setProviders(provs);
       if (provs.length > 0) {
         dispatch({ type: "SET_FIELD", field: "provider", value: provs[0].id });
-        dispatch({ type: "SET_FIELD", field: "model", value: provs[0].models?.[0] || "" });
+        const firstModel = provs[0].models?.[0];
+        dispatch({ type: "SET_FIELD", field: "model", value: firstModel?.id || "" });
+        dispatch({ type: "SET_FIELD", field: "temperature", value: firstModel?.temperature ?? 0.4 });
       }
     }).catch(() => {});
   }, []);
@@ -344,6 +372,7 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
         type: "ADD_UNIT",
         actorId: state.placementPayload.actorId,
         unitType: state.placementPayload.unitType,
+        template: state.placementPayload.template,
         position: pos,
       });
     } else {
@@ -364,6 +393,17 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
   const ghostUnit = state.interactionMode === "place_unit" && state.placementPayload
     ? { type: state.placementPayload.unitType, actorId: state.placementPayload.actorId }
     : null;
+
+  // Compute strategic grid when enabled (memoized — only recomputes when inputs change)
+  const strategicGrid = useMemo(() => {
+    if (!state.strategicEnabled || !editableTerrainData?.cellSizeKm) return null;
+    try {
+      return buildStrategicGrid(editableTerrainData, state.strategicHexSizeKm);
+    } catch (e) {
+      console.warn("Strategic grid error:", e.message);
+      return null;
+    }
+  }, [state.strategicEnabled, state.strategicHexSizeKm, editableTerrainData]);
 
   // Start simulation
   const handleStart = () => {
@@ -386,6 +426,7 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
       specialRules: state.specialRules,
       units: state.units.filter(u => u.name.trim()),
       environment: state.environment,
+      eraSelections: state.eraSelections,
     };
 
     const gameState = createGame({
@@ -424,13 +465,28 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
           {SCALE_TIERS[state.scale]?.label || "Grand Tactical"}
         </Badge>
         <div style={{ flex: 1 }} />
-        <Button
-          variant="secondary"
-          onClick={() => dispatch({ type: "LOAD_PRESET", preset: getQuickstartPreset() })}
-          size="sm"
+        <select
+          value=""
+          onChange={e => {
+            const preset = getPresetById(e.target.value);
+            if (preset) dispatch({ type: "LOAD_PRESET", preset });
+          }}
+          style={{
+            background: colors.bg.secondary,
+            color: colors.text.primary,
+            border: `1px solid ${colors.border.subtle}`,
+            borderRadius: radius.sm,
+            padding: `${space[1]}px ${space[2]}px`,
+            fontSize: typography.body.sm,
+            fontFamily: typography.monoFamily,
+            cursor: "pointer",
+          }}
         >
-          Load Preset
-        </Button>
+          <option value="" disabled>Load Preset…</option>
+          {getPresetsForMap(selectedMap).map(p => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
         <Button
           variant="secondary"
           onClick={() => dispatch({
@@ -465,6 +521,7 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
           providers={providers}
           open={state.leftSidebarOpen}
           onToggle={() => dispatch({ type: "TOGGLE_LEFT_SIDEBAR" })}
+          cellSizeKm={editableTerrainData?.cellSizeKm || null}
         />
 
         {/* Map (center) */}
@@ -478,6 +535,8 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
             ghostUnit={ghostUnit}
             onCellClick={handleCellClick}
             isSetupMode={true}
+            strategicGrid={strategicGrid}
+            strategicMode={state.strategicEnabled && !!strategicGrid}
           />
         </div>
 

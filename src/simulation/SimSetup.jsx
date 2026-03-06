@@ -13,9 +13,13 @@ import SimSetupConfigure from "./SimSetupConfigure.jsx";
 export default function SimSetup({ onBack, onStart, initialTerrainData, preset }) {
   const [setupPhase, setSetupPhase] = useState(initialTerrainData ? "configure" : "select-map"); // "select-map" | "configure"
   const [maps, setMaps] = useState([]);
-  const [selectedMap, setSelectedMap] = useState(initialTerrainData ? "test-fixture" : null);
+  // Use _sourceName if available (e.g. from ?test=wales), otherwise default to "test-fixture"
+  const [selectedMap, setSelectedMap] = useState(
+    initialTerrainData ? (initialTerrainData._sourceName || "test-fixture") : null
+  );
   const [terrainData, setTerrainData] = useState(initialTerrainData || null);
   const [loadingMap, setLoadingMap] = useState(false);
+  const [pendingPresetId, setPendingPresetId] = useState(null);
 
   // Auto-start with preset if requested (?preset=quickstart)
   const presetFired = useRef(false);
@@ -90,9 +94,39 @@ export default function SimSetup({ onBack, onStart, initialTerrainData, preset }
     }
   }, [onStart]);
 
+  // Quick-start: load a map by preset requirement, then auto-apply the preset in configure
+  const handleLoadPreset = useCallback(async (presetId, requiredMap) => {
+    setPendingPresetId(presetId);
+    if (requiredMap === "test-fixture") {
+      const fixture = getTestFixture();
+      setTerrainData(fixture);
+      setSelectedMap("test-fixture");
+      setSetupPhase("configure");
+    } else {
+      // Find the matching saved map file
+      const match = maps.find(m => m.name.includes(requiredMap));
+      if (!match) {
+        console.warn(`[preset] No saved map matching "${requiredMap}"`);
+        return;
+      }
+      setLoadingMap(true);
+      try {
+        const resp = await fetch(`/api/load?file=${encodeURIComponent(match.name)}`);
+        const data = await resp.json();
+        setTerrainData(data.map || data);
+        setSelectedMap(match.name);
+        setSetupPhase("configure");
+      } catch (e) {
+        console.error("Failed to load terrain for preset:", e);
+      }
+      setLoadingMap(false);
+    }
+  }, [maps]);
+
   // Transition to configure phase
   const handleContinue = () => {
     if (selectedMap && terrainData) {
+      setPendingPresetId(null); // manual flow, no auto-preset
       setSetupPhase("configure");
     }
   };
@@ -109,6 +143,7 @@ export default function SimSetup({ onBack, onStart, initialTerrainData, preset }
         selectedMap={selectedMap}
         onBack={handleBackToSelect}
         onStart={onStart}
+        initialPresetId={pendingPresetId}
       />
     );
   }
@@ -124,6 +159,7 @@ export default function SimSetup({ onBack, onStart, initialTerrainData, preset }
       onBack={onBack}
       onLoadGame={handleLoadGame}
       onLoadTestFixture={handleLoadTestFixture}
+      onLoadPreset={handleLoadPreset}
     />
   );
 }

@@ -1,15 +1,30 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import SimMap from "./SimMap.jsx";
-import { adjudicate, adjudicateRebuttal, applyStateUpdates, advanceTurn, pauseGame, resumeGame, endGame, saveGameState } from "./orchestrator.js";
+import { adjudicate, adjudicateRebuttal, applyStateUpdates, advanceTurn, pauseGame, resumeGame, endGame, saveGameState, autosave, getProviders } from "./orchestrator.js";
 import { createLogger } from "./logger.js";
 import { colors, typography, radius, animation, space } from "../theme.js";
 import { Button, Badge, Card, SectionHeader } from "../components/ui.jsx";
 import { SCALE_TIERS, isSystemActive, DIPLOMATIC_STATUSES } from "./schemas.js";
 import { buildActorBriefing, buildFullBriefing, downloadFile, downloadDataURL } from "./briefingExport.js";
+import UnitOrderCard from "./components/UnitOrderCard.jsx";
+import OrderRoster from "./components/OrderRoster.jsx";
+import { ORDER_TYPES } from "./orderTypes.js";
+import { parseUnitPosition } from "../mapRenderer/overlays/UnitOverlay.js";
+import { positionToLabel } from "./prompts.js";
+import { hexLine } from "../mapRenderer/HexMath.js";
+import { computeMovePath } from "./orderComputer.js";
+import { PHASES, getNextPhase, isBusyPhase, actorNeedsInput } from "./turnPhases.js";
+import { computeDetection, serializeVisibility, deserializeVisibility } from "./detectionEngine.js";
+import { simulateMovement } from "./movementSimulator.js";
+import { filterAdjudicationForActor, extractProposedMoves } from "./adjudicationFilter.js";
+import HandoffScreen from "./components/HandoffScreen.jsx";
+import ReinforcementPanel from "./components/ReinforcementPanel.jsx";
+import { ACTOR_COLORS } from "../terrainColors.js";
 
 // ═══════════════════════════════════════════════════════════════
 // SIM GAME — Active simulation UI
-// Turn cycle: Planning → Submission → Adjudication → Assessment
+// Turn cycle: per-actor Planning → Detection → Adjudication → per-actor Review
+// Supports hotseat privacy (sealed orders, handoff screens, FOW)
 // ═══════════════════════════════════════════════════════════════
 
 const ESCALATION_COLORS = {
@@ -18,44 +33,98 @@ const ESCALATION_COLORS = {
   "escalating": colors.accent.red,
 };
 
+// Human-readable labels for each phase
+const PHASE_LABELS = {
+  [PHASES.PLANNING]: "Planning",
+  [PHASES.HANDOFF]: "Handoff",
+  [PHASES.COMPUTING_DETECTION]: "Computing Detection",
+  [PHASES.MOVEMENT_AND_DETECTION]: "Simulating Movement & Detection",
+  [PHASES.ADJUDICATING]: "Adjudicating",
+  [PHASES.REVIEW]: "Review",
+  [PHASES.CHALLENGE_COLLECT]: "Challenge",
+  [PHASES.REBUTTAL_COLLECT]: "Counter-Rebuttal",
+  [PHASES.RE_ADJUDICATING]: "Re-Adjudicating",
+  [PHASES.RESOLVING]: "Resolving",
+};
+
+// Find next actor who needs input during challenge/rebuttal collection.
+// Skips actors that don't need input for this phase (e.g., non-challengers skip CHALLENGE_COLLECT).
+// Returns -1 if no actor needs input.
+function findNextInputActor(phase, startIndex, actors, actorDecisions) {
+  for (let i = startIndex; i < actors.length; i++) {
+    if (actorNeedsInput(phase, actors[i].id, actorDecisions)) return i;
+  }
+  return -1;
+}
+
 export default function SimGame({ onBack, gameState: initialGameState, terrainData, onUpdateGameState }) {
-  const [gs, setGs] = useState(initialGameState);
-  const [actions, setActions] = useState({});
-  const [adjudicating, setAdjudicating] = useState(false);
+  // Strip pendingOrders from gs so it doesn't linger in memory or reach the LLM
+  const _pending = initialGameState.pendingOrders || {};
+  const [gs, setGs] = useState(() => {
+    const { pendingOrders, ...cleanGs } = initialGameState;
+    return cleanGs;
+  });
+  const [providers, setProviders] = useState([]);
+  const [adjudicatingLLM, setAdjudicatingLLM] = useState(false);
   const [currentAdjudication, setCurrentAdjudication] = useState(null);
   const [fortuneRolls, setFortuneRolls] = useState(null);
   const [frictionEvents, setFrictionEvents] = useState(null);
   const [error, setError] = useState(null);
 
-  // Rebuttal / challenge phase state
-  // turnPhase: "planning" | "adjudicating" | "review_pending" | "rebuttal_input" | "re_adjudicating"
-  const [turnPhase, setTurnPhase] = useState("planning");
-  const [pendingAdjudication, setPendingAdjudication] = useState(null);
-  const [pendingPlayerActions, setPendingPlayerActions] = useState(null);
-  const [pendingResult, setPendingResult] = useState(null); // full result with fortuneRolls/frictionEvents
-  const [rebuttals, setRebuttals] = useState({});
+  // ── Turn phase state machine ──
+  const [turnPhase, setTurnPhase] = useState(PHASES.PLANNING);
+  const [activeActorIndex, setActiveActorIndex] = useState(_pending.activeActorIndex || 0);
+  const [handoffResumePhase, setHandoffResumePhase] = useState(null); // phase to go to after handoff
+
+  // ── Sealed orders: per-actor orders locked after submission, invisible to subsequent actors ──
+  const [sealedOrders, setSealedOrders] = useState(_pending.sealedOrders || {}); // { actorId: { unitOrders, actorIntent } }
+
+  // ── Detection & per-actor adjudication ──
+  const [visibilityState, setVisibilityState] = useState(null);
+  const [masterAdjudication, setMasterAdjudication] = useState(null);
+  const [perActorAdjudication, setPerActorAdjudication] = useState({}); // { actorId: filtered adj }
+  const [pendingResult, setPendingResult] = useState(null); // full result with fortuneRolls/frictionEvents/promptLog
+  const [contactEvents, setContactEvents] = useState([]);   // contact events from movement simulation
+
+  // ── Challenge/rebuttal state ──
+  const [actorDecisions, setActorDecisions] = useState({}); // { actorId: "accept"|"challenge" }
+  const [challenges, setChallenges] = useState({}); // { actorId: "challenge text" }
+  const [counterRebuttals, setCounterRebuttals] = useState({}); // { actorId: "rebuttal text" }
   const [challengeCount, setChallengeCount] = useState(0);
   const MAX_CHALLENGES = 1;
+
+  // ── UI state ──
   const [expandedTurn, setExpandedTurn] = useState(null);
   const [showRaw, setShowRaw] = useState(false);
   const [moderatorNote, setModeratorNote] = useState("");
+  const [orderWarnings, setOrderWarnings] = useState(null);
+  const [pendingRuling, setPendingRuling] = useState(null); // re-adjudication result shown at start of next turn
   const loggerRef = useRef(createLogger());
   const adjDisplayRef = useRef(null);
   const simMapRef = useRef(null);
+  const adjAbortRef = useRef(null);
 
-  // Sync parent
-  useEffect(() => {
-    if (onUpdateGameState) onUpdateGameState(gs);
-  }, [gs, onUpdateGameState]);
+  // Structured order state (per-unit orders replace free-text textareas)
+  // Restored from pendingOrders on load so confirmed orders survive save/reload
+  const [unitOrders, setUnitOrders] = useState(_pending.unitOrders || {});          // { actorId: { unitId: { movementOrder, actionOrder, intent } } }
+  const [actorIntents, setActorIntents] = useState(_pending.actorIntents || {});       // { actorId: "intent text" }
+  const [selectedUnit, setSelectedUnit] = useState(null);     // unit object or null (for UnitOrderCard)
+  const [targetingMode, setTargetingMode] = useState(null);   // { orderType, unitId } or null
+  const [hoveredCell, setHoveredCell] = useState(null);        // cell under cursor during targeting
 
-  // Initialize action fields for each actor
-  useEffect(() => {
-    const a = {};
-    for (const actor of gs.scenario.actors) {
-      a[actor.id] = actions[actor.id] || "";
-    }
-    setActions(a);
-  }, [gs.scenario.actors]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Reinforcement placement state
+  const [placingReinforcement, setPlacingReinforcement] = useState(false); // map-click mode for reinforcement position
+  const [reinforcementPosition, setReinforcementPosition] = useState(null); // "col,row" selected on map
+
+  // Prompt viewer
+  const [showPrompt, setShowPrompt] = useState(false);
+  const [activeTab, setActiveTab] = useState("narrative");
+  const [fogOfWar, setFogOfWar] = useState(true);
+
+  // ── Derived values ──
+  const actors = gs.scenario.actors;
+  const activeActor = actors[activeActorIndex] || actors[0];
+  const actorColor = ACTOR_COLORS[activeActorIndex % ACTOR_COLORS.length];
 
   const isPaused = gs.game.status === "paused";
   const isEnded = gs.game.status === "ended";
@@ -63,153 +132,715 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
   const scaleTier = SCALE_TIERS[scaleKey]?.tier || 3;
   const maxTurns = gs.game.config?.maxTurns || 20;
 
-  // Prompt viewer and re-adjudicate state
-  const [showPrompt, setShowPrompt] = useState(false);
-  const [activeTab, setActiveTab] = useState("narrative"); // narrative | feasibility | escalation | changes | raw
-  const [fogOfWar, setFogOfWar] = useState(false);
+  // ── FOW mode for map: what the active actor can see ──
+  const fowMode = useMemo(() => {
+    if (!fogOfWar || !visibilityState) return null;
+    const av = visibilityState.actorVisibility?.[activeActor.id];
+    if (!av) return null;
+    return {
+      activeActorId: activeActor.id,
+      detectedUnits: av.detectedUnits instanceof Set ? av.detectedUnits : new Set(av.detectedUnits || []),
+      contactUnits: av.contactUnits instanceof Set ? av.contactUnits : new Set(av.contactUnits || []),
+      visibleCells: av.visibleCells instanceof Set ? av.visibleCells : new Set(av.visibleCells || []),
+      lastKnown: av.lastKnown || {},
+    };
+  }, [fogOfWar, visibilityState, activeActor.id]);
 
-  // ── Submit actions → adjudicate → review_pending (state NOT applied yet) ──
-  const handleSubmit = useCallback(async () => {
-    const filledActions = Object.entries(actions).filter(([, v]) => v.trim());
-    if (filledActions.length === 0) {
-      setError("Enter at least one actor's actions before submitting.");
+  // ── Per-actor adjudication for the active actor during REVIEW ──
+  const activeActorAdj = perActorAdjudication[activeActor.id] || null;
+
+  // ── Display adjudication: per-actor during review, master otherwise ──
+  const displayAdj = useMemo(() => {
+    if (turnPhase === PHASES.REVIEW && activeActorAdj) return activeActorAdj;
+    if (masterAdjudication) return masterAdjudication;
+    return currentAdjudication;
+  }, [turnPhase, activeActorAdj, masterAdjudication, currentAdjudication]);
+
+  // ── Proposed moves from per-actor adjudication for review phase arrows ──
+  const proposedMoves = useMemo(() => {
+    if (turnPhase !== PHASES.REVIEW || !activeActorAdj) return null;
+    const moves = extractProposedMoves(activeActorAdj, gs);
+    if (!moves || moves.length === 0) return null;
+    // Map actorId → color for MapView's drawProposedMoves
+    return moves.map(m => {
+      const idx = actors.findIndex(a => a.id === m.actorId);
+      return {
+        from: m.from,
+        to: m.to,
+        color: ACTOR_COLORS[idx >= 0 ? idx % ACTOR_COLORS.length : 0],
+        unitName: m.unitName,
+      };
+    });
+  }, [turnPhase, activeActorAdj, gs, actors]);
+
+  // ── Map units: filtered by FOW during planning/review ──
+  const mapUnits = useMemo(() => {
+    let units = gs.units;
+
+    // FOW filtering
+    if (fogOfWar && fowMode) {
+      const own = new Set(units.filter(u => u.actor === activeActor.id).map(u => u.id));
+      units = units.filter(u => own.has(u.id) || fowMode.detectedUnits.has(u.id));
+    }
+
+    // During REVIEW, show units at proposed destinations so the map
+    // reflects the adjudicator's narrative before accept/challenge.
+    if (turnPhase === PHASES.REVIEW && activeActorAdj) {
+      const moves = extractProposedMoves(activeActorAdj, gs);
+      if (moves.length > 0) {
+        const posOverrides = new Map(moves.map(m => [m.unitId, m.to]));
+        units = units.map(u =>
+          posOverrides.has(u.id) ? { ...u, position: posOverrides.get(u.id) } : u
+        );
+      }
+    }
+
+    return units;
+  }, [gs.units, fogOfWar, fowMode, activeActor.id, turnPhase, activeActorAdj]);
+
+  // Compute movement path for visualization during targeting mode
+  const movePath = useMemo(() => {
+    if (!targetingMode || !selectedUnit || !hoveredCell) return null;
+    const orderDef = ORDER_TYPES[targetingMode.orderType];
+    if (!orderDef || orderDef.slot !== "movement") return null;
+    const unitPos = parseUnitPosition(selectedUnit.position);
+    if (!unitPos) return null;
+    return hexLine(unitPos.c, unitPos.r, hoveredCell.c, hoveredCell.r);
+  }, [targetingMode, selectedUnit, hoveredCell]);
+
+  // Fetch available LLM providers on mount (for mid-game model switching)
+  useEffect(() => {
+    getProviders().then(data => setProviders(data.providers || [])).catch(() => {});
+  }, []);
+
+  // Sync parent
+  useEffect(() => {
+    if (onUpdateGameState) onUpdateGameState(gs);
+  }, [gs, onUpdateGameState]);
+
+  // Restore visibility state from saved game on mount
+  useEffect(() => {
+    if (gs.visibilityState && !visibilityState) {
+      setVisibilityState(deserializeVisibility(gs.visibilityState));
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Compute initial detection when FOW is turned on but no visibility exists yet
+  useEffect(() => {
+    if (fogOfWar && !visibilityState && gs.units.length > 0 && terrainData) {
+      const vis = computeDetection(gs, terrainData, null, null);
+      setVisibilityState(vis);
+    }
+  }, [fogOfWar]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── MOVEMENT_AND_DETECTION phase: per-hex stepping + detection ──
+  useEffect(() => {
+    if (turnPhase !== PHASES.MOVEMENT_AND_DETECTION && turnPhase !== PHASES.COMPUTING_DETECTION) return;
+    const previousVis = visibilityState;
+
+    // Run the full movement simulation with detection at each step
+    const simResult = simulateMovement(gs, terrainData, sealedOrders, previousVis);
+
+    setVisibilityState(simResult.finalVisibility);
+    setContactEvents(simResult.contactEvents || []);
+
+    setTurnPhase(PHASES.ADJUDICATING);
+  }, [turnPhase]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── RESOLVING phase: apply adjudication + advance turn ──
+  useEffect(() => {
+    if (turnPhase !== PHASES.RESOLVING) return;
+    applyMasterAdjudication();
+  }, [turnPhase]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── ADJUDICATING phase: call LLM with sealed orders + detection context ──
+  useEffect(() => {
+    if (turnPhase !== PHASES.ADJUDICATING) return;
+    let cancelled = false;
+    const abortController = new AbortController();
+    adjAbortRef.current = abortController;
+
+    (async () => {
+      setAdjudicatingLLM(true);
+      setError(null);
+
+      // Build playerActions from sealedOrders for backward compat with adjudicate()
+      const playerActions = {};
+      for (const actor of actors) {
+        const sealed = sealedOrders[actor.id];
+        if (!sealed) { playerActions[actor.id] = "HOLD"; continue; }
+
+        const lines = [];
+        if (sealed.actorIntent) lines.push(`Commander's Intent: ${sealed.actorIntent}`);
+        const actorUnits = gs.units.filter(u => u.actor === actor.id);
+        for (const unit of actorUnits) {
+          const orders = sealed.unitOrders?.[unit.id];
+          if (!orders || (!orders.movementOrder && !orders.actionOrder)) {
+            lines.push(`${unit.name}: HOLD`);
+            continue;
+          }
+          const parts = [];
+          if (orders.movementOrder) {
+            const tgt = orders.movementOrder.target ? positionToLabel(orders.movementOrder.target) : "";
+            parts.push(`${orders.movementOrder.id}${tgt ? " to " + tgt : ""}`);
+          }
+          if (orders.actionOrder) {
+            const tgt = orders.actionOrder.target ? positionToLabel(orders.actionOrder.target) : "";
+            const sub = orders.actionOrder.subtype ? ` (${orders.actionOrder.subtype})` : "";
+            parts.push(`${orders.actionOrder.id}${tgt ? " at " + tgt : ""}${sub}`);
+          }
+          lines.push(`${unit.name}: ${parts.join(" then ")}`);
+          if (orders.intent) lines.push(`  Intent: ${orders.intent}`);
+        }
+        playerActions[actor.id] = lines.join("\n");
+      }
+
+      // Build structured orders from sealed orders
+      const allUnitOrders = {};
+      const allActorIntents = {};
+      for (const actor of actors) {
+        const sealed = sealedOrders[actor.id];
+        if (sealed) {
+          allUnitOrders[actor.id] = sealed.unitOrders || {};
+          allActorIntents[actor.id] = sealed.actorIntent || "";
+        }
+      }
+      const structuredOrders = { unitOrders: allUnitOrders, actorIntents: allActorIntents };
+
+      // Build detection context for prompt injection
+      const detectionContext = visibilityState ? {
+        actorVisibility: Object.fromEntries(
+          Object.entries(visibilityState.actorVisibility || {}).map(([actorId, av]) => [
+            actorId, {
+              detectedUnits: [...(av.detectedUnits instanceof Set ? av.detectedUnits : new Set(av.detectedUnits || []))],
+              contactUnits: [...(av.contactUnits instanceof Set ? av.contactUnits : new Set(av.contactUnits || []))],
+              detectionDetails: av.detectionDetails || {},
+              lastKnown: av.lastKnown || {},
+            },
+          ])
+        ),
+        contactEvents: contactEvents || [],
+      } : null;
+
+      const result = await adjudicate(gs, playerActions, terrainData, loggerRef.current, structuredOrders, detectionContext, abortController.signal);
+
+      if (cancelled) return;
+
+      if (result.fortuneRolls) setFortuneRolls(result.fortuneRolls);
+      if (result.frictionEvents) setFrictionEvents(result.frictionEvents);
+
+      if (result.error && !result.adjudication) {
+        setError(result.error);
+        setAdjudicatingLLM(false);
+        setTurnPhase(PHASES.PLANNING);
+        setActiveActorIndex(0);
+        return;
+      }
+
+      // Store master adjudication (full truth — never shown to players directly)
+      setMasterAdjudication(result.adjudication);
+      setCurrentAdjudication(result.adjudication);
+      setPendingResult(result);
+
+      // Build per-actor filtered views
+      const perActor = {};
+      for (const actor of actors) {
+        perActor[actor.id] = filterAdjudicationForActor(result.adjudication, actor.id, visibilityState, gs);
+      }
+      setPerActorAdjudication(perActor);
+
+      setAdjudicatingLLM(false);
+      setChallengeCount(0);
+      setActorDecisions({});
+      setChallenges({});
+      setCounterRebuttals({});
+
+      if (result.error) setError(result.error);
+
+      // Transition to REVIEW with first actor
+      setActiveActorIndex(0);
+      // Show handoff screen before first actor reviews
+      if (actors.length > 1 && fogOfWar) {
+        setHandoffResumePhase(PHASES.REVIEW);
+        setTurnPhase(PHASES.HANDOFF);
+      } else {
+        setTurnPhase(PHASES.REVIEW);
+      }
+
+      setTimeout(() => {
+        adjDisplayRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 100);
+    })();
+
+    return () => {
+      cancelled = true;
+      abortController.abort();
+      adjAbortRef.current = null;
+    };
+  }, [turnPhase]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Structured order handlers ──
+  const handleUnitClick = useCallback((unit) => {
+    setSelectedUnit(unit);
+  }, []);
+
+  const handleOrderConfirm = useCallback((orders) => {
+    if (!selectedUnit) return;
+    setUnitOrders(prev => ({
+      ...prev,
+      [selectedUnit.actor]: {
+        ...(prev[selectedUnit.actor] || {}),
+        [selectedUnit.id]: orders,
+      },
+    }));
+    setSelectedUnit(null);
+    setTargetingMode(null);
+  }, [selectedUnit]);
+
+  const handleStartTargeting = useCallback((orderType) => {
+    if (!selectedUnit) return;
+    setTargetingMode({ orderType, unitId: selectedUnit.id });
+  }, [selectedUnit]);
+
+  const handleCancelTargeting = useCallback(() => {
+    setTargetingMode(null);
+  }, []);
+
+  // Click a hex on the map outside targeting mode — open unit card if a unit is there
+  const handleMapCellClick = useCallback((cell) => {
+    if (turnPhase !== PHASES.PLANNING) return;
+    // Reinforcement placement mode — set the position
+    if (placingReinforcement) {
+      setReinforcementPosition(`${cell.c},${cell.r}`);
+      setPlacingReinforcement(false);
       return;
     }
+    const unit = gs.units.find(u => {
+      if (u.status === "destroyed" || u.status === "eliminated") return false;
+      if (fogOfWar && u.actor !== activeActor.id) return false; // can't click hidden enemies
+      const pos = parseUnitPosition(u.position);
+      return pos && pos.c === cell.c && pos.r === cell.r;
+    });
+    if (unit) setSelectedUnit(unit);
+  }, [gs.units, turnPhase, fogOfWar, activeActor.id, placingReinforcement]);
 
-    setTurnPhase("adjudicating");
-    setAdjudicating(true);
-    setError(null);
-    setCurrentAdjudication(null);
+  // Map click during targeting mode — set the target on the current order
+  const handleTargetSelect = useCallback((cell) => {
+    if (!targetingMode || !selectedUnit) return;
+    const targetStr = `${cell.c},${cell.r}`;
+    const orderDef = ORDER_TYPES[targetingMode.orderType];
+    if (!orderDef) return;
 
-    const playerActions = {};
-    for (const [actorId, text] of filledActions) {
-      playerActions[actorId] = text;
-    }
+    setUnitOrders(prev => {
+      const actorOrders = prev[selectedUnit.actor] || {};
+      const currentOrders = actorOrders[selectedUnit.id] || {};
+      const isMovement = orderDef.slot === "movement";
+      const updated = { ...currentOrders };
 
-    const result = await adjudicate(gs, playerActions, terrainData, loggerRef.current);
+      if (isMovement) {
+        updated.movementOrder = { id: targetingMode.orderType, target: targetStr };
+      } else {
+        updated.actionOrder = { id: targetingMode.orderType, target: targetStr, subtype: currentOrders.actionOrder?.subtype };
+      }
 
-    // Store fortune/friction even if adjudication fails
-    if (result.fortuneRolls) setFortuneRolls(result.fortuneRolls);
-    if (result.frictionEvents) setFrictionEvents(result.frictionEvents);
+      return {
+        ...prev,
+        [selectedUnit.actor]: { ...actorOrders, [selectedUnit.id]: updated },
+      };
+    });
+    setTargetingMode(null);
+  }, [targetingMode, selectedUnit]);
 
-    if (result.error && !result.adjudication) {
-      setError(result.error);
-      setAdjudicating(false);
-      setTurnPhase("planning");
-      return;
-    }
+  const handleActorIntentChange = useCallback((actorId, text) => {
+    setActorIntents(prev => ({ ...prev, [actorId]: text }));
+  }, []);
 
-    // Store pending — do NOT apply state updates yet
-    setCurrentAdjudication(result.adjudication);
-    setPendingAdjudication(result.adjudication);
-    setPendingPlayerActions(playerActions);
-    setPendingResult(result);
-    setAdjudicating(false);
-    setTurnPhase("review_pending");
-    setChallengeCount(0);
-    setRebuttals({});
-    if (result.error) setError(result.error);
+  // ── Validate orders for the active actor before sealing ──
+  const validateActiveActorOrders = useCallback(() => {
+    const warnings = [];
+    const actorOrders = unitOrders[activeActor.id] || {};
+    const actorUnits = gs.units.filter(u => u.actor === activeActor.id);
+    for (const unit of actorUnits) {
+      const orders = actorOrders[unit.id];
+      if (!orders?.movementOrder?.target) continue;
+      const moveId = orders.movementOrder.id;
+      if (moveId !== "MOVE" && moveId !== "WITHDRAW") continue;
 
-    setTimeout(() => {
-      adjDisplayRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 100);
-  }, [gs, actions, terrainData]);
+      const result = computeMovePath(
+        unit.position,
+        orders.movementOrder.target,
+        terrainData,
+        unit.movementType || "foot"
+      );
+      if (!result || result.feasibility === "FEASIBLE" || result.feasibility === "MARGINAL") continue;
 
-  // ── Accept & Apply — finalize the pending adjudication ──
-  const handleAccept = useCallback(() => {
-    if (!pendingAdjudication || !pendingPlayerActions) return;
-
-    let newGs = applyStateUpdates(gs, pendingAdjudication, pendingPlayerActions);
-
-    if (pendingResult?.promptLog) {
-      newGs = { ...newGs, promptLog: [...newGs.promptLog, pendingResult.promptLog] };
-    }
-
-    setGs(newGs);
-    setTurnPhase("planning");
-    setPendingAdjudication(null);
-    setPendingPlayerActions(null);
-    setPendingResult(null);
-    loggerRef.current.flush(newGs.game.id).catch(() => {});
-    saveGameState(newGs).catch(() => {});
-  }, [gs, pendingAdjudication, pendingPlayerActions, pendingResult]);
-
-  // ── Challenge — open rebuttal input ──
-  const handleChallenge = useCallback(() => {
-    const r = {};
-    for (const actor of gs.scenario.actors) {
-      r[actor.id] = "";
-    }
-    setRebuttals(r);
-    setTurnPhase("rebuttal_input");
-  }, [gs.scenario.actors]);
-
-  // ── Submit rebuttals — re-adjudicate with same context ──
-  const handleSubmitRebuttal = useCallback(async () => {
-    const filledRebuttals = Object.entries(rebuttals).filter(([, v]) => v.trim());
-    if (filledRebuttals.length === 0) {
-      setError("Enter at least one rebuttal before submitting.");
-      return;
-    }
-
-    setTurnPhase("re_adjudicating");
-    setAdjudicating(true);
-    setError(null);
-
-    const result = await adjudicateRebuttal(
-      gs, pendingPlayerActions, terrainData, pendingResult, rebuttals, loggerRef.current
-    );
-
-    if (result.error && !result.adjudication) {
-      setError(result.error);
-      setAdjudicating(false);
-      setTurnPhase("review_pending"); // fall back to review
-      return;
-    }
-
-    // Update pending adjudication with rebuttal result
-    setCurrentAdjudication(result.adjudication);
-    setPendingAdjudication(result.adjudication);
-    // Merge prompt logs
-    if (result.promptLog && pendingResult) {
-      setPendingResult({
-        ...pendingResult,
-        promptLog: result.promptLog, // use latest
-        adjudication: result.adjudication,
+      warnings.push({
+        unitName: unit.name,
+        actor: activeActor.name || activeActor.id,
+        from: positionToLabel(unit.position),
+        to: positionToLabel(orders.movementOrder.target),
+        distanceHexes: result.distanceHexes,
+        budget: result.budget ?? 3,
+        totalCost: result.totalCost,
+        feasibility: result.feasibility,
+        movementType: unit.movementType || "foot",
       });
     }
-    setAdjudicating(false);
-    setChallengeCount(c => c + 1);
-    setTurnPhase("review_pending");
-    if (result.error) setError(result.error);
+    return warnings;
+  }, [gs, unitOrders, terrainData, activeActor]);
 
-    setTimeout(() => {
-      adjDisplayRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 100);
-  }, [gs, pendingPlayerActions, terrainData, pendingResult, rebuttals]);
+  // ── Seal active actor's orders and advance to next actor or detection ──
+  const sealAndAdvance = useCallback(() => {
+    // Seal this actor's orders
+    const sealed = {
+      unitOrders: unitOrders[activeActor.id] || {},
+      actorIntent: actorIntents[activeActor.id] || "",
+    };
+    const newSealed = { ...sealedOrders, [activeActor.id]: sealed };
+    setSealedOrders(newSealed);
 
-  const handleNextTurn = useCallback(() => {
-    // Must accept pending adjudication first if not yet applied
-    if (pendingAdjudication && pendingPlayerActions) {
-      handleAccept();
+    // Clear working order state for privacy (next actor can't see them)
+    setUnitOrders(prev => {
+      const copy = { ...prev };
+      delete copy[activeActor.id];
+      return copy;
+    });
+    setActorIntents(prev => {
+      const copy = { ...prev };
+      delete copy[activeActor.id];
+      return copy;
+    });
+    setSelectedUnit(null);
+    setTargetingMode(null);
+
+    // Determine next phase
+    const context = { activeActorIndex, actorCount: actors.length, sealedOrders: newSealed, actorDecisions };
+    const next = getNextPhase(PHASES.PLANNING, context);
+
+    if (next.nextActorIndex !== null) {
+      // More actors to collect orders from
+      setActiveActorIndex(next.nextActorIndex);
+      if (fogOfWar) {
+        setHandoffResumePhase(PHASES.PLANNING);
+        setTurnPhase(PHASES.HANDOFF);
+      } else {
+        setTurnPhase(PHASES.PLANNING);
+      }
+    } else {
+      // All actors sealed — move to detection/adjudication
+      if (fogOfWar) {
+        setTurnPhase(PHASES.COMPUTING_DETECTION);
+      } else {
+        setTurnPhase(PHASES.ADJUDICATING);
+      }
     }
-    const newGs = advanceTurn(gs);
+  }, [unitOrders, actorIntents, activeActor, sealedOrders, activeActorIndex, actors, actorDecisions, fogOfWar]);
+
+  // ── Submit orders: validate → seal ──
+  const handleSealOrders = useCallback(() => {
+    const warnings = validateActiveActorOrders();
+    if (warnings.length > 0) {
+      setOrderWarnings(warnings);
+      return;
+    }
+    sealAndAdvance();
+  }, [validateActiveActorOrders, sealAndAdvance]);
+
+  // ── Force submit — user saw warnings and chose to proceed anyway ──
+  const handleForceSubmit = useCallback(() => {
+    setOrderWarnings(null);
+    sealAndAdvance();
+  }, [sealAndAdvance]);
+
+  // ── Review phase: active actor accepts ──
+  const handleActorAccept = useCallback(() => {
+    const newDecisions = { ...actorDecisions, [activeActor.id]: "accept" };
+    setActorDecisions(newDecisions);
+
+    // Check if all actors have reviewed
+    const nextIdx = activeActorIndex + 1;
+    if (nextIdx >= actors.length) {
+      // All actors reviewed — check for challenges
+      const anyChallenged = Object.values(newDecisions).some(d => d === "challenge");
+      if (anyChallenged) {
+        // Go to challenge collection
+        const firstChallenger = findNextInputActor(PHASES.CHALLENGE_COLLECT, 0, actors, newDecisions);
+        if (firstChallenger >= 0) {
+          setActiveActorIndex(firstChallenger);
+          if (actors.length > 1 && fogOfWar) {
+            setHandoffResumePhase(PHASES.CHALLENGE_COLLECT);
+            setTurnPhase(PHASES.HANDOFF);
+          } else {
+            setTurnPhase(PHASES.CHALLENGE_COLLECT);
+          }
+        } else {
+          // No one actually needs to input? Apply.
+          setTurnPhase(PHASES.RESOLVING);
+        }
+      } else {
+        // All accepted — apply
+        setTurnPhase(PHASES.RESOLVING);
+      }
+    } else {
+      // More actors to review
+      setActiveActorIndex(nextIdx);
+      if (actors.length > 1 && fogOfWar) {
+        setHandoffResumePhase(PHASES.REVIEW);
+        setTurnPhase(PHASES.HANDOFF);
+      } else {
+        // no handoff needed
+      }
+    }
+  }, [actorDecisions, activeActor, activeActorIndex, actors, fogOfWar]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Review phase: active actor challenges ──
+  const handleActorChallenge = useCallback(() => {
+    const newDecisions = { ...actorDecisions, [activeActor.id]: "challenge" };
+    setActorDecisions(newDecisions);
+
+    // Continue review for remaining actors
+    const nextIdx = activeActorIndex + 1;
+    if (nextIdx >= actors.length) {
+      // All reviewed — go to challenge collection
+      const firstChallenger = findNextInputActor(PHASES.CHALLENGE_COLLECT, 0, actors, newDecisions);
+      if (firstChallenger >= 0) {
+        setActiveActorIndex(firstChallenger);
+        if (actors.length > 1 && fogOfWar) {
+          setHandoffResumePhase(PHASES.CHALLENGE_COLLECT);
+          setTurnPhase(PHASES.HANDOFF);
+        } else {
+          setTurnPhase(PHASES.CHALLENGE_COLLECT);
+        }
+      }
+    } else {
+      setActiveActorIndex(nextIdx);
+      if (actors.length > 1 && fogOfWar) {
+        setHandoffResumePhase(PHASES.REVIEW);
+        setTurnPhase(PHASES.HANDOFF);
+      }
+    }
+  }, [actorDecisions, activeActor, activeActorIndex, actors, fogOfWar]);
+
+  // ── Apply master adjudication to game state ──
+  const applyMasterAdjudication = useCallback(() => {
+    if (!masterAdjudication) return;
+
+    // Build playerActions from sealedOrders for applyStateUpdates
+    const playerActions = {};
+    for (const actor of actors) {
+      const sealed = sealedOrders[actor.id];
+      if (!sealed) { playerActions[actor.id] = "HOLD"; continue; }
+      const lines = [];
+      if (sealed.actorIntent) lines.push(`Commander's Intent: ${sealed.actorIntent}`);
+      const actorUnits = gs.units.filter(u => u.actor === actor.id);
+      for (const unit of actorUnits) {
+        const orders = sealed.unitOrders?.[unit.id];
+        if (!orders || (!orders.movementOrder && !orders.actionOrder)) {
+          lines.push(`${unit.name}: HOLD`);
+        } else {
+          const parts = [];
+          if (orders.movementOrder) {
+            const tgt = orders.movementOrder.target ? positionToLabel(orders.movementOrder.target) : "";
+            parts.push(`${orders.movementOrder.id}${tgt ? " to " + tgt : ""}`);
+          }
+          if (orders.actionOrder) {
+            const tgt = orders.actionOrder.target ? positionToLabel(orders.actionOrder.target) : "";
+            const sub = orders.actionOrder.subtype ? ` (${orders.actionOrder.subtype})` : "";
+            parts.push(`${orders.actionOrder.id}${tgt ? " at " + tgt : ""}${sub}`);
+          }
+          lines.push(`${unit.name}: ${parts.join(" then ")}`);
+        }
+      }
+      playerActions[actor.id] = lines.join("\n");
+    }
+
+    let newGs = applyStateUpdates(gs, masterAdjudication, playerActions);
+
+    // Save visibility state into game state for persistence
+    if (visibilityState) {
+      newGs = { ...newGs, visibilityState: serializeVisibility(visibilityState) };
+    }
+
+    if (pendingResult?.promptLog) {
+      const trimmedLog = newGs.promptLog.map(({ rawResponse, ...rest }) => rest);
+      newGs = { ...newGs, promptLog: [...trimmedLog, pendingResult.promptLog] };
+    }
+
+    // Advance turn
+    newGs = advanceTurn(newGs);
+
     setGs(newGs);
-    setActions({});
+    setTurnPhase(PHASES.PLANNING);
+    setActiveActorIndex(0);
+    setMasterAdjudication(null);
+    setPerActorAdjudication({});
     setCurrentAdjudication(null);
+    setPendingResult(null);
+    setSealedOrders({});
+    setActorDecisions({});
+    setChallenges({});
+    setCounterRebuttals({});
+    setChallengeCount(0);
     setFortuneRolls(null);
     setFrictionEvents(null);
+    setUnitOrders({});
+    setActorIntents({});
+    setSelectedUnit(null);
+    setTargetingMode(null);
     setError(null);
     setModeratorNote("");
-    setTurnPhase("planning");
-    setPendingAdjudication(null);
-    setPendingPlayerActions(null);
-    setPendingResult(null);
-    setChallengeCount(0);
-    setRebuttals({});
-    saveGameState(newGs).catch(() => {});
-  }, [gs, pendingAdjudication, pendingPlayerActions, handleAccept]);
+    setActiveTab("narrative");
 
+    loggerRef.current.flush(newGs.game.id).catch(() => {});
+    // Autosave at turn boundary — rolling window of last 5 turns
+    autosave(newGs).catch(() => {});
+  }, [gs, masterAdjudication, sealedOrders, actors, visibilityState, pendingResult]);
+
+  // ── Challenge text collection ──
+  const handleSubmitChallenge = useCallback(() => {
+    const text = challenges[activeActor.id] || "";
+    if (!text.trim()) {
+      setError("Enter your challenge text before submitting.");
+      return;
+    }
+    setError(null);
+
+    // Find next challenger
+    const nextChallenger = findNextInputActor(PHASES.CHALLENGE_COLLECT, activeActorIndex + 1, actors, actorDecisions);
+    if (nextChallenger >= 0) {
+      setActiveActorIndex(nextChallenger);
+      if (actors.length > 1 && fogOfWar) {
+        setHandoffResumePhase(PHASES.CHALLENGE_COLLECT);
+        setTurnPhase(PHASES.HANDOFF);
+      }
+    } else {
+      // All challenges collected — go to counter-rebuttal collection
+      const firstRebutter = findNextInputActor(PHASES.REBUTTAL_COLLECT, 0, actors, actorDecisions);
+      if (firstRebutter >= 0) {
+        setActiveActorIndex(firstRebutter);
+        if (actors.length > 1 && fogOfWar) {
+          setHandoffResumePhase(PHASES.REBUTTAL_COLLECT);
+          setTurnPhase(PHASES.HANDOFF);
+        } else {
+          setTurnPhase(PHASES.REBUTTAL_COLLECT);
+        }
+      } else {
+        // No rebuttals needed — trigger re-adjudication
+        triggerReAdjudication();
+      }
+    }
+  }, [challenges, activeActor, activeActorIndex, actors, actorDecisions, fogOfWar]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Counter-rebuttal collection ──
+  const handleSubmitCounterRebuttal = useCallback(() => {
+    setError(null);
+    const nextRebutter = findNextInputActor(PHASES.REBUTTAL_COLLECT, activeActorIndex + 1, actors, actorDecisions);
+    if (nextRebutter >= 0) {
+      setActiveActorIndex(nextRebutter);
+      if (actors.length > 1 && fogOfWar) {
+        setHandoffResumePhase(PHASES.REBUTTAL_COLLECT);
+        setTurnPhase(PHASES.HANDOFF);
+      }
+    } else {
+      // All rebuttals collected — re-adjudicate
+      triggerReAdjudication();
+    }
+  }, [activeActorIndex, actors, actorDecisions, fogOfWar]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Re-adjudicate with challenges + counter-rebuttals ──
+  const handleCancelAdjudication = useCallback(() => {
+    if (adjAbortRef.current) {
+      adjAbortRef.current.abort();
+      adjAbortRef.current = null;
+    }
+    setAdjudicatingLLM(false);
+    setError("Adjudication cancelled");
+    setTurnPhase(PHASES.PLANNING);
+    setActiveActorIndex(0);
+  }, []);
+
+  const triggerReAdjudication = useCallback(async () => {
+    setTurnPhase(PHASES.RE_ADJUDICATING);
+    setAdjudicatingLLM(true);
+    setError(null);
+    const abortController = new AbortController();
+    adjAbortRef.current = abortController;
+
+    // Build playerActions from sealedOrders
+    const playerActions = {};
+    for (const actor of actors) {
+      const sealed = sealedOrders[actor.id];
+      playerActions[actor.id] = sealed ? `${sealed.actorIntent || ""}\n${Object.entries(sealed.unitOrders || {}).map(([uid, o]) => `${uid}: ${JSON.stringify(o)}`).join("\n")}` : "HOLD";
+    }
+
+    const result = await adjudicateRebuttal(
+      gs, playerActions, terrainData, pendingResult, challenges, loggerRef.current, counterRebuttals, abortController.signal
+    );
+    adjAbortRef.current = null;
+
+    if (result.error && !result.adjudication) {
+      setError(result.error);
+      setAdjudicatingLLM(false);
+      // Fall back to review
+      setActiveActorIndex(0);
+      setTurnPhase(PHASES.REVIEW);
+      return;
+    }
+
+    // Update adjudication
+    setMasterAdjudication(result.adjudication);
+    setCurrentAdjudication(result.adjudication);
+    if (result.promptLog && pendingResult) {
+      setPendingResult({ ...pendingResult, promptLog: result.promptLog, adjudication: result.adjudication });
+    }
+
+    // Rebuild per-actor views
+    const perActor = {};
+    for (const actor of actors) {
+      perActor[actor.id] = filterAdjudicationForActor(result.adjudication, actor.id, visibilityState, gs);
+    }
+    setPerActorAdjudication(perActor);
+
+    setAdjudicatingLLM(false);
+    setChallengeCount(c => c + 1);
+    setActorDecisions({});
+
+    if (result.error) setError(result.error);
+
+    // Store ruling so it shows as popup at the start of the next turn
+    setPendingRuling(result.adjudication);
+
+    // LLM ruling after challenges is final — apply and advance
+    setTurnPhase(PHASES.RESOLVING);
+  }, [gs, actors, sealedOrders, terrainData, pendingResult, challenges, counterRebuttals, visibilityState, fogOfWar]);
+
+  // ── Handoff: advance to the resumed phase ──
+  const handleHandoffReady = useCallback(() => {
+    if (handoffResumePhase) {
+      setTurnPhase(handoffResumePhase);
+      setHandoffResumePhase(null);
+    }
+  }, [handoffResumePhase]);
+
+  // ── Start over: discard adjudication, go back to planning ──
+  const handleStartOver = useCallback(() => {
+    setCurrentAdjudication(null);
+    setMasterAdjudication(null);
+    setPerActorAdjudication({});
+    setPendingResult(null);
+    setSealedOrders({});
+    setActorDecisions({});
+    setChallenges({});
+    setCounterRebuttals({});
+    setFortuneRolls(null);
+    setFrictionEvents(null);
+    setChallengeCount(0);
+    setActiveActorIndex(0);
+    setTurnPhase(PHASES.PLANNING);
+    setActiveTab("narrative");
+  }, []);
+
+  // ── Pause / Resume / End ──
   const handlePause = useCallback(() => {
     const newGs = pauseGame(gs);
     setGs(newGs);
@@ -237,16 +868,68 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
     loggerRef.current.exportLog(gs.game.name || gs.game.id);
   }, [gs]);
 
-  // ── Export handlers ──
   const handleExportBriefing = useCallback((actorId) => {
     const md = actorId
-      ? buildActorBriefing(gs, actorId, terrainData, { fortuneRolls, frictionEvents })
+      ? buildActorBriefing(gs, actorId, terrainData, { fortuneRolls, frictionEvents, visibilityState })
       : buildFullBriefing(gs, terrainData, { fortuneRolls, frictionEvents });
     const actorName = actorId
       ? (gs.scenario.actors.find(a => a.id === actorId)?.name || actorId).replace(/\s+/g, "_")
       : "full";
     downloadFile(md, `briefing_${actorName}_turn${gs.game.turn}.md`);
   }, [gs, terrainData, fortuneRolls, frictionEvents]);
+
+  // ── Reinforcement handlers ──
+
+  const handleAddReinforcementUnit = useCallback((unit) => {
+    // Add unit immediately to the game state
+    setGs(prev => ({ ...prev, units: [...prev.units, unit] }));
+    setReinforcementPosition(null);
+  }, []);
+
+  const handleScheduleReinforcementUnit = useCallback((entry) => {
+    // Add to reinforcement queue for future arrival
+    setGs(prev => ({
+      ...prev,
+      reinforcementQueue: [...(prev.reinforcementQueue || []), entry],
+    }));
+    setReinforcementPosition(null);
+  }, []);
+
+  const handleAddActor = useCallback((actor, diplomacyPairs) => {
+    setGs(prev => {
+      const newActors = [...prev.scenario.actors, actor];
+      const scaleTier = SCALE_TIERS[prev.game?.scale]?.tier || 3;
+
+      // Initialize diplomacy for new actor (tier 4+)
+      let newDiplomacy = { ...(prev.diplomacy || {}) };
+      if (scaleTier >= 4 && diplomacyPairs) {
+        for (const [existingId, status] of Object.entries(diplomacyPairs)) {
+          const key = [existingId, actor.id].sort().join("-");
+          newDiplomacy[key] = { status, channels: ["none"], agreements: [] };
+        }
+      }
+
+      // Initialize supply network for new actor (tier 3+)
+      let newSupply = { ...(prev.supplyNetwork || {}) };
+      if (scaleTier >= 3) {
+        newSupply[actor.id] = { depots: [], resupplyRate: 50 };
+      }
+
+      return {
+        ...prev,
+        scenario: { ...prev.scenario, actors: newActors },
+        diplomacy: newDiplomacy,
+        supplyNetwork: newSupply,
+      };
+    });
+  }, []);
+
+  const handleRemoveQueuedReinforcement = useCallback((reinfId) => {
+    setGs(prev => ({
+      ...prev,
+      reinforcementQueue: (prev.reinforcementQueue || []).filter(r => r.id !== reinfId),
+    }));
+  }, []);
 
   const handleExportMap = useCallback(() => {
     const dataURL = simMapRef.current?.exportImage?.();
@@ -257,28 +940,60 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
     }
   }, [gs.game.turn]);
 
+  const [saveStatus, setSaveStatus] = useState(null); // null | "saving" | "saved" | "error"
   const handleSave = useCallback(() => {
-    saveGameState(gs).then(r => {
-      if (r.ok) setError(null);
-    }).catch(e => setError("Save failed: " + e.message));
-  }, [gs]);
+    setSaveStatus("saving");
+    // Bundle planning-phase state so confirmed orders survive save/reload
+    const toSave = {
+      ...gs,
+      pendingOrders: { unitOrders, actorIntents, sealedOrders, activeActorIndex },
+    };
+    saveGameState(toSave).then(r => {
+      if (r.ok) {
+        setSaveStatus("saved");
+        setError(null);
+        setTimeout(() => setSaveStatus(null), 2000);
+      } else {
+        setSaveStatus("error");
+      }
+    }).catch(e => {
+      setSaveStatus("error");
+      setError("Save failed: " + e.message);
+    });
+  }, [gs, unitOrders, actorIntents, sealedOrders, activeActorIndex]);
 
   // ── Render ──
 
-  const adj = currentAdjudication?.adjudication;
+  const adj = displayAdj?.adjudication || displayAdj;
   const deEsc = adj?.de_escalation_assessment;
   const hasAdjudication = !!adj;
+  const actorViewExtras = displayAdj?._actor_view || adj?._actor_view || null;
 
   const feasibilityColor = (f) => f === "high" ? colors.accent.green : f === "infeasible" ? colors.accent.red : colors.accent.amber;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", background: colors.bg.base, color: colors.text.primary, fontFamily: typography.fontFamily, animation: "fadeIn 0.3s ease-out" }}>
 
+      {/* Handoff screen overlay — blocks all game content between actors */}
+      {turnPhase === PHASES.HANDOFF && (
+        <HandoffScreen
+          actorName={activeActor.name || activeActor.id}
+          actorColor={actorColor}
+          phaseName={PHASE_LABELS[handoffResumePhase] || "Next Phase"}
+          turnNumber={gs.game.turn}
+          onReady={handleHandoffReady}
+        />
+      )}
+
       {/* Toolbar */}
       <div style={{ padding: `${space[2] + 2}px ${space[5]}px`, borderBottom: `1px solid ${colors.border.subtle}`, display: "flex", alignItems: "center", gap: space[3], flexShrink: 0 }}>
         <div style={{ fontWeight: typography.weight.bold, fontSize: typography.heading.sm }}>{gs.scenario.title || "Simulation"}</div>
         <Badge color={colors.accent.cyan} style={{ fontSize: 10 }}>{SCALE_TIERS[scaleKey]?.label || scaleKey}</Badge>
         <Badge color={colors.accent.amber} style={{ fontSize: 11, fontWeight: typography.weight.bold, animation: hasAdjudication ? "none" : "pulse 2s infinite" }}>Turn {gs.game.turn}/{maxTurns}</Badge>
+        {/* Active actor + phase indicator */}
+        <Badge color={actorColor} style={{ fontSize: 10 }}>
+          {activeActor.name || activeActor.id} — {PHASE_LABELS[turnPhase] || turnPhase}
+        </Badge>
         {gs.game.currentDate && (
           <Badge color={colors.accent.cyan} style={{ fontSize: 10, fontFamily: typography.monoFamily }}>
             {formatSimDate(gs.game.currentDate)}
@@ -296,7 +1011,6 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
             {deEsc.current_escalation_level || ""} ({deEsc.escalation_direction})
           </Badge>
         )}
-        {/* Token usage counter */}
         {gs.promptLog.length > 0 && (
           <span style={{ fontSize: typography.body.xs, color: colors.text.muted, fontFamily: typography.monoFamily }}>
             {(() => {
@@ -305,11 +1019,44 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
             })()}
           </span>
         )}
-        <div style={{ marginLeft: "auto", display: "flex", gap: space[1] + 2 }}>
-          <Button variant="secondary" onClick={handleSave} size="sm">Save</Button>
+        <div style={{ marginLeft: "auto", display: "flex", gap: space[1] + 2, alignItems: "center" }}>
+          {/* Mid-game model switching */}
+          {providers.length > 0 && (
+            <>
+              <select
+                value={gs.game.config.llm.provider}
+                onChange={e => {
+                  const newProvider = e.target.value;
+                  const prov = providers.find(p => p.id === newProvider);
+                  const firstModel = prov?.models?.[0];
+                  const newLlm = { ...gs.game.config.llm, provider: newProvider, model: firstModel?.id || "" };
+                  newLlm.temperature = firstModel?.temperature ?? 0.4;
+                  setGs({ ...gs, game: { ...gs.game, config: { ...gs.game.config, llm: newLlm } } });
+                }}
+                style={{ padding: "2px 4px", fontSize: typography.body.xs, background: colors.bg.secondary, color: colors.text.primary, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, height: 26 }}
+              >
+                {providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+              <select
+                value={gs.game.config.llm.model}
+                onChange={e => {
+                  const prov = providers.find(p => p.id === gs.game.config.llm.provider);
+                  const modelObj = prov?.models?.find(m => m.id === e.target.value);
+                  const newLlm = { ...gs.game.config.llm, model: e.target.value };
+                  newLlm.temperature = modelObj?.temperature ?? 0.4;
+                  setGs({ ...gs, game: { ...gs.game, config: { ...gs.game.config, llm: newLlm } } });
+                }}
+                style={{ padding: "2px 4px", fontSize: typography.body.xs, background: colors.bg.secondary, color: colors.text.primary, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, height: 26 }}
+              >
+                {(providers.find(p => p.id === gs.game.config.llm.provider)?.models || []).map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
+              </select>
+            </>
+          )}
+          <Button variant="secondary" onClick={handleSave} size="sm" disabled={saveStatus === "saving"}>
+            {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved!" : "Save"}
+          </Button>
           <Button variant="secondary" onClick={handleExportLog} size="sm">Export Log</Button>
           <Button variant="secondary" onClick={() => handleExportMap()} size="sm">Map PNG</Button>
-          {/* Briefing export dropdown — per-actor + full */}
           <div style={{ position: "relative", display: "inline-block" }}>
             <BriefingDropdown actors={gs.scenario.actors} onExport={handleExportBriefing} />
           </div>
@@ -332,7 +1079,22 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
 
         {/* Left: Map */}
         <div style={{ flex: "0 0 45%", borderRight: `1px solid ${colors.border.subtle}`, position: "relative" }}>
-          <SimMap ref={simMapRef} terrainData={terrainData} units={fogOfWar ? gs.units.filter(u => u.detected !== false) : gs.units} actors={gs.scenario.actors} style={{ width: "100%", height: "100%" }} fogOfWar={fogOfWar} />
+          <SimMap
+            ref={simMapRef}
+            terrainData={terrainData}
+            units={mapUnits}
+            actors={gs.scenario.actors}
+            style={{ width: "100%", height: "100%" }}
+            fogOfWar={fogOfWar}
+            fowMode={fowMode}
+            interactionMode={targetingMode ? "target_hex" : "navigate"}
+            targetingMode={targetingMode}
+            selectedUnitId={selectedUnit?.id || null}
+            onCellClick={(cell) => targetingMode ? handleTargetSelect(cell) : handleMapCellClick(cell)}
+            onCellHover={targetingMode ? setHoveredCell : undefined}
+            movePath={movePath}
+            proposedMoves={proposedMoves}
+          />
         </div>
 
         {/* Right: Turn panel */}
@@ -399,61 +1161,104 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
               </div>
             )}
 
-            {/* Action Input (Planning Phase) */}
-            {!isEnded && !hasAdjudication && turnPhase === "planning" && (
-              <div style={{ marginBottom: space[4] }}>
-                <SectionHeader>Turn {gs.game.turn} — Enter Actions</SectionHeader>
-                {gs.scenario.actors.map((actor, ai) => (
-                  <div key={actor.id} style={{ marginBottom: space[3] }}>
-                    <div style={{ fontSize: typography.body.sm, color: colors.text.secondary, marginBottom: space[1] }}>
-                      <strong style={{ color: colors.text.primary }}>{actor.name}</strong> — {actor.objectives?.join("; ") || "No objectives"}
-                    </div>
-                    <textarea
-                      value={actions[actor.id] || ""}
-                      onChange={e => setActions(prev => ({ ...prev, [actor.id]: e.target.value }))}
-                      placeholder={`Enter ${actor.name}'s orders for this turn...`}
-                      disabled={isPaused}
-                      style={{ width: "100%", padding: "8px 10px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.md, color: colors.text.primary, fontSize: typography.body.md, minHeight: 80, fontFamily: typography.fontFamily, resize: "vertical", boxSizing: "border-box", outline: "none" }}
-                    />
-                  </div>
-                ))}
-                <Button onClick={handleSubmit} disabled={adjudicating || isPaused} style={{ width: "100%" }}>
-                  {adjudicating ? "Adjudicating..." : "Submit Actions"}
-                </Button>
-              </div>
+            {/* Structured Order Input (Planning Phase) — filtered to active actor */}
+            {!isEnded && turnPhase === PHASES.PLANNING && (
+              <OrderRoster
+                units={gs.units.filter(u => u.status !== "destroyed" && u.status !== "eliminated")}
+                actors={gs.scenario.actors}
+                unitOrders={unitOrders}
+                actorIntents={actorIntents}
+                onUnitClick={handleUnitClick}
+                onActorIntentChange={handleActorIntentChange}
+                onSubmit={handleSealOrders}
+                submitting={adjudicatingLLM}
+                disabled={isPaused}
+                turnNumber={gs.game.turn}
+                activeActorId={fogOfWar ? activeActor.id : null}
+                submitLabel={fogOfWar ? `Seal ${activeActor.name || activeActor.id}'s Orders` : "Submit All Orders"}
+              />
+            )}
+
+            {/* Reinforcement Panel (Planning Phase) */}
+            {!isEnded && turnPhase === PHASES.PLANNING && (
+              <ReinforcementPanel
+                gameState={gs}
+                onAddUnit={handleAddReinforcementUnit}
+                onScheduleUnit={handleScheduleReinforcementUnit}
+                onAddActor={handleAddActor}
+                onRemoveQueued={handleRemoveQueuedReinforcement}
+                placingPosition={reinforcementPosition}
+                onStartPlacing={() => { setPlacingReinforcement(true); setTargetingMode(null); setSelectedUnit(null); }}
+                onCancelPlacing={() => { setPlacingReinforcement(false); setReinforcementPosition(null); }}
+              />
             )}
 
             {/* Fortune Rolls Display */}
             {fortuneRolls && (
               <Card style={{ marginBottom: space[3], animation: "slideUp 0.3s ease-out" }}>
                 <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: space[2], letterSpacing: 1, textTransform: "uppercase", fontWeight: typography.weight.semibold }}>Fortune of War — Turn {gs.game.turn}</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: space[2] }}>
-                  {Object.entries(fortuneRolls.actorRolls).map(([actorId, roll]) => {
-                    const actorName = gs.scenario.actors.find(a => a.id === actorId)?.name || actorId;
-                    const rollColor = roll.roll <= 20 ? colors.accent.red : roll.roll >= 81 ? colors.accent.green : colors.text.secondary;
-                    const glowBg = roll.roll <= 20 ? colors.glow.red : roll.roll >= 81 ? colors.glow.green : "transparent";
-                    return (
-                      <div key={actorId} style={{ padding: `${space[1]}px ${space[2]}px`, background: glowBg, border: `1px solid ${rollColor}30`, borderRadius: radius.sm, fontSize: typography.body.sm, display: "flex", alignItems: "center", gap: space[1] + 2 }}>
-                        <span style={{ fontWeight: typography.weight.semibold, color: colors.text.primary }}>{actorName}</span>
-                        <span style={{ fontFamily: typography.monoFamily, fontWeight: typography.weight.bold, color: rollColor, fontSize: typography.heading.sm }}>{roll.roll}</span>
-                        <span style={{ color: rollColor, fontSize: typography.body.xs }}>{roll.descriptor}</span>
-                      </div>
-                    );
-                  })}
-                  {/* Wild card */}
-                  {fortuneRolls.wildCard && (
-                    <div style={{
-                      padding: `${space[1]}px ${space[2]}px`,
-                      background: fortuneRolls.wildCard.triggered ? colors.glow.amber : "transparent",
-                      border: `1px solid ${fortuneRolls.wildCard.triggered ? colors.accent.amber : colors.border.subtle}`,
-                      borderRadius: radius.sm, fontSize: typography.body.sm, display: "flex", alignItems: "center", gap: space[1] + 2,
-                    }}>
-                      <span style={{ fontWeight: typography.weight.semibold, color: fortuneRolls.wildCard.triggered ? colors.accent.amber : colors.text.muted }}>Wild Card</span>
-                      <span style={{ fontFamily: typography.monoFamily, fontWeight: typography.weight.bold, color: fortuneRolls.wildCard.triggered ? colors.accent.amber : colors.text.muted, fontSize: typography.heading.sm }}>{fortuneRolls.wildCard.roll}</span>
-                      <span style={{ color: fortuneRolls.wildCard.triggered ? colors.accent.amber : colors.text.muted, fontSize: typography.body.xs }}>{fortuneRolls.wildCard.descriptor}</span>
-                    </div>
-                  )}
-                </div>
+                {fortuneRolls.unitRolls ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: space[2] }}>
+                    {gs.scenario.actors.map(actor => {
+                      const actorUnits = gs.units.filter(u => u.actor === actor.id);
+                      return (
+                        <div key={actor.id}>
+                          <div style={{ fontSize: typography.body.xs, fontWeight: typography.weight.semibold, color: colors.text.secondary, marginBottom: space[1] }}>{actor.name}</div>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: space[1] }}>
+                            {actorUnits.map(u => {
+                              const roll = fortuneRolls.unitRolls[u.id];
+                              if (!roll) {
+                                return (
+                                  <div key={u.id} style={{ padding: `${space[1]}px ${space[2]}px`, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, fontSize: typography.body.xs, display: "flex", alignItems: "center", gap: space[1] }}>
+                                    <span style={{ color: colors.text.muted }}>{u.name}</span>
+                                    <span style={{ color: colors.text.muted, fontStyle: "italic" }}>HOLD</span>
+                                  </div>
+                                );
+                              }
+                              const rollColor = roll.roll <= 8 ? colors.accent.red : roll.roll >= 93 ? colors.accent.green : colors.text.secondary;
+                              const glowBg = roll.roll <= 8 ? colors.glow.red : roll.roll >= 93 ? colors.glow.green : "transparent";
+                              return (
+                                <div key={u.id} style={{ padding: `${space[1]}px ${space[2]}px`, background: glowBg, border: `1px solid ${rollColor}30`, borderRadius: radius.sm, fontSize: typography.body.xs, display: "flex", alignItems: "center", gap: space[1] }}>
+                                  <span style={{ fontWeight: typography.weight.semibold, color: colors.text.primary }}>{u.name}</span>
+                                  <span style={{ fontFamily: typography.monoFamily, fontWeight: typography.weight.bold, color: rollColor }}>{roll.roll}</span>
+                                  <span style={{ color: rollColor }}>{roll.descriptor}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : fortuneRolls.actorRolls ? (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: space[2] }}>
+                    {Object.entries(fortuneRolls.actorRolls).map(([actorId, roll]) => {
+                      const actorName = gs.scenario.actors.find(a => a.id === actorId)?.name || actorId;
+                      const rollColor = roll.roll <= 8 ? colors.accent.red : roll.roll >= 93 ? colors.accent.green : colors.text.secondary;
+                      const glowBg = roll.roll <= 8 ? colors.glow.red : roll.roll >= 93 ? colors.glow.green : "transparent";
+                      return (
+                        <div key={actorId} style={{ padding: `${space[1]}px ${space[2]}px`, background: glowBg, border: `1px solid ${rollColor}30`, borderRadius: radius.sm, fontSize: typography.body.sm, display: "flex", alignItems: "center", gap: space[1] + 2 }}>
+                          <span style={{ fontWeight: typography.weight.semibold, color: colors.text.primary }}>{actorName}</span>
+                          <span style={{ fontFamily: typography.monoFamily, fontWeight: typography.weight.bold, color: rollColor, fontSize: typography.heading.sm }}>{roll.roll}</span>
+                          <span style={{ color: rollColor, fontSize: typography.body.xs }}>{roll.descriptor}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
+                {fortuneRolls.wildCard && (
+                  <div style={{
+                    marginTop: space[2],
+                    padding: `${space[1]}px ${space[2]}px`,
+                    background: fortuneRolls.wildCard.triggered ? colors.glow.amber : "transparent",
+                    border: `1px solid ${fortuneRolls.wildCard.triggered ? colors.accent.amber : colors.border.subtle}`,
+                    borderRadius: radius.sm, fontSize: typography.body.sm, display: "inline-flex", alignItems: "center", gap: space[1] + 2,
+                  }}>
+                    <span style={{ fontWeight: typography.weight.semibold, color: fortuneRolls.wildCard.triggered ? colors.accent.amber : colors.text.muted }}>Wild Card</span>
+                    <span style={{ fontFamily: typography.monoFamily, fontWeight: typography.weight.bold, color: fortuneRolls.wildCard.triggered ? colors.accent.amber : colors.text.muted, fontSize: typography.heading.sm }}>{fortuneRolls.wildCard.roll}</span>
+                    <span style={{ color: fortuneRolls.wildCard.triggered ? colors.accent.amber : colors.text.muted, fontSize: typography.body.xs }}>{fortuneRolls.wildCard.descriptor}</span>
+                  </div>
+                )}
               </Card>
             )}
 
@@ -486,19 +1291,38 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
               </Card>
             )}
 
-            {/* Adjudication loading */}
-            {adjudicating && (
+            {/* Loading spinner for busy phases */}
+            {(adjudicatingLLM || isBusyPhase(turnPhase)) && (
               <div style={{ textAlign: "center", padding: space[8] }}>
                 <div style={{ width: 32, height: 32, border: `3px solid ${colors.border.subtle}`, borderTop: `3px solid ${colors.accent.amber}`, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} />
-                <div style={{ fontSize: typography.heading.sm, color: colors.accent.amber, marginBottom: space[2], animation: "pulse 2s infinite" }}>Adjudicating Turn {gs.game.turn}...</div>
-                <div style={{ fontSize: typography.body.sm, color: colors.text.muted }}>Sending to {gs.game.config.llm.provider} ({gs.game.config.llm.model})</div>
+                <div style={{ fontSize: typography.heading.sm, color: colors.accent.amber, marginBottom: space[2], animation: "pulse 2s infinite" }}>
+                  {turnPhase === PHASES.COMPUTING_DETECTION ? "Computing detection..." :
+                   turnPhase === PHASES.RE_ADJUDICATING ? "Re-adjudicating with challenges..." :
+                   `Adjudicating Turn ${gs.game.turn}...`}
+                </div>
+                <div style={{ fontSize: typography.body.sm, color: colors.text.muted }}>
+                  {turnPhase === PHASES.COMPUTING_DETECTION
+                    ? "Calculating line of sight and detection probabilities"
+                    : `Sending to ${gs.game.config.llm.provider} (${gs.game.config.llm.model})`}
+                </div>
+                {adjudicatingLLM && (
+                  <Button
+                    variant="ghost"
+                    onClick={handleCancelAdjudication}
+                    style={{ marginTop: space[4], color: colors.text.muted, fontSize: typography.body.sm }}
+                  >
+                    Cancel
+                  </Button>
+                )}
               </div>
             )}
 
-            {/* Adjudication Results — Tabbed View */}
-            {hasAdjudication && (
+            {/* Adjudication Results — Tabbed View (shown during REVIEW and after) */}
+            {hasAdjudication && (turnPhase === PHASES.REVIEW || turnPhase === PHASES.CHALLENGE_COLLECT || turnPhase === PHASES.REBUTTAL_COLLECT) && (
               <div ref={adjDisplayRef} style={{ animation: "slideUp 0.3s ease-out" }}>
-                <SectionHeader accent={colors.accent.amber}>Turn {gs.game.turn} — Adjudication</SectionHeader>
+                <SectionHeader accent={colors.accent.amber}>
+                  Turn {gs.game.turn} — {turnPhase === PHASES.REVIEW ? `${activeActor.name || activeActor.id}'s Assessment` : "Adjudication"}
+                </SectionHeader>
 
                 {/* Tab bar */}
                 <div style={{ display: "flex", gap: 2, marginBottom: space[3], flexWrap: "wrap" }}>
@@ -507,6 +1331,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
                     { key: "feasibility", label: "Feasibility" },
                     ...(deEsc ? [{ key: "escalation", label: "Escalation" }] : []),
                     { key: "changes", label: `Changes (${adj.state_updates?.length || 0})` },
+                    ...(actorViewExtras ? [{ key: "intel", label: "Intel" }] : []),
                     { key: "raw", label: "Raw" },
                   ].map(tab => (
                     <button key={tab.key} onClick={() => setActiveTab(tab.key)}
@@ -533,13 +1358,6 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
                           {adj.outcome_determination.outcome_type}
                         </Badge>
                         {adj.outcome_determination.probability_assessment && <span style={{ fontSize: typography.body.sm, color: colors.text.muted }}>{adj.outcome_determination.probability_assessment}</span>}
-                      </div>
-                    )}
-                    {currentAdjudication?.meta && (
-                      <div style={{ fontSize: typography.body.sm, color: colors.text.muted, marginTop: space[2] }}>
-                        Confidence: {currentAdjudication.meta.confidence || "\u2014"}
-                        {currentAdjudication.meta.ambiguities?.length > 0 && ` | Ambiguities: ${currentAdjudication.meta.ambiguities.join("; ")}`}
-                        {currentAdjudication.meta.notes && ` | Notes: ${currentAdjudication.meta.notes}`}
                       </div>
                     )}
                   </Card>
@@ -609,102 +1427,108 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
                   </Card>
                 )}
 
+                {/* Intel tab — per-actor detection/visibility info */}
+                {activeTab === "intel" && actorViewExtras && (
+                  <Card style={{ marginBottom: space[3] }}>
+                    {actorViewExtras.known_enemy_actions && (
+                      <div style={{ marginBottom: space[2] }}>
+                        <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: space[1], letterSpacing: 1, textTransform: "uppercase" }}>Known Enemy Activity</div>
+                        <div style={{ fontSize: typography.body.sm, color: colors.text.secondary, whiteSpace: "pre-wrap" }}>{actorViewExtras.known_enemy_actions}</div>
+                      </div>
+                    )}
+                    {actorViewExtras.intel_assessment && (
+                      <div style={{ marginBottom: space[2] }}>
+                        <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: space[1], letterSpacing: 1, textTransform: "uppercase" }}>Intelligence Assessment</div>
+                        <div style={{ fontSize: typography.body.sm, color: colors.text.secondary, whiteSpace: "pre-wrap" }}>{actorViewExtras.intel_assessment}</div>
+                      </div>
+                    )}
+                    {actorViewExtras.detection_resolutions?.length > 0 && (
+                      <div>
+                        <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: space[1], letterSpacing: 1, textTransform: "uppercase" }}>Detection Results</div>
+                        {actorViewExtras.detection_resolutions.map((dr, i) => (
+                          <div key={i} style={{ fontSize: typography.body.sm, color: dr.detected ? colors.accent.green : colors.text.muted, marginBottom: 2 }}>
+                            {dr.detected ? "✓" : "?"} {dr.unitId}: {dr.description || (dr.detected ? "Detected" : "Unconfirmed")}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </Card>
+                )}
+
                 {/* Raw JSON tab */}
                 {activeTab === "raw" && (
                   <pre style={{ background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, padding: space[2] + 2, fontSize: typography.body.xs, color: colors.text.secondary, overflow: "auto", maxHeight: 400, fontFamily: typography.monoFamily, marginBottom: space[3] }}>
-                    {JSON.stringify(currentAdjudication, null, 2)}
+                    {JSON.stringify(displayAdj, null, 2)}
                   </pre>
                 )}
 
-                {/* Action buttons — depends on turn phase */}
-                {!isEnded && turnPhase === "review_pending" && (
+                {/* Review action buttons — per-actor */}
+                {!isEnded && turnPhase === PHASES.REVIEW && (
                   <div style={{ marginBottom: space[2] }}>
                     <div style={{ fontSize: typography.body.xs, color: colors.accent.amber, marginBottom: space[2], display: "flex", alignItems: "center", gap: space[1] }}>
-                      <Badge color={colors.accent.amber}>Pending</Badge>
-                      <span>State changes have NOT been applied yet. Accept to apply, or challenge the assessment.</span>
+                      <Badge color={actorColor}>{activeActor.name || activeActor.id}</Badge>
+                      <span>Review the assessment. Accept to continue, or challenge for re-evaluation.</span>
                     </div>
                     <div style={{ display: "flex", gap: space[2] }}>
-                      <Button onClick={handleAccept} style={{ flex: 1 }}>
-                        Accept &amp; Apply
+                      <Button onClick={handleActorAccept} style={{ flex: 1 }}>
+                        Accept
                       </Button>
                       <Button
                         variant="secondary"
-                        onClick={handleChallenge}
+                        onClick={handleActorChallenge}
                         disabled={challengeCount >= MAX_CHALLENGES}
-                        title={challengeCount >= MAX_CHALLENGES ? "Maximum challenges reached" : "Challenge the feasibility assessment"}
+                        title={challengeCount >= MAX_CHALLENGES ? "Maximum challenges reached" : "Challenge the assessment"}
                         style={{ flex: "0 0 auto" }}
                       >
                         Challenge{challengeCount > 0 ? ` (${challengeCount}/${MAX_CHALLENGES})` : ""}
                       </Button>
-                      <Button variant="secondary" onClick={() => {
-                        setCurrentAdjudication(null);
-                        setPendingAdjudication(null);
-                        setPendingPlayerActions(null);
-                        setPendingResult(null);
-                        setFortuneRolls(null);
-                        setFrictionEvents(null);
-                        setTurnPhase("planning");
-                        setChallengeCount(0);
-                        setActiveTab("narrative");
-                      }} style={{ flex: "0 0 auto" }}>
+                      <Button variant="secondary" onClick={handleStartOver} style={{ flex: "0 0 auto" }}>
                         Start Over
                       </Button>
                     </div>
                   </div>
                 )}
-                {!isEnded && turnPhase === "planning" && hasAdjudication && (
-                  <div style={{ display: "flex", gap: space[2] }}>
-                    <Button onClick={handleNextTurn} disabled={isPaused} style={{ flex: 1 }}>
-                      Next Turn &rarr;
-                    </Button>
-                  </div>
-                )}
               </div>
             )}
 
-            {/* Rebuttal Input Phase */}
-            {turnPhase === "rebuttal_input" && (
+            {/* Challenge Collection Phase */}
+            {turnPhase === PHASES.CHALLENGE_COLLECT && (
               <div style={{ marginBottom: space[4], animation: "slideUp 0.3s ease-out" }}>
-                <SectionHeader accent={colors.accent.amber}>Challenge Assessment</SectionHeader>
+                <SectionHeader accent={colors.accent.amber}>Challenge — {activeActor.name || activeActor.id}</SectionHeader>
                 <div style={{ fontSize: typography.body.sm, color: colors.text.secondary, marginBottom: space[3] }}>
-                  For each actor whose feasibility assessment you want to challenge, explain what specific factual error the adjudicator made or what data it overlooked.
+                  Explain what specific factual error the adjudicator made or what data it overlooked.
                   Rhetorical arguments will likely be rejected.
                 </div>
-                {gs.scenario.actors.map(actor => {
-                  const assessment = adj?.feasibility_analysis?.assessments?.find(a => a.actor === actor.id);
-                  return (
-                    <div key={actor.id} style={{ marginBottom: space[3] }}>
-                      <div style={{ fontSize: typography.body.sm, marginBottom: space[1], display: "flex", alignItems: "center", gap: space[2] }}>
-                        <strong style={{ color: colors.text.primary }}>{actor.name}</strong>
-                        {assessment && <Badge color={feasibilityColor(assessment.feasibility)}>{assessment.feasibility}</Badge>}
-                        {assessment?.reasoning && <span style={{ fontSize: typography.body.xs, color: colors.text.muted }}>{assessment.reasoning.slice(0, 100)}...</span>}
-                      </div>
-                      <textarea
-                        value={rebuttals[actor.id] || ""}
-                        onChange={e => setRebuttals(prev => ({ ...prev, [actor.id]: e.target.value }))}
-                        placeholder={`Challenge ${actor.name}'s assessment (leave blank to not challenge)...`}
-                        style={{ width: "100%", padding: "8px 10px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.md, color: colors.text.primary, fontSize: typography.body.md, minHeight: 60, fontFamily: typography.fontFamily, resize: "vertical", boxSizing: "border-box", outline: "none" }}
-                      />
-                    </div>
-                  );
-                })}
+                <textarea
+                  value={challenges[activeActor.id] || ""}
+                  onChange={e => setChallenges(prev => ({ ...prev, [activeActor.id]: e.target.value }))}
+                  placeholder={`${activeActor.name || activeActor.id}'s challenge...`}
+                  style={{ width: "100%", padding: "8px 10px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.md, color: colors.text.primary, fontSize: typography.body.md, minHeight: 80, fontFamily: typography.fontFamily, resize: "vertical", boxSizing: "border-box", outline: "none", marginBottom: space[2] }}
+                />
                 <div style={{ display: "flex", gap: space[2] }}>
-                  <Button onClick={handleSubmitRebuttal} disabled={adjudicating}>
-                    {adjudicating ? "Re-adjudicating..." : "Submit Rebuttals"}
-                  </Button>
-                  <Button variant="secondary" onClick={() => setTurnPhase("review_pending")}>
-                    Cancel
-                  </Button>
+                  <Button onClick={handleSubmitChallenge}>Submit Challenge</Button>
+                  <Button variant="secondary" onClick={handleStartOver}>Cancel</Button>
                 </div>
               </div>
             )}
 
-            {/* Re-adjudicating spinner */}
-            {turnPhase === "re_adjudicating" && (
-              <div style={{ textAlign: "center", padding: space[8] }}>
-                <div style={{ width: 32, height: 32, border: `3px solid ${colors.border.subtle}`, borderTop: `3px solid ${colors.accent.amber}`, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} />
-                <div style={{ fontSize: typography.heading.sm, color: colors.accent.amber, marginBottom: space[2], animation: "pulse 2s infinite" }}>Re-adjudicating with rebuttals...</div>
-                <div style={{ fontSize: typography.body.sm, color: colors.text.muted }}>Same context + player challenges</div>
+            {/* Counter-Rebuttal Collection Phase */}
+            {turnPhase === PHASES.REBUTTAL_COLLECT && (
+              <div style={{ marginBottom: space[4], animation: "slideUp 0.3s ease-out" }}>
+                <SectionHeader accent={colors.accent.amber}>Counter-Rebuttal — {activeActor.name || activeActor.id}</SectionHeader>
+                <div style={{ fontSize: typography.body.sm, color: colors.text.secondary, marginBottom: space[3] }}>
+                  Another player has challenged the assessment. You may defend the original ruling or add your own perspective.
+                </div>
+                <textarea
+                  value={counterRebuttals[activeActor.id] || ""}
+                  onChange={e => setCounterRebuttals(prev => ({ ...prev, [activeActor.id]: e.target.value }))}
+                  placeholder={`${activeActor.name || activeActor.id}'s counter-rebuttal (optional)...`}
+                  style={{ width: "100%", padding: "8px 10px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.md, color: colors.text.primary, fontSize: typography.body.md, minHeight: 80, fontFamily: typography.fontFamily, resize: "vertical", boxSizing: "border-box", outline: "none", marginBottom: space[2] }}
+                />
+                <div style={{ display: "flex", gap: space[2] }}>
+                  <Button onClick={handleSubmitCounterRebuttal}>Submit Rebuttal</Button>
+                  <Button variant="secondary" onClick={handleSubmitCounterRebuttal}>Skip</Button>
+                </div>
               </div>
             )}
 
@@ -730,7 +1554,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
                           <td style={{ ...cellStyle, color: colors.text.secondary }}>{u.type}</td>
                           <td style={{ ...cellStyle, color: colors.text.secondary, fontSize: typography.body.xs }}>{u.echelon || "—"}</td>
                           <td style={{ ...cellStyle, color: u.posture === "attacking" ? colors.accent.red : u.posture === "retreating" || u.posture === "routing" ? colors.accent.amber : colors.text.secondary, fontSize: typography.body.xs }}>{u.posture || "—"}</td>
-                          <td style={{ ...cellStyle, fontFamily: typography.monoFamily }}>{u.position}</td>
+                          <td style={{ ...cellStyle, fontFamily: typography.monoFamily }}>{positionToLabel(u.position)}</td>
                           <td style={{ ...cellStyle, color: u.strength > 50 ? colors.accent.green : u.strength > 25 ? colors.accent.amber : colors.accent.red, fontFamily: typography.monoFamily, fontWeight: typography.weight.semibold }}>{u.strength}%</td>
                           <td style={{ ...cellStyle, color: u.supply > 50 ? colors.accent.green : u.supply > 25 ? colors.accent.amber : colors.accent.red, fontFamily: typography.monoFamily, fontWeight: typography.weight.semibold }}>{u.supply}%</td>
                           <td style={cellStyle}><Badge color={u.status === "ready" ? colors.accent.green : u.status === "destroyed" ? colors.accent.red : colors.text.muted}>{u.status}</Badge></td>
@@ -747,7 +1571,6 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
               <div style={{ marginTop: space[4] }}>
                 <SectionHeader>Command Hierarchy</SectionHeader>
                 {(() => {
-                  // Build hierarchy: HQ units at top, subordinates indented below
                   const hqUnits = gs.units.filter(u => u.type === "headquarters");
                   const unattached = gs.units.filter(u => u.type !== "headquarters" && !u.parentHQ);
                   const nodeStyle = (depth) => ({
@@ -837,7 +1660,6 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
                         {rel.agreements?.length > 0 && (
                           <span style={{ fontSize: typography.body.xs, color: colors.accent.cyan }}>{rel.agreements.length} agreement(s)</span>
                         )}
-                        {/* Moderator can edit diplomacy while paused */}
                         {isPaused && (
                           <select value={rel.status} onChange={e => {
                             const newDip = { ...gs.diplomacy, [pairKey]: { ...rel, status: e.target.value } };
@@ -914,6 +1736,136 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
           </div>
         </div>
       </div>
+
+      {/* UnitOrderCard modal — renders over everything when a unit is selected */}
+      {selectedUnit && turnPhase === PHASES.PLANNING && (
+        <UnitOrderCard
+          unit={selectedUnit}
+          terrainData={terrainData}
+          allUnits={gs.units}
+          actors={gs.scenario.actors}
+          existingOrders={unitOrders[selectedUnit.actor]?.[selectedUnit.id] || null}
+          targetingMode={targetingMode}
+          onStartTargeting={handleStartTargeting}
+          onCancelTargeting={handleCancelTargeting}
+          onConfirm={handleOrderConfirm}
+          onClose={() => { setSelectedUnit(null); setTargetingMode(null); }}
+        />
+      )}
+
+      {/* Challenge ruling popup — shown at start of next turn after re-adjudication */}
+      {pendingRuling && turnPhase === PHASES.PLANNING && (
+        <div
+          style={{
+            position: "fixed", inset: 0, zIndex: 1000,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)",
+          }}
+          onClick={(e) => { if (e.target === e.currentTarget) setPendingRuling(null); }}
+        >
+          <div style={{
+            width: 600, maxHeight: "80vh", overflow: "auto", padding: space[6],
+            background: colors.bg.raised, borderRadius: radius.xl,
+            border: `1px solid ${colors.border.default}`,
+          }}>
+            <div style={{ fontSize: typography.heading.md, fontWeight: typography.weight.bold, marginBottom: space[3], color: colors.accent.cyan }}>
+              Challenge Ruling
+            </div>
+            <div style={{ fontSize: typography.body.sm, color: colors.text.secondary, marginBottom: space[4], lineHeight: 1.5 }}>
+              The adjudicator has issued a revised ruling in response to the challenge.
+            </div>
+
+            {pendingRuling.adjudication?.outcome_determination?.narrative && (
+              <div style={{
+                padding: space[4], marginBottom: space[4], borderRadius: radius.md,
+                background: colors.bg.surface, border: `1px solid ${colors.border.subtle}`,
+                fontSize: typography.body.sm, lineHeight: 1.7, whiteSpace: "pre-wrap",
+                maxHeight: 300, overflow: "auto",
+              }}>
+                {pendingRuling.adjudication.outcome_determination.narrative}
+              </div>
+            )}
+
+            {/* Summary of state changes from the ruling */}
+            {pendingRuling.adjudication?.state_updates?.length > 0 && (
+              <div style={{ marginBottom: space[4] }}>
+                <div style={{ fontSize: typography.body.sm, fontWeight: typography.weight.bold, marginBottom: space[2], color: colors.text.secondary }}>
+                  Key Changes
+                </div>
+                {pendingRuling.adjudication.state_updates.slice(0, 8).map((su, i) => (
+                  <div key={i} style={{
+                    fontSize: typography.body.xs, color: colors.text.secondary, lineHeight: 1.5,
+                    padding: `${space[1]}px 0`, borderBottom: `1px solid ${colors.border.subtle}`,
+                  }}>
+                    <span style={{ fontWeight: typography.weight.medium, color: colors.text.primary }}>{su.entity}</span>
+                    {su.position && <span> → {su.position}</span>}
+                    {su.strength != null && <span> STR:{su.strength}</span>}
+                    {su.morale != null && <span> MOR:{su.morale}</span>}
+                    {su.justification && (
+                      <div style={{ color: colors.text.muted, fontStyle: "italic", marginTop: 2 }}>
+                        {su.justification.slice(0, 120)}{su.justification.length > 120 ? "..." : ""}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <Button variant="primary" onClick={() => setPendingRuling(null)}>Continue</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Order validation warning modal */}
+      {orderWarnings && (
+        <div
+          style={{
+            position: "fixed", inset: 0, zIndex: 1000,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)",
+          }}
+          onClick={(e) => { if (e.target === e.currentTarget) setOrderWarnings(null); }}
+        >
+          <div style={{
+            width: 520, maxHeight: "80vh", overflow: "auto", padding: space[6],
+            background: colors.bg.raised, borderRadius: radius.xl,
+            border: `1px solid ${colors.border.default}`,
+          }}>
+            <div style={{ fontSize: typography.heading.md, fontWeight: typography.weight.bold, marginBottom: space[3], color: colors.accent.amber }}>
+              Movement Warnings
+            </div>
+            <div style={{ fontSize: typography.body.sm, color: colors.text.secondary, marginBottom: space[4], lineHeight: 1.6 }}>
+              The following orders exceed unit movement capabilities. Units will attempt to move as far as possible but likely won't reach their destinations.
+            </div>
+
+            {orderWarnings.map((w, i) => (
+              <div key={i} style={{
+                padding: space[3], marginBottom: space[2], borderRadius: radius.md,
+                background: `${colors.accent.amber}10`,
+                border: `1px solid ${colors.accent.amber}30`,
+                fontSize: typography.body.sm, lineHeight: 1.6,
+              }}>
+                <div style={{ fontWeight: typography.weight.bold, color: colors.text.primary }}>
+                  {w.unitName}
+                </div>
+                <div style={{ color: colors.text.secondary }}>
+                  {w.from} → {w.to} — {w.distanceHexes} hexes, budget {w.budget} ({w.movementType})
+                </div>
+                <div style={{ color: colors.accent.amber, fontWeight: typography.weight.medium }}>
+                  {w.feasibility === "INFEASIBLE" ? "Impossible" : "Unlikely"} — cost {w.totalCost.toFixed(1)} vs budget {w.budget}
+                </div>
+              </div>
+            ))}
+
+            <div style={{ display: "flex", gap: space[2], justifyContent: "flex-end", marginTop: space[4] }}>
+              <Button variant="secondary" onClick={() => setOrderWarnings(null)}>Revise Orders</Button>
+              <Button variant="primary" onClick={handleForceSubmit}>Submit Anyway</Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -930,7 +1882,6 @@ function formatSimDate(isoDate) {
   const year = d.getUTCFullYear();
   const hh = String(d.getUTCHours()).padStart(2, "0");
   const mm = String(d.getUTCMinutes()).padStart(2, "0");
-  // Skip time if midnight (likely date-only input)
   if (d.getUTCHours() === 0 && d.getUTCMinutes() === 0) {
     return `${day} ${mon} ${year}`;
   }
@@ -986,6 +1937,7 @@ function BriefingDropdown({ actors, onExport }) {
 function formatEnvironmentBrief(env) {
   if (!env) return "";
   const parts = [];
+  if (env.climate && env.climate !== "temperate") parts.push(env.climate);
   if (env.weather && env.weather !== "clear") parts.push(env.weather);
   if (env.visibility && env.visibility !== "good" && env.visibility !== "unlimited") parts.push(`vis: ${env.visibility}`);
   if (env.groundCondition && env.groundCondition !== "dry") parts.push(env.groundCondition.replace(/_/g, " "));

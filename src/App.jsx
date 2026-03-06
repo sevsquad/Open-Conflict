@@ -23,7 +23,8 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const urlMode = params.get("mode");
-    const useTest = params.get("test") === "true";
+    const testParam = params.get("test"); // "true" for built-in fixture, or a named fixture like "wales"
+    const useTest = testParam === "true";
     const loadFile = params.get("load");
     const preset = params.get("preset");
     if (preset) setSimPreset(preset);
@@ -36,11 +37,43 @@ export default function App() {
       return;
     }
 
+    // Named test fixtures that load from saved map files
+    const namedFixtures = {
+      wales: "Llanddeusant",
+    };
+
     if (useTest) {
       const fixture = getTestFixture();
       setViewerData(fixture);
       setMode(urlMode);
       console.log(`[URL] mode=${urlMode} with test fixture (${fixture.cols}x${fixture.rows})`);
+    } else if (testParam && namedFixtures[testParam]) {
+      // Load a named fixture from saved maps (e.g. ?test=wales)
+      const searchTerm = namedFixtures[testParam];
+      let matchedName = null;
+      setUrlLoading(true);
+      fetch("/api/saves")
+        .then(r => r.json())
+        .then(files => {
+          const match = files.find(f => f.name.includes(searchTerm));
+          if (!match) throw new Error(`No saved map matching "${searchTerm}"`);
+          matchedName = match.name;
+          return fetch(`/api/load?file=${encodeURIComponent(match.name)}`);
+        })
+        .then(r => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        })
+        .then(json => {
+          const mapData = json.map || json;
+          if (!mapData.cells || !mapData.cols) throw new Error("Invalid map data");
+          mapData._sourceName = matchedName; // Preserve filename for preset matching in SimSetup
+          setViewerData(mapData);
+          setMode(urlMode);
+          console.log(`[URL] mode=${urlMode} with ${testParam} fixture (${mapData.cols}x${mapData.rows})`);
+        })
+        .catch(err => console.error(`[URL] Failed to load ${testParam} fixture:`, err.message))
+        .finally(() => setUrlLoading(false));
     } else if (loadFile) {
       setUrlLoading(true);
       fetch(`/api/load?file=${encodeURIComponent(loadFile)}`)
@@ -66,13 +99,25 @@ export default function App() {
     }
   }, []);
 
-  const handleViewMap = useCallback((data) => {
+  const [viewerFineData, setViewerFineData] = useState(null);
+  const [viewerStratGrid, setViewerStratGrid] = useState(null);
+
+  const handleViewMap = useCallback((data, fineMapData, stratGrid) => {
     setViewerData(data);
+    setViewerFineData(fineMapData || null);
+    setViewerStratGrid(stratGrid || null);
     setMode("viewer");
   }, []);
 
   // Keep Parser mounted once opened so state survives Viewer round-trips
   useEffect(() => { if (mode === "parser") setParserMounted(true); }, [mode]);
+
+  // Unmount Parser when entering Simulation or WorldScan to release pipeline data.
+  // Clear viewerData when entering Simulation — Simulation.jsx stores its own copy.
+  useEffect(() => {
+    if (mode === "simulation" || mode === "worldscan") setParserMounted(false);
+    if (mode === "simulation") setViewerData(null);
+  }, [mode]);
 
   const goMenu = useCallback(() => { setMode("menu"); setParserMounted(false); }, []);
   const goParser = useCallback(() => setMode("parser"), []);
@@ -112,7 +157,7 @@ export default function App() {
               <Parser onBack={goMenu} onViewMap={handleViewMap} />
             </div>
           )}
-          {mode === "viewer" && <Viewer onBack={goMenu} onParser={goParser} initialData={viewerData} />}
+          {mode === "viewer" && <Viewer onBack={goMenu} onParser={goParser} initialData={viewerData} initialFineData={viewerFineData} initialStratGrid={viewerStratGrid} />}
           {mode === "simulation" && <Simulation onBack={goMenu} initialData={viewerData} preset={simPreset} />}
           {mode === "worldscan" && <WorldScanner onBack={goMenu} />}
         </div>

@@ -70,5 +70,12 @@ export function createLogger() {
     );
   }
 
-  return { log, flush, exportLog, getEntries, query };
+  /**
+   * Clear all accumulated entries (call after successful flush).
+   */
+  function clear() {
+    entries.length = 0;
+  }
+
+  return { log, flush, exportLog, getEntries, query, clear };
 }

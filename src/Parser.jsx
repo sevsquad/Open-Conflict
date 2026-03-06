@@ -6,6 +6,7 @@ import { getNeighbors, hexLine, offsetToAxial, axialToOffset,
          offsetToPixel, pixelToOffset, traceHexPath, SQRT3, SQRT3_2 } from "./mapRenderer/HexMath.js";
 import riverWhitelistData from "../river-whitelist.json";
 import CitySearch from "./components/CitySearch.jsx";
+import { buildStrategicGrid } from "./mapRenderer/StrategicGrid.js";
 
 // ════════════════════════════════════════════════════════════════
 // TERRAIN — physical character (movement, cover, LOS)
@@ -141,6 +142,18 @@ function getFeatureInfo(id) { return FEATURE_TYPES[id] || { label: id, color: "#
 // GEO + SPATIAL INDEX
 // ════════════════════════════════════════════════════════════════
 
+// Normalize longitude to [-180, 180] for external APIs and storage
+function wrapLon(lon) {
+  return ((lon + 180) % 360 + 360) % 360 - 180;
+}
+
+// Normalize longitude to [refWest, refWest+360) for internal continuous-range math.
+// Ensures coordinates from external sources (OSM, cities) map into the bbox's range
+// even when the bbox crosses the antimeridian (e.g., west=170, east=190).
+function continuousLon(lon, refWest) {
+  return refWest + ((lon - refWest) % 360 + 360) % 360;
+}
+
 function getBBox(lat, lng, wKm, hKm) {
   const dLat = (hKm / 2) / 111.32, dLng = (wKm / 2) / (111.32 * Math.cos(lat * Math.PI / 180));
   return { south: lat - dLat, north: lat + dLat, west: lng - dLng, east: lng + dLng };
@@ -193,12 +206,18 @@ function createHexProjection(bbox, cols, rows) {
     return midLon + (corrLon - midLon) * cosLat / cosRef;
   }
 
+  // Antimeridian detection: bbox crosses 180°/-180° boundary
+  // Only apply continuousLon wrapping in geoRangeToGridRange when needed,
+  // because buffer-expanded intersection coordinates legitimately extend
+  // slightly past bbox.west and continuousLon would wrap them +360°.
+  const crossesAntimeridian = east < west;
+
   return {
     cols, rows, lonPerUnit, latPerUnit, hxMin, hyMin, hxSpan, hySpan,
 
     // Geographic (lon, lat) → hex pixel coords (size = 1)
     geoToHexPixel(lon, lat) {
-      const adjLon = correctedLon(lon, lat);
+      const adjLon = correctedLon(continuousLon(lon, west), lat);
       return {
         hx: (adjLon - west) / lonPerUnit + hxMin,
         hy: (north - lat) / latPerUnit + hyMin,
@@ -217,7 +236,7 @@ function createHexProjection(bbox, cols, rows) {
 
     // Geographic → offset cell [col, row] or null if out of bounds
     geoToCell(lon, lat) {
-      const adjLon = correctedLon(lon, lat);
+      const adjLon = correctedLon(continuousLon(lon, west), lat);
       const hx = (adjLon - west) / lonPerUnit + hxMin;
       const hy = (north - lat) / latPerUnit + hyMin;
       const { col, row } = pixelToOffset(hx, hy, 1);
@@ -279,8 +298,13 @@ function createHexProjection(bbox, cols, rows) {
 
     // Geographic rect → conservative grid cell range {r0, r1, c0, c1}
     geoRangeToGridRange(s, n, w, e) {
-      const adjW = correctedLon(w, (s + n) / 2);
-      const adjE = correctedLon(e, (s + n) / 2);
+      // Only apply antimeridian wrapping when bbox actually crosses 180°.
+      // Buffer-expanded intersection coords can be slightly < bbox.west,
+      // and continuousLon would wrap them +360° producing huge column indices.
+      const wNorm = crossesAntimeridian ? continuousLon(w, west) : w;
+      const eNorm = crossesAntimeridian ? continuousLon(e, west) : e;
+      const adjW = correctedLon(wNorm, (s + n) / 2);
+      const adjE = correctedLon(eNorm, (s + n) / 2);
       const nwHx = (adjW - west) / lonPerUnit + hxMin;
       const nwHy = (north - n) / latPerUnit + hyMin;
       const seHx = (adjE - west) / lonPerUnit + hxMin;
@@ -302,6 +326,64 @@ function pip(lat, lng, ring) {
     if (((yi > lat) !== (yj > lat)) && (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi)) ins = !ins;
   }
   return ins;
+}
+
+// Assemble multipolygon relation member ways into closed rings.
+// OSM multipolygon relations store boundaries as separate ways (e.g., left bank,
+// right bank of a river). These must be chained end-to-end to form closed polygons.
+// Without assembly, each bankline way becomes a garbage polygon when PIP-tested.
+function assembleRings(members, role) {
+  const closed = [];
+  const open = [];
+  for (const m of members) {
+    if (m.role !== role || !m.geometry || m.geometry.length < 3) continue;
+    const g = m.geometry;
+    const first = g[0], last = g[g.length - 1];
+    // ~1m tolerance in degrees
+    if (Math.abs(first.lat - last.lat) < 0.00001 && Math.abs(first.lon - last.lon) < 0.00001) {
+      closed.push(g);
+    } else {
+      open.push(g);
+    }
+  }
+
+  // Chain open ways by matching endpoints (with reversal)
+  const remaining = open.map(g => [...g]);
+  while (remaining.length > 0) {
+    let chain = remaining.shift();
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (let i = 0; i < remaining.length; i++) {
+        const way = remaining[i];
+        const EPS = 0.00001;
+        const cEnd = chain[chain.length - 1], cStart = chain[0];
+        const wStart = way[0], wEnd = way[way.length - 1];
+
+        if (Math.abs(cEnd.lat - wStart.lat) < EPS && Math.abs(cEnd.lon - wStart.lon) < EPS) {
+          chain = chain.concat(way.slice(1));
+        } else if (Math.abs(cEnd.lat - wEnd.lat) < EPS && Math.abs(cEnd.lon - wEnd.lon) < EPS) {
+          chain = chain.concat([...way].reverse().slice(1));
+        } else if (Math.abs(wEnd.lat - cStart.lat) < EPS && Math.abs(wEnd.lon - cStart.lon) < EPS) {
+          chain = way.slice(0, -1).concat(chain);
+        } else if (Math.abs(wStart.lat - cStart.lat) < EPS && Math.abs(wStart.lon - cStart.lon) < EPS) {
+          chain = [...way].reverse().slice(0, -1).concat(chain);
+        } else {
+          continue;
+        }
+        remaining.splice(i, 1);
+        changed = true;
+        break;
+      }
+    }
+    // Check if chain closed
+    const cs = chain[0], ce = chain[chain.length - 1];
+    if (Math.abs(cs.lat - ce.lat) < 0.00001 && Math.abs(cs.lon - ce.lon) < 0.00001) {
+      closed.push(chain);
+    }
+    // Discard unclosed chains — incomplete data from bbox clipping
+  }
+  return closed;
 }
 
 // Approximate polygon area in km² using shoelace formula on lat/lon
@@ -416,7 +498,7 @@ function getWCTilesForBbox(bbox) {
   const lngStart = Math.floor(bbox.west / 3) * 3;
   for (let lat = latStart; lat < bbox.north; lat += 3) {
     for (let lng = lngStart; lng < bbox.east; lng += 3) {
-      const id = getWCTileId(lat, lng);
+      const id = getWCTileId(lat, wrapLon(lng));
       tiles.set(id, { south: lat, north: lat + 3, west: lng, east: lng + 3 });
     }
   }
@@ -425,7 +507,33 @@ function getWCTilesForBbox(bbox) {
 
 async function fetchWorldCover(bbox, cols, rows, onS, onProg, log, tier, onPartial) {
   const proj = createHexProjection(bbox, cols, rows);
-  const tiles = getWCTilesForBbox(bbox);
+
+  // Latitude correction (uncorrectedLon) makes cells at latitudes closer to
+  // the equator than midLat wider in real geographic coordinates. The east/west
+  // edges of these cells extend past bbox.east/west, so sample points fall
+  // outside all tile intersections → no WC data → open_ground → flood-fill
+  // converts to ocean → false coastlines following a longitude-line curve.
+  // Compute how far past the bbox cells can extend and expand tile coverage.
+  const midLat = (bbox.south + bbox.north) / 2;
+  const cosRef = Math.cos(midLat * Math.PI / 180);
+  const latSpan = bbox.north - bbox.south;
+  const needsCorrectionForTiles = latSpan > 5 || Math.abs(midLat) > 55;
+  let lonBuffer = 0;
+  if (needsCorrectionForTiles) {
+    const halfLon = (bbox.east - bbox.west) / 2;
+    for (const lat of [bbox.south, bbox.north]) {
+      const cosLat = Math.cos(lat * Math.PI / 180);
+      // When cosLat > cosRef (lat closer to equator), uncorrectedLon expands
+      const ratio = cosLat / cosRef;
+      if (ratio > 1) lonBuffer = Math.max(lonBuffer, halfLon * (ratio - 1));
+    }
+  }
+  const expandedWest = bbox.west - lonBuffer;
+  const expandedEast = bbox.east + lonBuffer;
+  const tileBboxExpanded = lonBuffer > 0
+    ? { ...bbox, west: expandedWest, east: expandedEast }
+    : bbox;
+  const tiles = getWCTilesForBbox(tileBboxExpanded);
   const wcGrid = {}, wcMix = {}, wcHasData = new Set();
   const isSubTac = tier === "sub-tactical";
   const SAMPLES_PER_CELL = isSubTac ? 5 : 20; // 5×5=25 at sub-tactical, 20×20=400 at other tiers
@@ -451,7 +559,18 @@ async function fetchWorldCover(bbox, cols, rows, onS, onProg, log, tier, onParti
     onS(`WorldCover: tile ${tileId} (${tilesDone + 1}/${tiles.size})`);
     if (onProg) onProg({ phase: "WorldCover", current: tilesDone, total: tiles.size });
 
-    const url = `${WC_BASE}/v200/2021/map/ESA_WorldCover_10m_2021_v200_${tileId}_Map.tif`;
+    let url = `${WC_BASE}/v200/2021/map/ESA_WorldCover_10m_2021_v200_${tileId}_Map.tif`;
+
+    // Antimeridian tile naming: 180° = -180°, so ESA may use E180 or W180.
+    // If the primary name 404s, try the alternate before declaring ocean.
+    let altUrl = null;
+    if (tileId.includes("W180")) {
+      const altId = tileId.replace("W180", "E180");
+      altUrl = `${WC_BASE}/v200/2021/map/ESA_WorldCover_10m_2021_v200_${altId}_Map.tif`;
+    } else if (tileId.includes("E180")) {
+      const altId = tileId.replace("E180", "W180");
+      altUrl = `${WC_BASE}/v200/2021/map/ESA_WorldCover_10m_2021_v200_${altId}_Map.tif`;
+    }
 
     // Retry loop — geotiff fromUrl uses streaming Range requests that are
     // vulnerable to transient network failures. A single failed tile blanks
@@ -463,16 +582,34 @@ async function fetchWorldCover(bbox, cols, rows, onS, onProg, log, tier, onParti
         await new Promise(r => setTimeout(r, 2000 * attempt));
       }
       try {
-        const tiff = await fromUrl(url);
+        let tiff;
+        try {
+          tiff = await fromUrl(url);
+        } catch (e0) {
+          // If primary URL 404s and we have an antimeridian alternate, try it
+          const is404 = e0.message && (e0.message.includes("404") || e0.message.includes("Not Found"));
+          if (is404 && altUrl) {
+            if (log) log.info(`Tile ${tileId}: trying alternate antimeridian name`);
+            tiff = await fromUrl(altUrl);
+            altUrl = null; // succeeded — don't retry alternate again
+          } else {
+            throw e0; // re-throw to outer catch
+          }
+        }
         const image = await tiff.getImage();
         const imgW = image.getWidth();
         const imgH = image.getHeight();
 
-        // Intersection of tile with our bbox
-        const isectS = Math.max(bbox.south, tileBbox.south);
-        const isectN = Math.min(bbox.north, tileBbox.north);
-        const isectW = Math.max(bbox.west, tileBbox.west);
-        const isectE = Math.min(bbox.east, tileBbox.east);
+        // Intersection of tile with our bbox, expanded to capture edge hex sample points.
+        // Hexes at the grid boundary extend past the bbox by ~1 cell. Without this buffer,
+        // edge hexes lose sample points that fall outside the intersection → fewer votes
+        // → wrong terrain at the map border.
+        const cellLatBuffer = (bbox.north - bbox.south) / Math.max(1, rows);
+        const cellLonBuffer = (bbox.east - bbox.west) / Math.max(1, cols);
+        const isectS = Math.max(bbox.south - cellLatBuffer, tileBbox.south);
+        const isectN = Math.min(bbox.north + cellLatBuffer, tileBbox.north);
+        const isectW = Math.max(expandedWest - cellLonBuffer, tileBbox.west);
+        const isectE = Math.min(expandedEast + cellLonBuffer, tileBbox.east);
         if (isectS >= isectN || isectW >= isectE) { tileSuccess = true; break; }
 
         // Pixel window in the tile (origin = top-left = NW corner)
@@ -484,14 +621,35 @@ async function fetchWorldCover(bbox, cols, rows, onS, onProg, log, tier, onParti
         // Grid cells overlapping this intersection (hex-aware range)
         const { r0: gridR0, r1: gridR1, c0: gridC0, c1: gridC1 } = proj.geoRangeToGridRange(isectS, isectN, isectW, isectE);
         const cellsInRange = (gridC1 - gridC0 + 1) * (gridR1 - gridR0 + 1);
-
         if (cellsInRange <= 0) { tileSuccess = true; break; }
 
-        // Read raster at reduced resolution — sized for SAMPLES_PER_CELL per cell
-        const targetPixels = cellsInRange * SAMPLES_PER_CELL * SAMPLES_PER_CELL;
-        const rasterAspect = (px1 - px0) / Math.max(1, py1 - py0);
-        const outH = Math.max(1, Math.min(py1 - py0, Math.round(Math.sqrt(targetPixels / rasterAspect))));
-        const outW = Math.max(1, Math.min(px1 - px0, Math.round(outH * rasterAspect)));
+        // Determine output raster dimensions.
+        // Sub-tactical maps cover small areas (≤8km), so the native raster is
+        // small enough (≤800×800 px) to read without downsampling. This eliminates
+        // nearest-neighbor aliasing that causes horizontal banding when multiple
+        // hex rows' sample points map to the same downsampled raster row.
+        // Larger tiers downsample with a minimum of SAMPLES_PER_CELL rows per
+        // hex row to balance performance and accuracy.
+        const nativeH = py1 - py0;
+        const nativeW = px1 - px0;
+        let outH, outW;
+        if (isSubTac) {
+          // Read at full native resolution — small area, no performance concern
+          outH = nativeH;
+          outW = nativeW;
+        } else {
+          const hexRows = gridR1 - gridR0 + 1;
+          const hexCols = gridC1 - gridC0 + 1;
+          const targetPixels = cellsInRange * SAMPLES_PER_CELL * SAMPLES_PER_CELL;
+          const rasterAspect = nativeW / Math.max(1, nativeH);
+          outH = Math.round(Math.sqrt(targetPixels / rasterAspect));
+          outW = Math.round(outH * rasterAspect);
+          // Enforce minimum rows per hex row to prevent banding at larger scales
+          outH = Math.max(outH, SAMPLES_PER_CELL * hexRows);
+          outW = Math.max(outW, SAMPLES_PER_CELL * hexCols);
+          outH = Math.min(nativeH, outH);
+          outW = Math.min(nativeW, outW);
+        }
 
         const rasters = await image.readRasters({
           window: [px0, py0, px1, py1],
@@ -586,6 +744,27 @@ async function fetchWorldCover(bbox, cols, rows, onS, onProg, log, tier, onParti
     }
   }
 
+  // Gap-fill edge cells that got open_ground due to zero WC samples.
+  // Hex stagger causes alternating edge cells' sample points to fall outside
+  // tile intersection bounds. Copy terrain from nearest neighbor with real data.
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const k = `${c},${r}`;
+      if (!wcHasData.has(k)) {
+        for (const [nc, nr] of getNeighbors(c, r)) {
+          if (nc < 0 || nc >= cols || nr < 0 || nr >= rows) continue;
+          const nk = `${nc},${nr}`;
+          if (wcHasData.has(nk)) {
+            wcGrid[k] = wcGrid[nk];
+            wcHasData.add(k);  // prevents ocean detection from treating as empty
+            if (wcMix[nk]) wcMix[k] = { ...wcMix[nk] };
+            break;
+          }
+        }
+      }
+    }
+  }
+
   if (log) {
     const counts = {};
     Object.values(wcGrid).forEach(t => { counts[t] = (counts[t] || 0) + 1; });
@@ -607,6 +786,88 @@ async function fetchWorldCover(bbox, cols, rows, onS, onProg, log, tier, onParti
 // Operational (2-8km): terrain + infrastructure
 // Strategic (>=8km): infrastructure only — WC handles terrain
 
+// Check Overpass API rate limit status. Returns seconds to wait (0 if a slot is free).
+// Parses the plaintext status page for "available now" or "in X seconds".
+async function checkOverpassStatus() {
+  try {
+    const resp = await fetch("https://overpass-api.de/api/status");
+    if (!resp.ok) return 0; // can't check, proceed optimistically
+    const text = await resp.text();
+    if (text.includes("available now")) return 0;
+    // Look for "in X seconds" to find cooldown time
+    const match = text.match(/in\s+(\d+)\s+seconds/);
+    if (match) return parseInt(match[1], 10);
+    // Slots exist but none say "available now" — short wait
+    if (text.includes("slots")) return 10;
+    return 0;
+  } catch {
+    return 0; // network error checking status, proceed anyway
+  }
+}
+
+// Client-side timeout wrapper for fetch — prevents indefinite hangs
+// when the Overpass server stalls or the network drops silently.
+// Default 300s matches Overpass [timeout:300] setting. Previous 120s default
+// caused the client to abort before the server could finish large queries.
+async function fetchWithTimeout(url, options, timeoutMs = 300000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal })
+    .finally(() => clearTimeout(timer));
+}
+
+// Lightweight net traffic logger for debugging parse failures.
+// Collects entries in memory, flushes to server at end of parse.
+function createParserNetLog() {
+  const sessionId = Math.random().toString(36).slice(2, 10);
+  const entries = [];
+  return {
+    sessionId,
+    log(entry) {
+      entries.push({ ...entry, timestamp: new Date().toISOString() });
+    },
+    async flush() {
+      if (entries.length === 0) return;
+      try {
+        await fetch("/api/parsernetlog/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId, entries })
+        });
+      } catch { /* best-effort, never fail the parse */ }
+    }
+  };
+}
+
+// Fetch wrapper that logs every request to the parser netlog.
+// meta carries context like { phase: "OSM", label: "OSM 3/25", attempt: 2 }
+async function fetchAndLog(url, options, netLog, meta, timeoutMs = 300000) {
+  const t0 = Date.now();
+  try {
+    const resp = await fetchWithTimeout(url, options, timeoutMs);
+    if (netLog) netLog.log({
+      ...meta,
+      url: url.slice(0, 200),
+      method: (options && options.method) || "GET",
+      status: resp.status,
+      durationMs: Date.now() - t0,
+      ok: resp.ok,
+    });
+    return resp;
+  } catch (e) {
+    if (netLog) netLog.log({
+      ...meta,
+      url: url.slice(0, 200),
+      method: (options && options.method) || "GET",
+      status: 0,
+      durationMs: Date.now() - t0,
+      ok: false,
+      error: e.name === "AbortError" ? "timeout" : e.message,
+    });
+    throw e;
+  }
+}
+
 function getQueryTier(cellKm) {
   if (cellKm < 0.5) return "sub-tactical";
   if (cellKm < 2) return "tactical";
@@ -615,7 +876,7 @@ function getQueryTier(cellKm) {
 }
 
 function getChunkSize(tier) {
-  if (tier === "sub-tactical") return 5;
+  if (tier === "sub-tactical") return 10;
   if (tier === "tactical") return 75;
   if (tier === "operational") return 150;
   return 200;
@@ -627,8 +888,9 @@ function buildQuery(bbox, tier) {
   if (tier === "sub-tactical") {
     return `[out:json][timeout:300];(
 way["natural"~"^(water|wood|scrub|grassland|heath|sand|wetland|glacier|cliff|tree_row|beach)$"]${b};
-way["landuse"~"^(forest|residential|commercial|industrial|retail|farmland|meadow|military|quarry|cemetery|allotments|recreation_ground)$"]${b};
+way["landuse"~"^(forest|residential|commercial|industrial|retail|farmland|meadow|military|quarry|cemetery|allotments|recreation_ground|construction|railway)$"]${b};
 way["building"]${b};
+way["place"="square"]${b};
 way["barrier"~"^(wall|fence|hedge|city_wall|retaining_wall|ditch)$"]${b};
 way["waterway"~"^(river|canal|stream|ditch|drain|riverbank|dam|weir)$"]${b};
 way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|secondary|tertiary|residential|unclassified|service|track|footway|path|steps|pedestrian|cycleway)$"]${b};
@@ -722,31 +984,69 @@ relation["water"]${b};
 );out geom;`;
 }
 
-async function fetchOSMChunk(bbox, tier, onS, label, log) {
+// Returns { status: 'ok'|'fallback'|'failed', elements: [] }
+// 'ok' = full query succeeded, 'fallback' = terrain-only (missing roads/rail), 'failed' = nothing
+async function fetchOSMChunk(bbox, tier, onS, label, log, netLog) {
+  // Antimeridian handling: if bbox uses continuous range outside [-180, 180], wrap for Overpass.
+  // wrapLon(180) = -180, so we gate on the raw values to avoid infinite recursion.
+  if (bbox.east > 180 || bbox.west < -180) {
+    const w = wrapLon(bbox.west), e = wrapLon(bbox.east);
+    if (w > e) {
+      // Crosses antimeridian: split into two valid sub-bboxes
+      const eastResult = await fetchOSMChunk({ south: bbox.south, north: bbox.north, west: w, east: 180 }, tier, onS, `${label} E`, log, netLog);
+      const westResult = await fetchOSMChunk({ south: bbox.south, north: bbox.north, west: -180, east: e }, tier, onS, `${label} W`, log, netLog);
+      // worst status wins: failed > fallback > ok
+      const worstStatus = [eastResult.status, westResult.status].includes("failed") ? "failed"
+        : [eastResult.status, westResult.status].includes("fallback") ? "fallback" : "ok";
+      return { status: worstStatus, elements: [...eastResult.elements, ...westResult.elements] };
+    }
+    // Entirely past the antimeridian (e.g., 182..186 → -178..-174): just wrap
+    bbox = { south: bbox.south, north: bbox.north, west: w, east: e };
+  }
   const q = buildQuery(bbox, tier);
   const qFallback = buildFallbackQuery(bbox);
   const t0 = Date.now();
-  let retries = 0, status = "unknown";
+  let retries = 0;
+  const fetchOpts = { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" } };
 
-  // Try main query with retries, escalating backoff
+  // Try main query with retries; 429 (rate limit) gets longer backoff than other errors
   for (let attempt = 0; attempt < 3; attempt++) {
     onS(label ? `${label} (attempt ${attempt + 1})` : "Querying OSM...");
     try {
-      const resp = await fetch("https://overpass-api.de/api/interpreter", {
-        method: "POST", body: `data=${encodeURIComponent(q)}`,
-        headers: { "Content-Type": "application/x-www-form-urlencoded" }
-      });
+      const resp = await fetchAndLog(
+        "https://overpass-api.de/api/interpreter",
+        { ...fetchOpts, body: `data=${encodeURIComponent(q)}` },
+        netLog, { phase: "OSM", label, attempt: attempt + 1, queryType: "main" }
+      );
       if (resp.ok) {
-        const data = await resp.json();
+        let data;
+        try {
+          data = await resp.json();
+        } catch (jsonErr) {
+          if (log) log.warn(`${label}: HTTP 200 but malformed JSON — ${jsonErr.message}`);
+          retries++;
+          continue; // retry the whole request
+        }
         const dt = ((Date.now() - t0) / 1000).toFixed(1);
         if (log) log.ok(`${label}: ${data.elements.length} features in ${dt}s${retries > 0 ? ` (${retries} retries)` : ""}`);
-        return data.elements;
+        return { status: "ok", elements: data.elements };
       }
       retries++;
-      if (log) log.warn(`${label}: HTTP ${resp.status}`);
+      // 429 = genuine rate limit (Overpass quota exhausted), back off aggressively.
+      // 504 = gateway timeout (server overloaded), just retry normally — no long wait needed.
+      const isRateLimit = resp.status === 429;
+      if (log) log.warn(`${label}: HTTP ${resp.status}${isRateLimit ? " (rate limited)" : ""}`);
+      if (isRateLimit && attempt < 2) {
+        const retryAfter = resp.headers.get("Retry-After");
+        const wait = retryAfter ? Math.min(parseInt(retryAfter, 10) * 1000, 90000) : (attempt === 0 ? 30000 : 60000);
+        onS(`${label || "Chunk"} rate limited, waiting ${Math.round(wait / 1000)}s...`);
+        await new Promise(r => setTimeout(r, wait));
+        continue;
+      }
     } catch (e) {
       retries++;
-      if (log) log.warn(`${label}: network error — ${e.message}`);
+      const reason = e.name === "AbortError" ? `timeout (${Math.round(300000/1000)}s)` : `network error — ${e.message}`;
+      if (log) log.warn(`${label}: ${reason}`);
     }
     if (attempt < 2) {
       const wait = attempt === 0 ? 8000 : 15000;
@@ -755,29 +1055,56 @@ async function fetchOSMChunk(bbox, tier, onS, label, log) {
     }
   }
 
-  // Main query failed 3 times — try terrain-only fallback
-  onS(`${label || "Chunk"} trying terrain-only fallback...`);
-  try {
-    const resp = await fetch("https://overpass-api.de/api/interpreter", {
-      method: "POST", body: `data=${encodeURIComponent(qFallback)}`,
-      headers: { "Content-Type": "application/x-www-form-urlencoded" }
-    });
-    if (resp.ok) {
-      const data = await resp.json();
-      const dt = ((Date.now() - t0) / 1000).toFixed(1);
-      if (log) log.warn(`${label}: FALLBACK ${data.elements.length} features in ${dt}s (terrain-only, no roads/rail)`);
-      return data.elements;
+  // Main query failed 3 times — try terrain-only fallback (2 attempts)
+  for (let fbAttempt = 0; fbAttempt < 2; fbAttempt++) {
+    onS(`${label || "Chunk"} trying terrain-only fallback${fbAttempt > 0 ? ` (attempt ${fbAttempt + 1})` : ""}...`);
+    try {
+      const resp = await fetchAndLog(
+        "https://overpass-api.de/api/interpreter",
+        { ...fetchOpts, body: `data=${encodeURIComponent(qFallback)}` },
+        netLog, { phase: "OSM", label, attempt: fbAttempt + 1, queryType: "fallback" }
+      );
+      if (resp.ok) {
+        let data;
+        try {
+          data = await resp.json();
+        } catch (jsonErr) {
+          if (log) log.warn(`${label}: fallback HTTP 200 but malformed JSON`);
+          continue;
+        }
+        const dt = ((Date.now() - t0) / 1000).toFixed(1);
+        if (log) log.warn(`${label}: FALLBACK ${data.elements.length} features in ${dt}s (terrain-only, no roads/rail)`);
+        return { status: "fallback", elements: data.elements };
+      }
+    } catch (e) {
+      const reason = e.name === "AbortError" ? `timeout (300s)` : e.message;
+      if (log) log.warn(`${label}: fallback ${reason}`);
     }
-  } catch (e) {
-    // fallback also failed
+    if (fbAttempt < 1) {
+      onS(`${label || "Chunk"} fallback failed, retry in 10s...`);
+      await new Promise(r => setTimeout(r, 10000));
+    }
   }
 
   const dt = ((Date.now() - t0) / 1000).toFixed(1);
-  if (log) log.error(`${label}: FAILED completely after ${dt}s — 0 features (${retries} retries + fallback)`);
-  return [];
+  if (log) log.error(`${label}: FAILED completely after ${dt}s — 0 features (${retries} retries + 2 fallback attempts)`);
+  return { status: "failed", elements: [] };
 }
 
-async function fetchOSM(bbox, onS, onProg, mapWKm, mapHKm, cellKm, elevations, cols, rows, log) {
+// Split a chunk bbox into 4 sub-bboxes (2x2) for retry with smaller queries
+function subdivideChunk(chunk) {
+  const { south, north, west, east } = chunk.bbox;
+  const midLat = (south + north) / 2;
+  const midLng = (west + east) / 2;
+  return [
+    { bbox: { south, north: midLat, west, east: midLng }, label: `${chunk.label}-SW`, reason: chunk.reason },
+    { bbox: { south, north: midLat, west: midLng, east }, label: `${chunk.label}-SE`, reason: chunk.reason },
+    { bbox: { south: midLat, north, west, east: midLng }, label: `${chunk.label}-NW`, reason: chunk.reason },
+    { bbox: { south: midLat, north, west: midLng, east }, label: `${chunk.label}-NE`, reason: chunk.reason },
+  ];
+}
+
+async function fetchOSM(bbox, onS, onProg, mapWKm, mapHKm, cellKm, elevations, cols, rows, log, netLog) {
   const tier = getQueryTier(cellKm);
   const chunkKm = getChunkSize(tier);
 
@@ -799,10 +1126,10 @@ async function fetchOSM(bbox, onS, onProg, mapWKm, mapHKm, cellKm, elevations, c
   if (totalChunks === 1) {
     onS("Querying OpenStreetMap...");
     onProg({ phase: "OSM", current: 0, total: 1 });
-    const els = await fetchOSMChunk(bbox, tier, onS, "OSM 1/1", log);
+    const result = await fetchOSMChunk(bbox, tier, onS, "OSM 1/1", log, netLog);
     onProg({ phase: "OSM", current: 1, total: 1 });
-    onS(`Received ${els.length} features`);
-    return els;
+    onS(`Received ${result.elements.length} features${result.status !== "ok" ? ` (${result.status})` : ""}`);
+    return result.elements;
   }
 
   onS(`OSM [${tier}]: ${totalChunks} chunks (${chunksX}×${chunksY} @ ${chunkKm}km)...`);
@@ -842,17 +1169,38 @@ async function fetchOSM(bbox, onS, onProg, mapWKm, mapHKm, cellKm, elevations, c
   const seen = new Set();
   const allElements = [];
   let completed = 0;
+  let consecutiveFailures = 0;
+  const retryChunks = []; // chunks that failed or fell back to terrain-only
   const osmT0 = Date.now();
+
+  // For large batch runs, check Overpass status before starting
+  if (landChunks >= 10) {
+    const waitSec = await checkOverpassStatus();
+    if (waitSec > 0) {
+      onS(`Overpass rate limit: waiting ${waitSec}s for available slot...`);
+      if (log) log.warn(`Overpass status: ${waitSec}s cooldown before starting`);
+      await new Promise(r => setTimeout(r, waitSec * 1000));
+    }
+  }
 
   if (log) log.info(`Querying ${landChunks} land chunks...`);
 
   for (let cy = 0; cy < chunksY; cy++) {
     for (let cx = 0; cx < chunksX; cx++) {
-      const chunkIdx = cy * chunksX + cx + 1;
-
       if (oceanChunks.has(`${cx},${cy}`)) {
         onProg({ phase: "OSM", current: completed, total: landChunks, skipped: oceanChunks.size });
         continue;
+      }
+
+      // If we've had consecutive failures, check Overpass status before continuing
+      if (consecutiveFailures >= 2) {
+        onS("Multiple failures — checking Overpass status...");
+        if (log) log.warn(`${consecutiveFailures} consecutive failures, checking Overpass status`);
+        const waitSec = await checkOverpassStatus();
+        const cooldown = Math.max(15, waitSec);
+        onS(`Cooling down ${cooldown}s after consecutive failures...`);
+        await new Promise(r => setTimeout(r, cooldown * 1000));
+        consecutiveFailures = 0;
       }
 
       const chunkBbox = {
@@ -862,31 +1210,115 @@ async function fetchOSM(bbox, onS, onProg, mapWKm, mapHKm, cellKm, elevations, c
         east: bbox.west + (cx + 1) * lngStep,
       };
       const label = `OSM ${completed + 1}/${landChunks}`;
-      try {
-        const els = await fetchOSMChunk(chunkBbox, tier, onS, label, log);
-        for (const el of els) {
-          const key = `${el.type}:${el.id}`;
-          if (!seen.has(key)) { seen.add(key); allElements.push(el); }
-        }
-      } catch (e) {
-        if (log) log.error(`Chunk ${chunkIdx} exception: ${e.message}`);
+      const result = await fetchOSMChunk(chunkBbox, tier, onS, label, log, netLog);
+
+      // Collect whatever elements we got (even fallback terrain-only data)
+      for (const el of result.elements) {
+        const key = `${el.type}:${el.id}`;
+        if (!seen.has(key)) { seen.add(key); allElements.push(el); }
       }
+
+      if (result.status === "ok") {
+        consecutiveFailures = 0;
+      } else {
+        // Both 'fallback' (terrain-only, missing roads/rail) and 'failed' (nothing) need retry
+        consecutiveFailures++;
+        retryChunks.push({ bbox: chunkBbox, label: `retry ${cx},${cy}`, reason: result.status });
+      }
+
       completed++;
       onProg({ phase: "OSM", current: completed, total: landChunks, skipped: oceanChunks.size });
 
       // Delay scales with chunk count to avoid rate limiting
       if (completed < landChunks) {
-        const delay = landChunks > 50 ? 2000 : landChunks > 20 ? 1500 : 1000;
+        const delay = landChunks > 80 ? 5000 : landChunks > 30 ? 3000 : landChunks > 10 ? 2000 : 1000;
         await new Promise(r => setTimeout(r, delay));
+      }
+
+      // Periodic status check every 20 chunks to adapt to rate limit changes
+      if (landChunks >= 20 && completed % 20 === 0 && completed < landChunks) {
+        const waitSec = await checkOverpassStatus();
+        if (waitSec > 0) {
+          onS(`Overpass cooldown: ${waitSec}s...`);
+          if (log) log.info(`Periodic status check: ${waitSec}s cooldown`);
+          await new Promise(r => setTimeout(r, waitSec * 1000));
+        }
       }
     }
   }
 
+  // ── Retry waves: come back for failed/fallback chunks with smaller sub-chunks ──
+  // Each wave subdivides remaining chunks into 4 (2x2) so queries are lighter
+  // and less likely to timeout or get rate-limited.
+  const MAX_WAVES = 3;
+  const WAVE_DELAYS = [30000, 60000, 120000]; // 30s, 60s, 2min before each wave
+
+  if (retryChunks.length > 0 && log) {
+    log.warn(`${retryChunks.length} chunks need retry (${retryChunks.filter(c => c.reason === "failed").length} failed, ${retryChunks.filter(c => c.reason === "fallback").length} fallback)`);
+  }
+
+  let pendingRetry = retryChunks;
+  for (let wave = 0; wave < MAX_WAVES && pendingRetry.length > 0; wave++) {
+    // Subdivide each failed chunk into 4 smaller sub-chunks
+    const subChunks = [];
+    for (const chunk of pendingRetry) {
+      subChunks.push(...subdivideChunk(chunk));
+    }
+
+    const waveDelay = WAVE_DELAYS[wave];
+    onS(`OSM Retry wave ${wave + 1}/${MAX_WAVES}: ${subChunks.length} sub-chunks, waiting ${waveDelay / 1000}s...`);
+    if (log) log.section(`OSM RETRY WAVE ${wave + 1}`);
+    if (log) log.info(`${subChunks.length} sub-chunks from ${pendingRetry.length} failed chunks, ${waveDelay / 1000}s cooldown`);
+
+    // Check Overpass status and wait
+    const statusWait = await checkOverpassStatus();
+    const totalWait = Math.max(waveDelay / 1000, statusWait);
+    await new Promise(r => setTimeout(r, totalWait * 1000));
+
+    const stillFailing = [];
+    for (let i = 0; i < subChunks.length; i++) {
+      const sc = subChunks[i];
+      const retryLabel = `Retry W${wave + 1} ${i + 1}/${subChunks.length}`;
+      onProg({ phase: "OSM Retry", current: i, total: subChunks.length });
+
+      const result = await fetchOSMChunk(sc.bbox, tier, onS, retryLabel, log, netLog);
+      for (const el of result.elements) {
+        const key = `${el.type}:${el.id}`;
+        if (!seen.has(key)) { seen.add(key); allElements.push(el); }
+      }
+
+      if (result.status !== "ok") {
+        stillFailing.push({ bbox: sc.bbox, label: sc.label, reason: result.status });
+      }
+
+      // 5s delay between retry chunks
+      if (i < subChunks.length - 1) {
+        await new Promise(r => setTimeout(r, 5000));
+      }
+    }
+
+    onProg({ phase: "OSM Retry", current: subChunks.length, total: subChunks.length });
+    if (log) log.info(`Wave ${wave + 1} complete: ${subChunks.length - stillFailing.length}/${subChunks.length} sub-chunks recovered`);
+    pendingRetry = stillFailing;
+
+    if (pendingRetry.length === 0) {
+      if (log) log.ok("All chunks recovered!");
+      break;
+    }
+  }
+
+  if (pendingRetry.length > 0 && log) {
+    log.error(`${pendingRetry.length} sub-chunks still incomplete after ${MAX_WAVES} retry waves`);
+  }
+
   const osmDt = ((Date.now() - osmT0) / 1000).toFixed(1);
-  onS(`Received ${allElements.length} features from ${landChunks} land chunks (${oceanChunks.size} ocean skipped)`);
+  const retryNote = retryChunks.length > 0
+    ? `, ${retryChunks.length} retried${pendingRetry.length > 0 ? `, ${pendingRetry.length} still incomplete` : ", all recovered"}`
+    : "";
+  onS(`Received ${allElements.length} features from ${landChunks} land chunks (${oceanChunks.size} ocean skipped${retryNote})`);
   if (log) {
     log.ok(`OSM complete: ${allElements.length} unique features in ${osmDt}s`);
-    log.detail(`${landChunks} land chunks queried, ${oceanChunks.size} ocean skipped`);
+    log.detail(`${landChunks} land chunks queried, ${oceanChunks.size} ocean skipped${retryNote}`);
   }
   return allElements;
 }
@@ -905,13 +1337,13 @@ async function fetchElev(pts, onS, onProg, log, onPartial) {
   const providers = [
     {
       name: "OpenTopoData",
-      url: (sl) => `/api/topo/v1/srtm30m?locations=${sl.map(p => `${p.lat.toFixed(4)},${p.lng.toFixed(4)}`).join("|")}`,
+      url: (sl) => `/api/topo/v1/srtm30m?locations=${sl.map(p => `${p.lat.toFixed(4)},${wrapLon(p.lng).toFixed(4)}`).join("|")}`,
       parse: (d) => d.results ? d.results.map(r => r.elevation) : null,
       delay: 1100,
     },
     {
       name: "Open-Meteo",
-      url: (sl) => `https://api.open-meteo.com/v1/elevation?latitude=${sl.map(p => p.lat.toFixed(4)).join(",")}&longitude=${sl.map(p => p.lng.toFixed(4)).join(",")}`,
+      url: (sl) => `https://api.open-meteo.com/v1/elevation?latitude=${sl.map(p => p.lat.toFixed(4)).join(",")}&longitude=${sl.map(p => wrapLon(p.lng).toFixed(4)).join(",")}`,
       parse: (d) => d.elevation || null,
       delay: 250,
     },
@@ -1009,10 +1441,11 @@ function getCopernicusTilesForBbox(bbox) {
   const lonEnd = Math.ceil(bbox.east);
   for (let lat = latStart; lat < latEnd; lat++) {
     for (let lon = lonStart; lon < lonEnd; lon++) {
-      const key = `${lat >= 0 ? "N" : "S"}${Math.abs(lat)}_${lon >= 0 ? "E" : "W"}${Math.abs(lon)}`;
+      const wLon = wrapLon(lon);
+      const key = `${lat >= 0 ? "N" : "S"}${Math.abs(lat)}_${wLon >= 0 ? "E" : "W"}${Math.abs(wLon)}`;
       tiles.set(key, {
         south: lat, north: lat + 1, west: lon, east: lon + 1,
-        url: getCopernicusTileUrl(lat, lon),
+        url: getCopernicusTileUrl(lat, wLon),
       });
     }
   }
@@ -1174,6 +1607,27 @@ async function fetchElevFromDEM(bbox, cols, rows, onS, onProg, log, onPartial) {
       sumSqDiff += d * d;
     }
     elevStddev[i] = Math.sqrt(sumSqDiff / samples.length);
+  }
+
+  // Gap-fill edge cells with zero elevation samples from neighbors.
+  // Same hex-stagger overhang issue as WorldCover — alternating edge cells'
+  // sample points fall outside the DEM intersection bounds.
+  for (let i = 0; i < totalCells; i++) {
+    if (cellSamples[i].length === 0) {
+      const c = i % cols, r = Math.floor(i / cols);
+      for (const [nc, nr] of getNeighbors(c, r)) {
+        if (nc < 0 || nc >= cols || nr < 0 || nr >= rows) continue;
+        const ni = nr * cols + nc;
+        if (ni >= 0 && ni < totalCells && cellSamples[ni].length > 0) {
+          elevations[i] = elevations[ni];
+          elevMin[i] = elevMin[ni];
+          elevMax[i] = elevMax[ni];
+          elevRange[i] = elevRange[ni];
+          elevStddev[i] = elevStddev[ni];
+          break;
+        }
+      }
+    }
   }
 
   const coverage = validCells / totalCells;
@@ -1391,7 +1845,7 @@ async function fetchAridityData(bbox, cols, rows, onS, log) {
 
   try {
     const lats = points.map(p => p.lat.toFixed(4)).join(",");
-    const lons = points.map(p => p.lon.toFixed(4)).join(",");
+    const lons = points.map(p => wrapLon(p.lon).toFixed(4)).join(",");
     // Fetch daily precipitation sum for a full recent year
     const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lats}&longitude=${lons}&start_date=2023-01-01&end_date=2023-12-31&daily=precipitation_sum&timezone=UTC`;
     const resp = await fetch(url);
@@ -1458,7 +1912,36 @@ async function fetchAridityData(bbox, cols, rows, onS, log) {
 // PARSE FEATURES
 // ════════════════════════════════════════════════════════════════
 
-function parseFeatures(elements, tier) {
+// Normalize OSM element coordinates to the bbox's continuous longitude range.
+// Overpass returns lon in [-180, 180]; when the bbox crosses the antimeridian
+// (e.g., west=170, east=190), coordinates like -179 must become 181 so that
+// downstream spatial indexing, PIP tests, and grid mapping work correctly.
+function normalizeOSMCoords(elements, bboxWest) {
+  for (const el of elements) {
+    if (el.lon !== undefined) el.lon = continuousLon(el.lon, bboxWest);
+    if (el.lat !== undefined && el.geometry) {
+      for (const nd of el.geometry) {
+        if (nd.lon !== undefined) nd.lon = continuousLon(nd.lon, bboxWest);
+      }
+    } else if (el.geometry) {
+      for (const nd of el.geometry) {
+        if (nd.lon !== undefined) nd.lon = continuousLon(nd.lon, bboxWest);
+      }
+    }
+    // Relations have members with geometry arrays
+    if (el.members) {
+      for (const m of el.members) {
+        if (m.geometry) {
+          for (const nd of m.geometry) {
+            if (nd.lon !== undefined) nd.lon = continuousLon(nd.lon, bboxWest);
+          }
+        }
+      }
+    }
+  }
+}
+
+function parseFeatures(elements, tier, urbanDetail = false) {
   const terrAreas = [], infraAreas = [], infraLines = [], waterLines = [];
   const streamLines = [], damNodes = [], buildingAreas = [], barrierLines = [], towerNodes = [];
   const beachAreas = [], pipelineLines = [], powerPlantAreas = [], navigableLines = [];
@@ -1485,8 +1968,13 @@ function parseFeatures(elements, tier) {
       const ring = el.geometry;
       const closed = ring.length > 2 && ring[0].lat === ring[ring.length - 1].lat && ring[0].lon === ring[ring.length - 1].lon;
 
-      // Terrain areas
-      if (closed || tags.natural === "water" || tags.water || tags.landuse) {
+      // Terrain areas — only closed ways form valid polygons for PIP testing.
+      // Unclosed ways tagged natural=water, landuse, etc. must NOT be used as
+      // polygons: pip() implicitly closes them by connecting first→last point,
+      // creating massive garbage polygons (e.g., a river bankline spanning the
+      // full map width becomes a horizontal band of "lake"). Relations handle
+      // unclosed members via assembleRings() which chains and discards properly.
+      if (closed) {
         let tt = null, tp = 0;
         if (tags.natural === "water" || tags.water) {
           const wt = tags.water || "";
@@ -1503,12 +1991,37 @@ function parseFeatures(elements, tier) {
         if (tags.natural === "wetland") { tt = "wetland"; tp = 12; }
         if (tags.natural === "sand") { tt = "desert"; tp = 9; }
         if (tags.natural === "glacier") { tt = "ice"; tp = 14; }
-        if (tags.landuse === "residential") { if (tier === "operational" || tier === "strategic") { tt = "light_urban"; tp = 18; } }
+        if (tags.landuse === "residential") {
+          if (tier === "operational" || tier === "strategic") { tt = "light_urban"; tp = 18; }
+          // Sub-tactical: only override WC when urbanDetail is on. Priority 6 = beats WC fallback
+          // but loses to park (8), forest (10), cemetery (8), allotment (7), sports_field (8), plaza (9)
+          else if (tier === "sub-tactical" && urbanDetail) { tt = "light_urban"; tp = 6; }
+        }
         if (tags.landuse === "commercial" || tags.landuse === "retail") { tt = "light_urban"; tp = 18; }
         if (tags.landuse === "industrial") { tt = "light_urban"; tp = 18; }
         if (tags.landuse === "quarry") { tt = "open_ground"; tp = 5; }
-        // Sub-tactical specific terrain
+        // Sub-tactical specific terrain — fine-grained urban types
         if (tier === "sub-tactical") {
+          if (tags.landuse === "cemetery") { tt = "cemetery"; tp = 8; }
+          if (tags.landuse === "allotments") { tt = "allotment"; tp = 7; }
+          if (tags.landuse === "recreation_ground") { tt = "light_veg"; tp = 5; }
+          if (tags.leisure === "park" || tags.leisure === "garden") { tt = "park"; tp = 8; }
+          if (tags.leisure === "pitch" || tags.leisure === "playground") { tt = "sports_field"; tp = 8; }
+          if (tags.amenity === "parking" && closed) infraAreas.push({ type: "parking", pri: 15, ring });
+          // Construction sites
+          if (tags.landuse === "construction") { tt = "construction_site"; tp = 7; }
+          // Rail yards — multiple parallel tracks
+          if (tags.landuse === "railway") { tt = "rail_yard"; tp = 12; }
+          // Pedestrian plazas
+          if (tags.highway === "pedestrian" && closed) { tt = "plaza"; tp = 9; }
+          if (tags.place === "square") { tt = "plaza"; tp = 9; }
+          // Waterway areas — canals and docks
+          if (tags.waterway === "canal" && closed) { tt = "canal"; tp = 15; }
+          if (tags.waterway === "dock" || tags.harbour === "yes" || tags.leisure === "marina") {
+            if (closed) { tt = "dock"; tp = 15; }
+          }
+        } else {
+          // Non-sub-tactical: use original generic types
           if (tags.landuse === "cemetery") { tt = "open_ground"; tp = 5; }
           if (tags.landuse === "allotments" || tags.landuse === "recreation_ground") { tt = "light_veg"; tp = 5; }
           if (tags.leisure === "park" || tags.leisure === "garden") { tt = "light_veg"; tp = 6; }
@@ -1544,8 +2057,20 @@ function parseFeatures(elements, tier) {
       // Pipelines (linear features)
       if (tags.man_made === "pipeline" && !closed) pipelineLines.push({ nodes: ring });
 
-      // Buildings (sub-tactical only)
-      if (tier === "sub-tactical" && tags.building && closed) buildingAreas.push({ ring });
+      // Buildings (sub-tactical only) — extract metadata for urban classification
+      if (tier === "sub-tactical" && tags.building && closed) {
+        const bldgType = tags.building === "yes" ? null : tags.building; // null = untyped
+        const levels = parseInt(tags["building:levels"]) || null;
+        const height = parseFloat(tags.height) || (levels ? levels * 3 : null); // estimate 3m/floor
+        const material = tags["building:material"] || null;
+        // Functional use from amenity/building type
+        const amenity = tags.amenity || null;
+        const name = tags.name || null;
+        // IHL protected sites: hospitals, schools, religious buildings
+        const protectedSite = !!(amenity && /hospital|clinic|school|kindergarten|university/i.test(amenity))
+          || /church|cathedral|chapel|mosque|synagogue|temple|monastery/i.test(bldgType || "");
+        buildingAreas.push({ ring, bldgType, levels, height, material, amenity, name, protectedSite });
+      }
 
       // Barriers (sub-tactical only)
       if (tier === "sub-tactical" && tags.barrier) {
@@ -1558,7 +2083,7 @@ function parseFeatures(elements, tier) {
       // Hedge lines for density analysis (all tiers that query hedges)
       if (tags.barrier === "hedge") hedgeLines.push({ nodes: ring });
 
-      // Roads — tier-filtered
+      // Roads — tier-filtered, with optional width/surface metadata
       if (tags.highway) {
         const hw = tags.highway, br = !!(tags.bridge && tags.bridge !== "no"), tn = !!(tags.tunnel && tags.tunnel !== "no");
         let lt = null;
@@ -1569,7 +2094,18 @@ function parseFeatures(elements, tier) {
         else if (hw === "service") { lt = tier === "sub-tactical" ? "minor_road" : null; }
         else if (hw === "track") { lt = (tier === "sub-tactical" || tier === "tactical") ? "trail" : null; }
         else if (["footway", "path", "steps", "pedestrian", "cycleway"].includes(hw)) { lt = tier === "sub-tactical" ? "footpath" : null; }
-        if (lt) infraLines.push({ type: lt, isBridge: br, isTunnel: tn, nodes: ring });
+        if (lt) {
+          const entry = { type: lt, isBridge: br, isTunnel: tn, nodes: ring };
+          // Capture width and surface at sub-tactical for urban road classification
+          if (tier === "sub-tactical") {
+            const w = parseFloat(tags.width) || null;
+            if (w) entry.width = w;
+            if (tags.surface) entry.surface = tags.surface;
+            // Keep original highway tag for fine-grained terrain classification
+            entry.hwTag = hw;
+          }
+          infraLines.push(entry);
+        }
       }
 
       // Railways — tier-filtered
@@ -1579,7 +2115,7 @@ function parseFeatures(elements, tier) {
       // Waterways — tier-filtered
       if (tags.waterway && !closed) {
         if (["river", "canal"].includes(tags.waterway)) {
-          waterLines.push({ type: "river", nodes: ring });
+          waterLines.push({ type: "river", nodes: ring, name: tags.name || null });
           // Navigable tracking: name tag is primary signal at strategic/operational
           const isCanal = tags.waterway === "canal";
           const hasShip = tags.ship === "yes";
@@ -1614,10 +2150,20 @@ function parseFeatures(elements, tier) {
         tp = 15;
       }
       if (tags.natural === "wood" || tags.landuse === "forest") { tt = "forest"; tp = 10; }
-      if (tags.landuse === "residential") { if (tier === "operational" || tier === "strategic") { tt = "light_urban"; tp = 18; } }
+      if (tags.landuse === "residential") {
+        if (tier === "operational" || tier === "strategic") { tt = "light_urban"; tp = 18; }
+        else if (tier === "sub-tactical" && urbanDetail) { tt = "light_urban"; tp = 6; }
+      }
       if (tags.landuse === "commercial" || tags.landuse === "industrial") { tt = "light_urban"; tp = 18; }
-      for (const m of el.members) {
-        if (m.role === "outer" && m.geometry) { if (tt) terrAreas.push({ type: tt, pri: tp, ring: m.geometry }); }
+      // Assemble relation member ways into closed rings (fixes multipolygon inflation)
+      // Individual bankline segments aren't closed polygons — pip() implicitly closes them,
+      // creating massive garbage polygons. assembleRings() chains them properly.
+      if (tt) {
+        const outerRings = assembleRings(el.members, "outer");
+        const innerRings = assembleRings(el.members, "inner");
+        for (const ring of outerRings) {
+          terrAreas.push({ type: tt, pri: tp, ring, innerRings: innerRings.length > 0 ? innerRings : null });
+        }
       }
 
       // Waterway relations — named river systems
@@ -1630,7 +2176,7 @@ function parseFeatures(elements, tier) {
             const geom = m.geometry;
             const isClosed = geom.length > 2 && geom[0].lat === geom[geom.length - 1].lat && geom[0].lon === geom[geom.length - 1].lon;
             if (!isClosed) {
-              waterLines.push({ type: "river", nodes: geom });
+              waterLines.push({ type: "river", nodes: geom, name: relName });
               navigableLines.push({ nodes: geom, tagged: false, named: true, fromRelation: true, actualName: relName });
             }
           }
@@ -1698,7 +2244,7 @@ async function fetchWikidataRivers(bbox, tier, log, cellKm) {
   // Expand bbox by 5° to catch rivers whose coordinate is outside but path goes through
   const expand = 5;
   const s = bbox.south - expand, n = bbox.north + expand;
-  const w = bbox.west - expand, e = bbox.east + expand;
+  const w = wrapLon(bbox.west - expand), e = wrapLon(bbox.east + expand);
 
   // SPARQL query: rivers + canals with length > threshold, coordinate within expanded bbox
   // Uses wikibase:box for geographic filtering (reliable on Wikidata)
@@ -1953,7 +2499,7 @@ LIMIT 2000`.trim();
   }
 }
 
-function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellKm, wikidataRivers, aridityGrid, metroCities) {
+function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellKm, wikidataRivers, aridityGrid, metroCities, urbanDetail = false) {
   const { south, north, west, east } = bbox;
   const proj = createHexProjection(bbox, cols, rows);
   const elev = elevData.elevations;
@@ -2027,9 +2573,27 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
     }
   }
 
-  // River lines
+  // River lines — at strategic/operational, only whitelist-matched rivers get visual lines.
+  // This mirrors the navigable filtering: without this, every OSM waterway=river draws
+  // a cyan line even when the whitelist correctly excludes it from hex features.
   const cellRiver = new Set();
+  const filterVisualRivers = wikidataRivers && (tier === "strategic" || tier === "operational");
+  const riverNameMatches = (osmName) => {
+    if (!osmName) return false;
+    const lower = osmName.toLowerCase();
+    for (const wdName of wikidataRivers) {
+      if (wdName.length <= 3) {
+        const re = new RegExp(`\\b${wdName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+        if (re.test(lower)) return true;
+      } else {
+        if (lower.includes(wdName)) return true;
+      }
+      if (lower.length >= 4 && (wdName === lower || wdName.endsWith(" " + lower))) return true;
+    }
+    return false;
+  };
   for (const wl of feat.waterLines) {
+    if (filterVisualRivers && !riverNameMatches(wl.name)) continue;
     const pathCells = rasterizeWay(wl.nodes);
     if (pathCells.length >= 2) linearPaths.push({ type: "river", cells: pathCells });
     for (const [c, r] of pathCells) cellRiver.add(`${c},${r}`);
@@ -2068,21 +2632,69 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
     }
   }
 
-  // Building areas (sub-tactical) — compute per-cell coverage using actual footprint area
+  // Building areas (sub-tactical) — compute per-cell coverage and building metadata
   const cellBuildingPct = {};
+  // Per-cell building metadata accumulators for fine-grained urban classification
+  const cellBuildingMeta = {};  // k -> { heights:[], types:[], materials:[], amenities:[], names:[], protectedCount:0, totalArea:number }
   if (tier === "sub-tactical" && feat.buildingAreas && feat.buildingAreas.length > 0) {
     const cellBuildingArea = {};
     const hexArea = (SQRT3 / 2) * cellKm * cellKm; // hex area in km²
+
+    // Helper: assign a building to a single hex cell
+    const assignBldgToCell = (k, area, bldg) => {
+      cellBuildingArea[k] = (cellBuildingArea[k] || 0) + area;
+      if (!cellBuildingMeta[k]) cellBuildingMeta[k] = { heights: [], types: [], materials: [], amenities: [], names: [], protectedCount: 0, totalArea: 0 };
+      const meta = cellBuildingMeta[k];
+      meta.totalArea += area;
+      if (bldg.height) meta.heights.push(bldg.height);
+      if (bldg.bldgType) meta.types.push(bldg.bldgType);
+      if (bldg.material) meta.materials.push(bldg.material);
+      if (bldg.amenity) meta.amenities.push(bldg.amenity);
+      if (bldg.name) meta.names.push(bldg.name);
+      if (bldg.protectedSite) meta.protectedCount++;
+    };
+
     for (const bldg of feat.buildingAreas) {
       if (!bldg.ring || bldg.ring.length < 3) continue;
       const area = polyAreaKm2(bldg.ring);
-      // Use centroid to assign building to cell
-      let sumLat = 0, sumLon = 0;
-      for (const nd of bldg.ring) { sumLat += nd.lat; sumLon += nd.lon; }
-      const bc = geoToCell(sumLon / bldg.ring.length, sumLat / bldg.ring.length);
-      if (bc) {
-        const k = `${bc[0]},${bc[1]}`;
-        cellBuildingArea[k] = (cellBuildingArea[k] || 0) + area;
+
+      // Bbox fill: assign building to ALL fine hexes whose centers fall
+      // inside the building's bounding box. No PIP — avoids all the
+      // implicit-closure and malformed-geometry issues that cause banding.
+      // Slight overcounting at corners of non-rectangular buildings is
+      // negligible at 10m resolution and far better than centroid-only.
+      let bS = Infinity, bN = -Infinity, bW = Infinity, bE = -Infinity;
+      for (const nd of bldg.ring) {
+        if (nd.lat < bS) bS = nd.lat;
+        if (nd.lat > bN) bN = nd.lat;
+        if (nd.lon < bW) bW = nd.lon;
+        if (nd.lon > bE) bE = nd.lon;
+      }
+
+      // Guard: malformed relations can span the whole map. Real buildings
+      // rarely exceed 200m on any axis — skip bbox scan for anything larger.
+      const bldgSpanM = Math.max((bN - bS) * 111320, (bE - bW) * 111320 * Math.cos(((bN + bS) / 2) * Math.PI / 180));
+
+      const hits = [];
+      if (bldgSpanM < 200) {
+        const { r0, r1, c0, c1 } = proj.geoRangeToGridRange(bS, bN, bW, bE);
+        for (let rr = r0; rr <= r1; rr++) {
+          for (let cc = c0; cc <= c1; cc++) {
+            hits.push(`${cc},${rr}`);
+          }
+        }
+      }
+      // Fallback to centroid for oversized polygons or tiny buildings
+      // where bbox yielded nothing
+      if (hits.length === 0) {
+        let sumLat = 0, sumLon = 0;
+        for (const nd of bldg.ring) { sumLat += nd.lat; sumLon += nd.lon; }
+        const bc = geoToCell(sumLon / bldg.ring.length, sumLat / bldg.ring.length);
+        if (bc) hits.push(`${bc[0]},${bc[1]}`);
+      }
+      const areaPerHex = hits.length > 0 ? area / hits.length : area;
+      for (const k of hits) {
+        assignBldgToCell(k, areaPerHex, bldg);
       }
     }
     for (const [k, area] of Object.entries(cellBuildingArea)) {
@@ -2386,7 +2998,8 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
     for (const city of metroCities) {
       if (city.p < MIN_POP) continue;
       if (city.lat < south - marginLat || city.lat > north + marginLat) continue;
-      if (city.lng < west - marginLon || city.lng > east + marginLon) continue;
+      const cityLng = continuousLon(city.lng, west);
+      if (cityLng < west - marginLon || cityLng > east + marginLon) continue;
 
       // Estimate built-up footprint from population (empirical urban scaling law)
       // Calibrated: Delhi (33M) → ~1800 km², London (9.5M) → ~700 km², 1M city → ~120 km²
@@ -2512,7 +3125,8 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       // ── TERRAIN CLASSIFICATION — multi-point PIP + WorldCover mix ──
       // At strategic/operational: test 5×5 grid of points per cell against OSM terrain polygons
       // This catches features that don't cover the cell center (coastal cities, small polygons)
-      const PTS = (tier === "sub-tactical") ? 1 : 5; // 5×5 = 25 sample points
+      // urbanDetail: 3×3 = 9 sample points at sub-tactical to catch residential polygons
+      const PTS = (tier === "sub-tactical") ? (urbanDetail ? 3 : 1) : 5;
       const { cellN, cellS, cellW: cellWest, cellE: cellEast } = proj.cellBbox(c, r);
       const tCandidates = qIdxRect(tIdx, bbox, cellS, cellN, cellWest, cellEast);
 
@@ -2533,7 +3147,14 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
           for (const ai of tCandidates) {
             const a = feat.terrAreas[ai];
             if (a.pri > bestPri && pip(tLat, tLng, a.ring)) {
-              best = a.type; bestPri = a.pri;
+              // Exclude inner rings (multipolygon holes like islands in rivers)
+              let excluded = false;
+              if (a.innerRings) {
+                for (const inner of a.innerRings) {
+                  if (pip(tLat, tLng, inner)) { excluded = true; break; }
+                }
+              }
+              if (!excluded) { best = a.type; bestPri = a.pri; }
             }
           }
           if (best) { osmVotes[best] = (osmVotes[best] || 0) + 1; osmTotal++; }
@@ -2581,7 +3202,11 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
 
       // Force non-urban terrain during this loop so elevation modifiers apply.
       // Urban terrain is assigned in the cluster phase after the main loop.
-      if (["light_urban", "dense_urban"].includes(tt)) {
+      // Exception: sub-tactical + urbanDetail keeps WC built-up terrain because
+      // (a) the cluster phase is skipped at sub-tactical, and (b) at 10m resolution
+      // WC class 50 is the ground truth for urban land surface. OSM fine-grained
+      // types (bldg_*, plaza, park, etc.) override where they have specific data.
+      if (["light_urban", "dense_urban"].includes(tt) && !(tier === "sub-tactical" && urbanDetail)) {
         if (wcMixCell) {
           let bestNat = "open_ground", bestNatPct = 0;
           for (const [cls, pct] of Object.entries(wcMixCell)) {
@@ -2595,8 +3220,9 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
         }
       }
 
-      // Sub-tactical: WC built-up is too uniform — let OSM landuse/buildings provide urban detail
-      if (tier === "sub-tactical" && tt === "light_urban") tt = "open_ground";
+      // Sub-tactical without urbanDetail: WC built-up is too uniform — let OSM provide detail
+      // With urbanDetail: keep light_urban as base for generic urban surface (courtyards, etc.)
+      if (tier === "sub-tactical" && tt === "light_urban" && !urbanDetail) tt = "open_ground";
 
       // Water cells from WorldCover get refined by OSM waterways (tactical/sub-tactical only)
       if (wcGrid && tt === "lake" && cellRiver.has(k) && (tier === "sub-tactical" || tier === "tactical")) tt = "river";
@@ -2694,6 +3320,7 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
 
       terrain[k] = tt;
 
+      // DEBUG: track open_ground sources
       // Per-cell confidence: how certain is this terrain classification?
       // Based on WorldCover dominance ratio and OSM/WC agreement
       let conf = 1.0;
@@ -2987,14 +3614,14 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
     }
   }
 
-  return { terrain, infra, attrs, features, featureNames, elevG, elevCoverage: elevData.coverage, cellRoadCount, cellBuildingPct, cellStream, cellBarrier, cellConfidence, urbanScore, cellSettlement, linearPaths };
+  return { terrain, infra, attrs, features, featureNames, elevG, elevCoverage: elevData.coverage, cellRoadCount, cellBuildingPct, cellBuildingMeta, cellStream, cellBarrier, cellConfidence, urbanScore, cellSettlement, linearPaths };
 }
 
 // ════════════════════════════════════════════════════════════════
 // POST-PROCESSING
 // ════════════════════════════════════════════════════════════════
 
-function postProc(terrain, infra, attrs, features, featureNames, cols, rows, elevG, cellKm, elevCoverage, cellRoadCount, cellBuildingPct, tier, wcGrid, wcHasData, wcMix, urbanScore, elevRange, elevStddev) {
+function postProc(terrain, infra, attrs, features, featureNames, cols, rows, elevG, cellKm, elevCoverage, cellRoadCount, cellBuildingPct, cellBuildingMeta, tier, wcGrid, wcHasData, wcMix, urbanScore, elevRange, elevStddev, urbanDetail = false) {
   let tG = { ...terrain }, iG = { ...infra }, aG = {};
   for (const k in attrs) aG[k] = [...attrs[k]];
   // Features: deep copy
@@ -3289,6 +3916,90 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
     }
   }
 
+  // ── FINE-GRAINED URBAN TERRAIN RECLASSIFICATION (sub-tactical) ──
+  // At sub-tactical scale, reclassify cells in urban areas from generic
+  // light_urban/dense_urban to specific bldg_*, road, or open types
+  // based on building metadata and infrastructure. This gives the LLM
+  // granular tactical terrain for urban combat adjudication.
+  if (tier === "sub-tactical" && cellBuildingMeta) {
+    // Map OSM building=* values to our 10 bldg_* terrain types
+    const osmToBldgTerrain = (bldgType, levels, amenity) => {
+      // Height-based override: 10+ floors → highrise regardless of type
+      if (levels && levels >= 10) return "bldg_highrise";
+      // Amenity-based classification
+      if (amenity) {
+        if (/hospital|clinic|school|kindergarten|university|library|museum|fire_station|police|government|public/i.test(amenity)) return "bldg_institutional";
+      }
+      if (!bldgType) return "bldg_residential"; // most common default
+      // Type-based classification
+      const bt = bldgType.toLowerCase();
+      if (/church|cathedral|chapel|mosque|synagogue|temple|monastery|shrine/i.test(bt)) return "bldg_religious";
+      if (/bunker|military|barracks|fortification/i.test(bt)) return "bldg_fortified";
+      if (/ruins|collapsed/i.test(bt)) return "bldg_ruins";
+      if (/train_station|transportation|station/i.test(bt)) return "bldg_station";
+      if (/warehouse|industrial|factory|hangar|garages/i.test(bt)) return "bldg_industrial";
+      if (/commercial|office|retail|supermarket|shop/i.test(bt)) return "bldg_commercial";
+      if (/apartments|terrace|dormitory|hotel/i.test(bt)) return "bldg_residential";
+      if (/house|detached|shed|barn|cabin|bungalow|hut|farm/i.test(bt)) return "bldg_light";
+      if (/hospital|school|government|public|civic/i.test(bt)) return "bldg_institutional";
+      // Default based on height: short = light, tall = residential
+      if (levels && levels <= 2) return "bldg_light";
+      return "bldg_residential";
+    };
+
+    // Map infrastructure type to road terrain type
+    const infraToRoadTerrain = (infraType, hwTag) => {
+      if (infraType === "highway") return "motorway";
+      if (infraType === "major_road") return "arterial";
+      if (infraType === "road") return "street";
+      if (infraType === "minor_road") return "alley";
+      if (infraType === "footpath") return "road_footpath";
+      if (infraType === "railway") return "rail_track";
+      if (infraType === "light_rail") return "tram_track";
+      return null;
+    };
+
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const k = `${c},${r}`;
+      const currentTerrain = tG[k];
+      // Only reclassify urban cells or cells with significant building coverage
+      const isUrban = currentTerrain === "light_urban" || currentTerrain === "dense_urban";
+      // urbanDetail: 5% threshold catches single houses on residential lots (not forest)
+      const hasBuildingData = cellBuildingPct[k] && cellBuildingPct[k] > (urbanDetail ? 0.05 : 0.15);
+      if (!isUrban && !hasBuildingData) continue;
+
+      const bm = cellBuildingMeta[k];
+      const bPct = cellBuildingPct[k] || 0;
+
+      // Priority 1: High building coverage → bldg_* terrain type
+      if (bPct > 0.30 && bm) {
+        // Find dominant building type from metadata
+        const dominantType = bm.types.length > 0
+          ? (() => { const tc = {}; for (const t of bm.types) tc[t] = (tc[t] || 0) + 1; return Object.entries(tc).sort((a, b) => b[1] - a[1])[0][0]; })()
+          : null;
+        const avgLevels = bm.heights.length > 0
+          ? Math.round(bm.heights.reduce((a, b) => a + b, 0) / bm.heights.length / 3)
+          : null;
+        const dominantAmenity = bm.amenities.length > 0 ? bm.amenities[0] : null;
+        tG[k] = osmToBldgTerrain(dominantType, avgLevels, dominantAmenity);
+        continue;
+      }
+
+      // Priority 2: Road-dominated cell (urban context, low building coverage)
+      if (isUrban && bPct < 0.15) {
+        const infra = iG[k];
+        const roadTerrain = infraToRoadTerrain(infra);
+        if (roadTerrain) {
+          tG[k] = roadTerrain;
+          continue;
+        }
+        // No building or road data — keep WC-derived light_urban as-is.
+        // At fine resolution (10m) many urban cells have no OSM building
+        // centroid; overriding to bare_ground loses the satellite signal.
+      }
+    }
+  }
+
   // ── TOPOGRAPHIC POSITION INDEX (multi-ring) ──
   // Cell elevation minus mean within radius-3 neighborhood. Positive = hilltop/ridge,
   // negative = valley/depression. Uses prefix sums for O(1) per-cell computation
@@ -3388,7 +4099,7 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
     }
   }
 
-  return { terrain: tG, infra: iG, attrs: aG, features: fG, featureNames: fnG, slopeGrid };
+  return { terrain: tG, infra: iG, attrs: aG, features: fG, featureNames: fnG, slopeGrid, cellBuildingMeta };
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -3445,7 +4156,9 @@ export async function scanSinglePatch(bbox, cellKm, callbacks = {}) {
     ? import("./data/cities.json").then(m => m.default || m).catch(() => null)
     : Promise.resolve(null);
 
-  const els = await fetchOSM(bbox, onStatus, onProgress, mapWKm, mapHKm, cellKm, elevData.elevations, cols, rows, log);
+  const patchNetLog = createParserNetLog();
+  const els = await fetchOSM(bbox, onStatus, onProgress, mapWKm, mapHKm, cellKm, elevData.elevations, cols, rows, log, patchNetLog);
+  normalizeOSMCoords(els, bbox.west);
   const feat = parseFeatures(els, tier);
 
   const wikidataNames = await wikidataPromise;
@@ -3467,6 +4180,7 @@ export async function scanSinglePatch(bbox, cellKm, callbacks = {}) {
   onStatus("Post-processing...");
   const pp = postProc(res.terrain, res.infra, res.attrs, res.features, res.featureNames,
     cols, rows, res.elevG, cellKm, res.elevCoverage, res.cellRoadCount, res.cellBuildingPct,
+    res.cellBuildingMeta,
     tier, wcData ? wcData.wcGrid : null, wcData ? wcData.wcHasData : null,
     wcData ? wcData.wcMix : null, res.urbanScore || {}, elevData.elevRange, elevData.elevStddev);
 
@@ -3485,7 +4199,7 @@ export async function scanSinglePatch(bbox, cellKm, callbacks = {}) {
         features: pp.features[k] || [],
         attributes: pp.attrs[k] || [],
         lat,
-        lng: lon,
+        lng: wrapLon(lon),
         // v1 fields: slope, climate, population
         slope_angle: pp.slopeGrid[k] || 0,
         climate_zone: precipToClimateZone(aridityGrid ? aridityGrid[k] : null),
@@ -3500,6 +4214,9 @@ export async function scanSinglePatch(bbox, cellKm, callbacks = {}) {
       cells.push(cell);
     }
   }
+
+  // Flush net traffic log (fire-and-forget)
+  patchNetLog.flush();
 
   return { cells, cols, rows, tier, bbox };
 }
@@ -4028,8 +4745,11 @@ export default function Parser({ onBack, onViewMap }) {
   const [cellKm, setCellKm] = useState(0.5);
   const [activeScale, setActiveScale] = useState("tactical");
   const [tG, setTG] = useState(null), [iG, setIG] = useState(null), [aG, setAG] = useState(null), [fG, setFG] = useState(null), [fnG, setFnG] = useState(null), [lpG, setLPG] = useState(null);
-  const [eG, setEG] = useState(null);
+  const [eG, setEG] = useState(null), [bmG, setBmG] = useState(null); // bmG = cellBuildingMeta
   const [gC, setGC] = useState(0), [gR, setGR] = useState(0);
+  const [fineMapDataState, setFineMapDataState] = useState(null); // dual-res fine grid for viewer
+  const [stratGridState, setStratGridState] = useState(null); // strategic grid mapping
+  const [urbanDetail, setUrbanDetail] = useState(false); // high-detail urban parsing toggle
   const [status, setStatus] = useState(""), [error, setError] = useState(null), [gen, setGen] = useState(false);
   const [pt, setPt] = useState(null), [op, setOp] = useState(90);
   const [activeFeatures, setActiveFeatures] = useState(new Set(["highway","major_road","railway","military_base","airfield","port","dam","river","beach","power_plant","pipeline","town"]));
@@ -4051,7 +4771,10 @@ export default function Parser({ onBack, onViewMap }) {
     const bbox = getBBox(lat, lng, mapW, mapH);
     const wcTiles = getWCTilesForBbox(bbox).size;
     const wcSec = wcTiles * 3; // ~3s per WorldCover tile
-    const osmSec = chunks * (tier === "sub-tactical" ? 5 : tier === "tactical" ? 4 : tier === "operational" ? 3 : 1.5);
+    // Per-chunk time includes query + inter-query delay (scaled by chunk count)
+    const perChunkBase = tier === "sub-tactical" ? 5 : tier === "tactical" ? 4 : tier === "operational" ? 3 : 1.5;
+    const delayPerChunk = chunks > 80 ? 5 : chunks > 30 ? 3 : chunks > 10 ? 2 : 1;
+    const osmSec = chunks * perChunkBase + chunks * delayPerChunk;
     return { chunks, tier, totalSec: Math.round(elevSec + wcSec + osmSec), cols, rows, wcTiles };
   }, [mapW, mapH, cellKm, lat, lng]);
 
@@ -4060,30 +4783,78 @@ export default function Parser({ onBack, onViewMap }) {
     const t0 = Date.now();
     setStartTime(t0);
     const log = new GenLog();
+    const netLog = createParserNetLog();
 
     try {
-      const cols = Math.max(1, Math.floor(mapW / cellKm)), rows = Math.max(1, Math.floor(mapH / (cellKm * SQRT3_2)));
-      if (cols * rows > 50000) { setError(`Too many cells: ${(cols * rows).toLocaleString()}`); setGen(false); return; }
+      const displayCols = Math.max(1, Math.floor(mapW / cellKm)), displayRows = Math.max(1, Math.floor(mapH / (cellKm * SQRT3_2)));
+      if (displayCols * displayRows > 60000) { setError(`Too many cells: ${(displayCols * displayRows).toLocaleString()}`); setGen(false); return; }
       const bbox = getBBox(lat, lng, mapW, mapH);
+
+      // ── Adaptive fine resolution (dual-resolution pipeline) ──
+      // When urbanDetail is on, compute the finest resolution that fits the 100k hex budget.
+      // Parse at fine resolution, then aggregate to display resolution via Strategic Grid.
+      let fineCellKm = null; // null = single-resolution mode
+      let cols = displayCols, rows = displayRows;
+      if (urbanDetail) {
+        const mapAreaKm2 = mapW * mapH;
+        const rRaw = Math.sqrt(mapAreaKm2 / (100000 * 0.866)); // finest possible hex size
+        const rFloor = Math.max(rRaw, 0.01); // floor at 10m (WC native resolution)
+
+        // Only use dual-resolution if fine cells are meaningfully smaller than display cells
+        if (rFloor < cellKm * 0.75) {
+          // Snap to clean divisor of cellKm for even aggregation
+          let bestFine = rFloor;
+          for (let n = Math.ceil(cellKm / rFloor); n >= 2; n--) {
+            const candidate = cellKm / n;
+            if (candidate <= rFloor) { bestFine = candidate; break; }
+          }
+          const fineCols = Math.max(1, Math.floor(mapW / bestFine));
+          const fineRows = Math.max(1, Math.floor(mapH / (bestFine * SQRT3_2)));
+          if (fineCols * fineRows <= 100000 && bestFine < cellKm) {
+            fineCellKm = bestFine;
+            // Pad fine grid by one strategic hex width on each side so edge
+            // display hexes get full real data coverage instead of fabricated
+            // neighbor copies. The expanded fine grid is parsed with real
+            // satellite + OSM data from a slightly larger bbox.
+            const padKm = cellKm * 1.5;
+            cols = Math.max(1, Math.floor((mapW + 2 * padKm) / bestFine));
+            rows = Math.max(1, Math.floor((mapH + 2 * padKm) / (bestFine * SQRT3_2)));
+          }
+        }
+      }
+
+      // When dual-res padding is active, expand the parse bbox so data
+      // fetching covers the perimeter fine hexes with real data.
+      const finePadKm = fineCellKm ? cellKm * 1.5 : 0;
+      const parseBbox = fineCellKm
+        ? getBBox(lat, lng, mapW + 2 * finePadKm, mapH + 2 * finePadKm)
+        : bbox;
+      const parseMapW = mapW + 2 * finePadKm;
+      const parseMapH = mapH + 2 * finePadKm;
 
       log.section("CONFIGURATION");
       log.table([
         ["Center", `${lat.toFixed(4)}, ${lng.toFixed(4)}`],
         ["Map size", `${mapW}×${mapH} km`],
         ["Cell size", `${cellKm} km`],
-        ["Grid", `${cols}×${rows} = ${(cols * rows).toLocaleString()} cells`],
+        ["Grid", `${displayCols}×${displayRows} = ${(displayCols * displayRows).toLocaleString()} cells`],
         ["Query tier", getQueryTier(cellKm)],
         ["Chunk size", `${getChunkSize(getQueryTier(cellKm))} km`],
         ["Bbox", `${bbox.south.toFixed(3)},${bbox.west.toFixed(3)} → ${bbox.north.toFixed(3)},${bbox.east.toFixed(3)}`],
+        ["Urban detail", urbanDetail ? "ON" : "off"],
+        ...(fineCellKm ? [["Fine resolution", `${fineCellKm.toFixed(3)} km → ${cols}×${rows} = ${(cols * rows).toLocaleString()} fine hexes`]] : []),
         ["Version", "v9.2 (4-tier WorldCover + OSM + Features)"],
         ["Timestamp", new Date().toISOString()],
       ]);
 
-      const tier = getQueryTier(cellKm);
+      // When urbanDetail is enabled, upgrade tactical to sub-tactical
+      // to fetch building footprints + metadata for fine-grained classification
+      const baseTier = getQueryTier(cellKm);
+      const tier = (urbanDetail && baseTier === "tactical") ? "sub-tactical" : baseTier;
 
       // ── Live preview callbacks ──
       setPreviewData(null);
-      setPreviewDims({ cols, rows });
+      setPreviewDims({ cols: displayCols, rows: displayRows });
       const onElevPartial = (elArr) => {
         let min = Infinity, max = -Infinity;
         for (const v of elArr) { if (v !== null) { if (v < min) min = v; if (v > max) max = v; } }
@@ -4095,8 +4866,9 @@ export default function Parser({ onBack, onViewMap }) {
       };
 
       // ── PHASE 1: ELEVATION (fast, enables ocean skipping) ──
-      setStatus("Phase 1: Fetching elevation data...");
-      const elevData = await fetchElevSmart(bbox, cols, rows, setStatus, setProgress, log, onElevPartial, cellKm);
+      const parseCellKm = fineCellKm || cellKm; // actual cell size for pipeline
+      setStatus(fineCellKm ? `Phase 1: Fetching elevation (${cols}×${rows} fine hexes)...` : "Phase 1: Fetching elevation data...");
+      const elevData = await fetchElevSmart(parseBbox, cols, rows, setStatus, setProgress, log, onElevPartial, parseCellKm);
       const maxElev = Math.max(...elevData.elevations), minElev = Math.min(...elevData.elevations);
       setElevInfo(`Coverage: ${(elevData.coverage * 100).toFixed(0)}% | Max: ${maxElev}m | Min: ${minElev}m`);
       log.info(`Range: ${minElev}m to ${maxElev}m`);
@@ -4105,7 +4877,7 @@ export default function Parser({ onBack, onViewMap }) {
       setStatus("Phase 2: Fetching satellite land cover...");
       let wcData = null;
       try {
-        wcData = await fetchWorldCover(bbox, cols, rows, setStatus, setProgress, log, tier, onWcPartial);
+        wcData = await fetchWorldCover(parseBbox, cols, rows, setStatus, setProgress, log, tier, onWcPartial);
       } catch (e) {
         log.warn(`WorldCover failed: ${e.message} — falling back to OSM-only terrain`);
       }
@@ -4116,16 +4888,17 @@ export default function Parser({ onBack, onViewMap }) {
       // Strategic/operational: whitelist (primary) + Wikidata (fallback for multi-language names)
       // Tactical/sub-tactical: no river name filtering (null → span-based fallback)
       const wikidataPromise = (tier === "strategic" || tier === "operational")
-        ? fetchWikidataRivers(bbox, tier, log, cellKm).catch(() => null)
+        ? fetchWikidataRivers(parseBbox, tier, log, cellKm).catch(() => null)
         : Promise.resolve(null);
-      const aridityPromise = fetchAridityData(bbox, cols, rows, setStatus, log);
+      const aridityPromise = fetchAridityData(parseBbox, cols, rows, setStatus, log);
       // Metro whitelist: load bundled cities dataset for urban boost at large scales
       const metroCitiesPromise = (tier === "operational" || tier === "strategic")
         ? import("./data/cities.json").then(m => m.default || m)
         : Promise.resolve(null);
 
-      const els = await fetchOSM(bbox, setStatus, setProgress, mapW, mapH, cellKm, elevData.elevations, cols, rows, log);
-      const feat = parseFeatures(els, tier);
+      const els = await fetchOSM(parseBbox, setStatus, setProgress, parseMapW, parseMapH, parseCellKm, elevData.elevations, cols, rows, log, netLog);
+      normalizeOSMCoords(els, parseBbox.west);
+      const feat = parseFeatures(els, tier, urbanDetail);
 
       // Await Wikidata and aridity results (should be done by now, they're fast)
       const wikidataNames = await wikidataPromise;
@@ -4163,15 +4936,98 @@ export default function Parser({ onBack, onViewMap }) {
       }
 
       // ── PHASE 4: CLASSIFY (WorldCover base + OSM overrides + elevation) ──
-      setProgress({ phase: "Processing", current: 1, total: 2 });
-      setStatus("Classifying..."); await new Promise(r => setTimeout(r, 20));
-      const res = classifyGrid(bbox, cols, rows, feat, elevData, setStatus, wcData, tier, cellKm, wikidataRivers, aridityGrid, metroCities);
+      setProgress({ phase: "Processing", current: 1, total: fineCellKm ? 3 : 2 });
+      setStatus(fineCellKm ? `Classifying ${(cols * rows).toLocaleString()} fine hexes...` : "Classifying...");
+      await new Promise(r => setTimeout(r, 20));
+
+      const res = classifyGrid(parseBbox, cols, rows, feat, elevData, setStatus, wcData, tier, parseCellKm, wikidataRivers, aridityGrid, metroCities, urbanDetail);
       setPreviewData(prev => ({ ...prev, terrain: res.terrain }));
 
-      setProgress({ phase: "Processing", current: 2, total: 2 });
+      setProgress({ phase: "Processing", current: 2, total: fineCellKm ? 3 : 2 });
       setStatus("Post-processing..."); await new Promise(r => setTimeout(r, 20));
-      const pp = postProc(res.terrain, res.infra, res.attrs, res.features, res.featureNames, cols, rows, res.elevG, cellKm, res.elevCoverage, res.cellRoadCount, res.cellBuildingPct, tier, wcData ? wcData.wcGrid : null, wcData ? wcData.wcHasData : null, wcData ? wcData.wcMix : null, res.urbanScore || {}, elevData.elevRange, elevData.elevStddev);
+      const pp = postProc(res.terrain, res.infra, res.attrs, res.features, res.featureNames, cols, rows, res.elevG, parseCellKm, res.elevCoverage, res.cellRoadCount, res.cellBuildingPct, res.cellBuildingMeta, tier, wcData ? wcData.wcGrid : null, wcData ? wcData.wcHasData : null, wcData ? wcData.wcMix : null, res.urbanScore || {}, elevData.elevRange, elevData.elevStddev, urbanDetail);
       setPreviewData(prev => ({ ...prev, terrainFinal: pp.terrain }));
+
+      // ── PHASE 4b: Strategic Grid aggregation (dual-resolution only) ──
+      // When parsing at fine resolution, aggregate fine hexes → display hexes.
+      // The fine data stays intact for atlas painting; display cells come from aggregation.
+      let stratGrid = null;
+      let fineMapDataForViewer = null;
+      let displayTerrain = pp.terrain, displayInfra = pp.infra, displayAttrs = pp.attrs;
+      let displayFeatures = pp.features, displayFeatureNames = pp.featureNames;
+      let displayElevG = res.elevG;
+      let displayBuildingMeta = pp.cellBuildingMeta;
+      let displayLinearPaths = res.linearPaths;
+      let displayConfidence = res.cellConfidence;
+      let outCols = cols, outRows = rows;
+
+      if (fineCellKm) {
+        setProgress({ phase: "Processing", current: 3, total: 3 });
+        setStatus(`Aggregating to ${displayCols}×${displayRows} display hexes...`);
+        await new Promise(r => setTimeout(r, 20));
+
+        // Build fine cell objects for Strategic Grid (it expects { terrain, elevation, features, ... })
+        const fineCells = {};
+        for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+          const k = `${c},${r}`;
+          const cell = {
+            terrain: pp.terrain[k] || "open_ground",
+            elevation: res.elevG[k] || 0,
+            features: pp.features[k] || [],
+            infrastructure: pp.infra[k] || "none",
+            attributes: pp.attrs[k] || [],
+          };
+          if (pp.featureNames && pp.featureNames[k]) cell.feature_names = pp.featureNames[k];
+          // Attach building metadata for urban composition aggregation
+          if (pp.cellBuildingMeta && pp.cellBuildingMeta[k]) {
+            const bm = pp.cellBuildingMeta[k];
+            if (bm.heights.length > 0) cell.buildingHeight = Math.round(bm.heights.reduce((a, b) => a + b, 0) / bm.heights.length);
+          }
+          fineCells[k] = cell;
+        }
+
+        const fineMapData = { cols, rows, cellSizeKm: fineCellKm, cells: fineCells };
+        // Compute padding offset so buildStrategicGrid clips to display bounds.
+        // The fine grid has extra cols/rows of padding on each side; only the
+        // inner (unpadded) hexes should determine the strategic grid dimensions.
+        const unpadCols = Math.max(1, Math.floor(mapW / fineCellKm));
+        const unpadRows = Math.max(1, Math.floor(mapH / (fineCellKm * SQRT3_2)));
+        const finePadding = (cols > unpadCols || rows > unpadRows)
+          ? { cols: Math.floor((cols - unpadCols) / 2), rows: Math.floor((rows - unpadRows) / 2) }
+          : null;
+        stratGrid = buildStrategicGrid(fineMapData, cellKm, finePadding);
+
+        // Extract display-resolution grids from strategic cells
+        outCols = stratGrid.cols;
+        outRows = stratGrid.rows;
+        displayTerrain = {};
+        displayInfra = {};
+        displayAttrs = {};
+        displayFeatures = {};
+        displayFeatureNames = {};
+        displayElevG = {};
+        displayBuildingMeta = null; // building meta lives in urban composition now
+        displayConfidence = null;
+        displayLinearPaths = res.linearPaths || [];
+
+        for (const [k, cell] of Object.entries(stratGrid.cells)) {
+          displayTerrain[k] = cell.terrain;
+          displayInfra[k] = cell.infrastructure || "none";
+          displayAttrs[k] = [];
+          displayFeatures[k] = cell.features || [];
+          displayElevG[k] = cell.elevation || 0;
+        }
+
+        // Store fine map data for viewer atlas painting
+        fineMapDataForViewer = fineMapData;
+
+        log.section("STRATEGIC GRID AGGREGATION");
+        log.table([
+          ["Fine hexes", `${cols}×${rows} = ${(cols * rows).toLocaleString()} at ${fineCellKm.toFixed(3)}km`],
+          ["Display hexes", `${outCols}×${outRows} = ${(outCols * outRows).toLocaleString()} at ${cellKm}km`],
+          ["Ratio", `~${Math.round(cols * rows / (outCols * outRows))} fine per display hex`],
+        ]);
+      }
 
       // ── LOG TERRAIN DISTRIBUTION ──
       log.section("TERRAIN DISTRIBUTION");
@@ -4235,7 +5091,9 @@ export default function Parser({ onBack, onViewMap }) {
         ["Elevation coverage", `${(elevData.coverage * 100).toFixed(0)}%`],
       ]);
 
-      setTG(pp.terrain); setIG(pp.infra); setAG(pp.attrs); setFG(pp.features); setFnG(pp.featureNames); setEG(res.elevG); setGC(cols); setGR(rows); setLPG(res.linearPaths);
+      // Set display-resolution state (used by preview, View in Map, export)
+      setTG(displayTerrain); setIG(displayInfra); setAG(displayAttrs); setFG(displayFeatures); setFnG(displayFeatureNames); setEG(displayElevG); setGC(outCols); setGR(outRows); setLPG(displayLinearPaths); setBmG(displayBuildingMeta || null);
+      setFineMapDataState(fineMapDataForViewer); setStratGridState(stratGrid);
       setStatus(`Done in ${Math.round((Date.now() - t0) / 1000)}s`);
       setProgress(null);
       setGenLog(log.toString());
@@ -4243,16 +5101,50 @@ export default function Parser({ onBack, onViewMap }) {
 
       // ── AUTO-SAVE ──
       try {
-        // Build save data from local vars (state not settled yet)
+        // Build display-resolution save cells
         const saveCells = {};
-        for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+        for (let r = 0; r < outRows; r++) for (let c = 0; c < outCols; c++) {
           const k = `${c},${r}`;
-          const cell = { terrain: pp.terrain[k], elevation: res.elevG[k], features: pp.features[k] || [], infrastructure: pp.infra[k], attributes: pp.attrs[k] || [] };
-          if (res.cellConfidence && res.cellConfidence[k] !== undefined) cell.confidence = res.cellConfidence[k];
-          if (pp.featureNames && pp.featureNames[k]) cell.feature_names = pp.featureNames[k];
+          const cell = { terrain: displayTerrain[k] || "open_ground", elevation: displayElevG[k] || 0, features: displayFeatures[k] || [], infrastructure: displayInfra[k] || "none", attributes: displayAttrs[k] || [] };
+          if (displayConfidence && displayConfidence[k] !== undefined) cell.confidence = displayConfidence[k];
+          if (displayFeatureNames && displayFeatureNames[k]) cell.feature_names = displayFeatureNames[k];
+          // Building metadata — only in single-resolution mode (dual-res has urban composition instead)
+          if (!fineCellKm && pp.cellBuildingMeta && pp.cellBuildingMeta[k]) {
+            const bm = pp.cellBuildingMeta[k];
+            if (bm.heights.length > 0) cell.buildingHeight = Math.round(bm.heights.reduce((a, b) => a + b, 0) / bm.heights.length);
+            if (bm.heights.length > 0) cell.buildingFloors = Math.round(cell.buildingHeight / 3);
+            if (bm.materials.length > 0) {
+              const matCount = {};
+              for (const m of bm.materials) matCount[m] = (matCount[m] || 0) + 1;
+              cell.buildingMaterial = Object.entries(matCount).sort((a, b) => b[1] - a[1])[0][0];
+            }
+            if (bm.types.length > 0) {
+              const typeCount = {};
+              for (const t of bm.types) typeCount[t] = (typeCount[t] || 0) + 1;
+              cell.buildingType = Object.entries(typeCount).sort((a, b) => b[1] - a[1])[0][0];
+            }
+            if (bm.protectedCount > 0) cell.protectedSite = true;
+            if (bm.names.length > 0) cell.buildingName = bm.names[0];
+          }
+          // Attach urban composition from strategic grid aggregation
+          if (stratGrid && stratGrid.cells[k] && stratGrid.cells[k].urban) {
+            cell.urban = stratGrid.cells[k].urban;
+          }
+          if (stratGrid && stratGrid.cells[k] && stratGrid.cells[k].terrainComposition) {
+            cell.terrainComposition = stratGrid.cells[k].terrainComposition;
+          }
           saveCells[k] = cell;
         }
-        const saveObj = { map: { cols, rows, cellSizeKm: cellKm, widthKm: mapW, heightKm: mapH, gridType: "hex", center: { lat, lng }, bbox: getBBox(lat, lng, mapW, mapH), cells: saveCells, labels: {}, linearPaths: res.linearPaths || [] }, _meta: { generated: new Date().toISOString(), source: "WorldCover+OSM+SRTM", version: "v0.10", tier } };
+        const saveObj = { map: { cols: outCols, rows: outRows, cellSizeKm: cellKm, widthKm: mapW, heightKm: mapH, gridType: "hex", center: { lat, lng }, bbox: getBBox(lat, lng, mapW, mapH), cells: saveCells, labels: {}, linearPaths: displayLinearPaths }, _meta: { generated: new Date().toISOString(), source: "WorldCover+OSM+SRTM", version: "v0.10", tier } };
+        // Attach fine grid for dual-resolution atlas painting
+        if (fineMapDataForViewer) {
+          saveObj.fineGrid = {
+            cols: fineMapDataForViewer.cols,
+            rows: fineMapDataForViewer.rows,
+            cellSizeKm: fineMapDataForViewer.cellSizeKm,
+            cells: fineMapDataForViewer.cells,
+          };
+        }
 
         // Derive best name from feature_names — find highest-rank settlement near center
         let bestName = null;
@@ -4289,7 +5181,7 @@ export default function Parser({ onBack, onViewMap }) {
         const scaleName = activeScale !== "custom" ? activeScale : `${cellKm}km`;
         const datePart = new Date().toISOString().slice(0, 10);
         const safeName = bestName.replace(/[^a-zA-Z0-9]/g, "_").replace(/_+/g, "_");
-        const filename = `${safeName}_${scaleName}_${cols}x${rows}_${datePart}.json`;
+        const filename = `${safeName}_${scaleName}_${outCols}x${outRows}_${datePart}.json`;
 
         fetch("/api/save", {
           method: "POST",
@@ -4305,8 +5197,21 @@ export default function Parser({ onBack, onViewMap }) {
       setError(e.message);
       console.error(e);
     }
+    // Flush parser net traffic log (fire-and-forget, runs on success or error)
+    netLog.flush();
     setGen(false);
-  }, [lat, lng, mapW, mapH, cellKm]);
+  }, [lat, lng, mapW, mapH, cellKm, urbanDetail]);
+
+  // Helper: attach summarized building metadata to a cell object
+  const attachBuildingMeta = (cell, k) => {
+    if (!bmG || !bmG[k]) return;
+    const bm = bmG[k];
+    if (bm.heights.length > 0) { cell.buildingHeight = Math.round(bm.heights.reduce((a, b) => a + b, 0) / bm.heights.length); cell.buildingFloors = Math.round(cell.buildingHeight / 3); }
+    if (bm.materials.length > 0) { const mc = {}; for (const m of bm.materials) mc[m] = (mc[m] || 0) + 1; cell.buildingMaterial = Object.entries(mc).sort((a, b) => b[1] - a[1])[0][0]; }
+    if (bm.types.length > 0) { const tc = {}; for (const t of bm.types) tc[t] = (tc[t] || 0) + 1; cell.buildingType = Object.entries(tc).sort((a, b) => b[1] - a[1])[0][0]; }
+    if (bm.protectedCount > 0) cell.protectedSite = true;
+    if (bm.names.length > 0) cell.buildingName = bm.names[0];
+  };
 
   const exp = useCallback(() => {
     const cells = {};
@@ -4314,11 +5219,16 @@ export default function Parser({ onBack, onViewMap }) {
       const k = `${c},${r}`;
       const cell = { terrain: tG[k], elevation: eG[k], features: fG[k] || [], infrastructure: iG[k], attributes: aG[k] || [] };
       if (fnG && fnG[k]) cell.feature_names = fnG[k];
+      attachBuildingMeta(cell, k);
       cells[k] = cell;
     }
     const obj = { map: { cols: gC, rows: gR, cellSizeKm: cellKm, widthKm: mapW, heightKm: mapH, gridType: "hex", center: { lat, lng }, bbox: getBBox(lat, lng, mapW, mapH), cells, labels: {}, linearPaths: lpG || [] }, _meta: { generated: new Date().toISOString(), source: "WorldCover+OSM+SRTM", version: "v0.10", tier: getQueryTier(cellKm) } };
+    // Include fine grid for dual-resolution saves
+    if (fineMapDataState) {
+      obj.fineGrid = { cols: fineMapDataState.cols, rows: fineMapDataState.rows, cellSizeKm: fineMapDataState.cellSizeKm, cells: fineMapDataState.cells };
+    }
     const b = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" }), u = URL.createObjectURL(b), a = document.createElement("a"); a.href = u; a.download = "open_conflict_terrain.json"; a.click(); URL.revokeObjectURL(u);
-  }, [tG, iG, aG, fG, fnG, eG, gC, gR, cellKm, mapW, mapH, lat, lng, lpG]);
+  }, [tG, iG, aG, fG, fnG, eG, bmG, gC, gR, cellKm, mapW, mapH, lat, lng, lpG, fineMapDataState]);
 
   const viewInMap = useCallback(() => {
     if (!tG || !onViewMap) return;
@@ -4327,11 +5237,12 @@ export default function Parser({ onBack, onViewMap }) {
       const k = `${c},${r}`;
       const cell = { terrain: tG[k], elevation: eG[k], features: fG[k] || [], infrastructure: iG[k], attributes: aG[k] || [] };
       if (fnG && fnG[k]) cell.feature_names = fnG[k];
+      attachBuildingMeta(cell, k);
       cells[k] = cell;
     }
     const mapData = { cols: gC, rows: gR, cellSizeKm: cellKm, widthKm: mapW, heightKm: mapH, gridType: "hex", center: { lat, lng }, bbox: getBBox(lat, lng, mapW, mapH), cells, labels: {}, linearPaths: lpG || [] };
-    onViewMap(mapData);
-  }, [tG, iG, aG, fG, fnG, eG, gC, gR, cellKm, mapW, mapH, lat, lng, onViewMap, lpG]);
+    onViewMap(mapData, fineMapDataState, stratGridState);
+  }, [tG, iG, aG, fG, fnG, eG, bmG, gC, gR, cellKm, mapW, mapH, lat, lng, onViewMap, lpG, fineMapDataState, stratGridState]);
 
   const expLog = useCallback(() => {
     if (!genLog) return;
@@ -4474,6 +5385,17 @@ export default function Parser({ onBack, onViewMap }) {
                   </div>
                 )}
               </div>
+
+              {/* High-detail urban parsing toggle — only show at sub-tactical/tactical */}
+              {getQueryTier(cellKm) !== "strategic" && (
+                <label style={{ display: "flex", alignItems: "center", gap: space[2], marginBottom: space[2], padding: `${space[1]}px ${space[2]}px`, background: urbanDetail ? `${colors.accent.purple}10` : colors.bg.raised, border: `1px solid ${urbanDetail ? colors.accent.purple + "40" : colors.border.subtle}`, borderRadius: radius.md, cursor: "pointer", fontSize: typography.body.xs + 1, color: colors.text.secondary, transition: `all ${animation.fast}` }}>
+                  <input type="checkbox" checked={urbanDetail} onChange={e => setUrbanDetail(e.target.checked)} style={{ accentColor: colors.accent.purple }} />
+                  <div>
+                    <div style={{ fontWeight: typography.weight.bold, color: urbanDetail ? colors.text.primary : colors.text.secondary }}>High-detail urban parsing</div>
+                    <div style={{ fontSize: typography.body.xs, color: colors.text.muted }}>Fine-grained building/road classification for city maps</div>
+                  </div>
+                </label>
+              )}
 
               <Button variant={gen ? "secondary" : "success"} onClick={go} disabled={gen} style={{ width: "100%", padding: "10px", fontSize: typography.body.md, fontWeight: typography.weight.bold, cursor: gen ? "wait" : "pointer" }}>{gen ? "Generating..." : "Generate"}</Button>
               {error && <div style={{ marginTop: space[2], padding: space[2], background: colors.glow.red, border: `1px solid ${colors.accent.red}30`, borderRadius: radius.md, fontSize: typography.body.xs + 1, color: "#FCA5A5", fontFamily: typography.fontFamily }}>{error}{genLog && <span onClick={expLog} style={{ marginLeft: space[2], color: colors.accent.purple, cursor: "pointer", textDecoration: "underline" }}>Download generation log</span>}</div>}

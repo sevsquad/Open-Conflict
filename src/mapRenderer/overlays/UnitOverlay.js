@@ -3,7 +3,7 @@
 // Replaces the old 4-tier discrete system with smooth scaling
 // ════════════════════════════════════════════════════════════════
 
-import { gridToScreen } from "../ViewportState.js";
+import { gridToScreen, getVisibleRange } from "../ViewportState.js";
 
 // Parse unit position string to {c, r} grid coords
 export function parseUnitPosition(posStr) {
@@ -88,6 +88,8 @@ const TYPE_LABELS = {
   infantry: "INF", armor: "ARM", artillery: "ART", recon: "RCN",
   mechanized: "MECH", air: "AIR", naval: "NAV", special_forces: "SF",
   logistics: "LOG", headquarters: "HQ", engineer: "ENG", air_defense: "ADA",
+  parachute_infantry: "PARA", glider_infantry: "GLDR",
+  tank_destroyer: "TD", armored_infantry: "AINF",
   other: "OTH",
 };
 
@@ -188,6 +190,50 @@ export const TYPE_ICONS = {
     ctx.beginPath();
     ctx.arc(cx, cy, s * 0.15, 0, Math.PI * 2);
     ctx.fill();
+  },
+  parachute_infantry: (ctx, cx, cy, s) => {
+    // Infantry X + parachute arc above
+    ctx.beginPath();
+    ctx.moveTo(cx - s, cy - s * 0.3); ctx.lineTo(cx + s, cy + s * 0.7);
+    ctx.moveTo(cx + s, cy - s * 0.3); ctx.lineTo(cx - s, cy + s * 0.7);
+    ctx.stroke();
+    // Parachute canopy arc
+    ctx.beginPath();
+    ctx.arc(cx, cy - s * 0.5, s * 0.7, Math.PI, 0);
+    ctx.stroke();
+  },
+  glider_infantry: (ctx, cx, cy, s) => {
+    // Infantry X + glider wing chevron above
+    ctx.beginPath();
+    ctx.moveTo(cx - s, cy - s * 0.2); ctx.lineTo(cx + s, cy + s * 0.8);
+    ctx.moveTo(cx + s, cy - s * 0.2); ctx.lineTo(cx - s, cy + s * 0.8);
+    ctx.stroke();
+    // Glider wing — shallow inverted V
+    ctx.beginPath();
+    ctx.moveTo(cx - s, cy - s * 0.5);
+    ctx.lineTo(cx, cy - s * 0.9);
+    ctx.lineTo(cx + s, cy - s * 0.5);
+    ctx.stroke();
+  },
+  tank_destroyer: (ctx, cx, cy, s) => {
+    // Armor diamond + vertical bar through center
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - s); ctx.lineTo(cx + s, cy);
+    ctx.lineTo(cx, cy + s); ctx.lineTo(cx - s, cy);
+    ctx.closePath(); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - s); ctx.lineTo(cx, cy + s);
+    ctx.stroke();
+  },
+  armored_infantry: (ctx, cx, cy, s) => {
+    // Infantry X + wheel below (same concept as mechanized)
+    ctx.beginPath();
+    ctx.moveTo(cx - s, cy - s); ctx.lineTo(cx + s, cy + s);
+    ctx.moveTo(cx + s, cy - s); ctx.lineTo(cx - s, cy + s);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, cy + s * 0.8, s * 0.3, 0, Math.PI * 2);
+    ctx.stroke();
   },
 };
 
@@ -519,6 +565,7 @@ function drawFrontLines(ctx, units, actorColorMap, viewport, canvasWidth, canvas
 }
 
 // Main entry point: draw all units with continuous scaling
+// fowMode: { activeActorId, detectedUnits: Set, lastKnown: { unitId: { position, turn, type, strength, stale } } }
 export function drawUnits(ctx, units, actorColorMap, viewport, canvasWidth, canvasHeight, cols, rows, setupOptions = null) {
   if (!units || units.length === 0) {
     if (setupOptions?.ghostUnit) {
@@ -527,22 +574,330 @@ export function drawUnits(ctx, units, actorColorMap, viewport, canvasWidth, canv
     return;
   }
 
+  const fowMode = setupOptions?.fowMode;
+
   for (const unit of units) {
     if (setupOptions?.draggedUnitId === unit.id) continue;
+
+    // FOW filtering: decide how to render each unit based on detection tier
+    if (fowMode) {
+      const isOwnUnit = unit.actor === fowMode.activeActorId;
+      const isIdentified = fowMode.detectedUnits?.has(unit.id);
+      const isContact = fowMode.contactUnits?.has(unit.id);
+
+      if (!isOwnUnit && !isIdentified && !isContact) {
+        // Undetected — skip drawing (invisible to active actor)
+        continue;
+      }
+
+      if (!isOwnUnit && isIdentified) {
+        // Identified enemy — draw with full details but distinct styling
+        drawDetectedEnemyUnit(ctx, unit, actorColorMap, viewport, canvasWidth, canvasHeight, cols, rows);
+        continue;
+      }
+
+      if (!isOwnUnit && isContact) {
+        // Contact-tier — draw generic "?" token, no unit details
+        drawContactMarker(ctx, unit, viewport, canvasWidth, canvasHeight, cols, rows);
+        continue;
+      }
+    }
+
+    // Normal rendering: own units or FOW disabled
     drawUnit(ctx, unit, actorColorMap, viewport, canvasWidth, canvasHeight, cols, rows);
+  }
+
+  // Draw last-known ghost markers for enemies that went dark
+  if (fowMode?.lastKnown) {
+    for (const [unitId, info] of Object.entries(fowMode.lastKnown)) {
+      // Don't draw ghosts for units currently detected or in contact
+      if (fowMode.detectedUnits?.has(unitId)) continue;
+      if (fowMode.contactUnits?.has(unitId)) continue;
+      drawLastKnownGhost(ctx, unitId, info, actorColorMap, viewport, canvasWidth, canvasHeight, cols, rows);
+    }
   }
 
   // Combat indicators where opposing forces share a hex
   if (viewport.cellPixels >= 20) {
-    drawCombatIndicators(ctx, units, viewport, canvasWidth, canvasHeight);
+    const visibleUnits = fowMode
+      ? units.filter(u => u.actor === fowMode.activeActorId || fowMode.detectedUnits?.has(u.id))
+      : units;
+    drawCombatIndicators(ctx, visibleUnits, viewport, canvasWidth, canvasHeight);
   }
 
   // Front lines (FEBA) — dashed lines connecting each actor's unit positions
   if (setupOptions?.showFrontLines && viewport.cellPixels >= 8) {
-    drawFrontLines(ctx, units, actorColorMap, viewport, canvasWidth, canvasHeight);
+    const visibleUnits = fowMode
+      ? units.filter(u => u.actor === fowMode.activeActorId || fowMode.detectedUnits?.has(u.id))
+      : units;
+    drawFrontLines(ctx, visibleUnits, actorColorMap, viewport, canvasWidth, canvasHeight);
   }
 
   if (setupOptions?.ghostUnit) {
     drawGhostUnit(ctx, setupOptions.ghostUnit, actorColorMap, viewport, canvasWidth, canvasHeight);
   }
+}
+
+
+// ── FOW Rendering Helpers ────────────────────────────────────
+
+/**
+ * Draw a detected enemy unit with dashed border and reduced opacity.
+ * Visually distinct from own units — the player knows this info is
+ * from spotting, not perfect intel.
+ */
+function drawDetectedEnemyUnit(ctx, unit, actorColorMap, viewport, canvasWidth, canvasHeight, cols, rows) {
+  if (!unit.position) return;
+  const pos = parseUnitPosition(unit.position);
+  if (!pos || pos.c < 0 || pos.c >= cols || pos.r < 0 || pos.r >= rows) return;
+  const { x, y } = gridToScreen(pos.c, pos.r, viewport, canvasWidth, canvasHeight);
+  const color = actorColorMap[unit.actor] || "#FFF";
+  const cp = viewport.cellPixels;
+
+  ctx.save();
+  ctx.globalAlpha = 0.7; // slightly transparent
+
+  const markerSize = Math.max(2, cp * 0.35);
+  const boxBlend = smoothstep(24, 40, cp);
+
+  if (boxBlend > 0.5) {
+    const boxW = cp * 0.7;
+    const boxH = cp * 0.5;
+    const bx = x - boxW / 2;
+    const by = y - boxH / 2;
+
+    // Box fill
+    ctx.fillStyle = color + "99";
+    ctx.fillRect(bx, by, boxW, boxH);
+
+    // Dashed border instead of solid
+    ctx.setLineDash([4, 3]);
+    ctx.strokeStyle = "#FFF";
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(bx, by, boxW, boxH);
+    ctx.setLineDash([]);
+
+    // "?" icon indicating uncertain intel
+    if (cp >= 30) {
+      ctx.fillStyle = "#FFF";
+      ctx.font = `bold ${Math.round(boxH * 0.5)}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("?", x, y);
+    }
+
+    // Type label below box if zoomed in enough
+    if (cp >= 40) {
+      ctx.fillStyle = "#FFF";
+      ctx.font = `${Math.max(8, cp * 0.12)}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      ctx.fillText(unit.type, x, by + boxH + 2);
+    }
+  } else {
+    // Small dot with dashed circle at lower zoom
+    ctx.beginPath();
+    ctx.arc(x, y, markerSize, 0, Math.PI * 2);
+    ctx.fillStyle = color + "99";
+    ctx.fill();
+    ctx.setLineDash([2, 2]);
+    ctx.strokeStyle = "#FFF";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  ctx.restore();
+}
+
+
+/**
+ * Draw a ghost marker for a last-known enemy position.
+ * Faded, dashed, with a "?" and turn number.
+ */
+function drawLastKnownGhost(ctx, unitId, info, actorColorMap, viewport, canvasWidth, canvasHeight, cols, rows) {
+  if (!info.position) return;
+  const pos = parseUnitPosition(info.position);
+  if (!pos || pos.c < 0 || pos.c >= cols || pos.r < 0 || pos.r >= rows) return;
+  const { x, y } = gridToScreen(pos.c, pos.r, viewport, canvasWidth, canvasHeight);
+  const cp = viewport.cellPixels;
+
+  ctx.save();
+  ctx.globalAlpha = info.stale ? 0.2 : 0.35;
+
+  const markerSize = Math.max(2, cp * 0.3);
+  const boxBlend = smoothstep(24, 40, cp);
+
+  // Use a neutral gray color for ghosts
+  const ghostColor = "#888";
+
+  if (boxBlend > 0.5) {
+    const boxW = cp * 0.6;
+    const boxH = cp * 0.4;
+    const bx = x - boxW / 2;
+    const by = y - boxH / 2;
+
+    // Dashed box
+    ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = ghostColor;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(bx, by, boxW, boxH);
+    ctx.setLineDash([]);
+
+    // "?" icon
+    ctx.fillStyle = ghostColor;
+    ctx.font = `bold ${Math.round(boxH * 0.5)}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("?", x, y);
+
+    // "Turn N" label below
+    if (cp >= 35 && info.turn) {
+      ctx.globalAlpha = Math.min(ctx.globalAlpha + 0.2, 0.6);
+      ctx.font = `${Math.max(7, cp * 0.1)}px sans-serif`;
+      ctx.textBaseline = "top";
+      ctx.fillText(`T${info.turn}`, x, by + boxH + 2);
+    }
+  } else {
+    // Small dashed circle
+    ctx.beginPath();
+    ctx.arc(x, y, markerSize, 0, Math.PI * 2);
+    ctx.setLineDash([2, 2]);
+    ctx.strokeStyle = ghostColor;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  ctx.restore();
+}
+
+
+/**
+ * Draw a contact-tier marker — generic "?" diamond token indicating
+ * "something is here but we don't know what".
+ * No unit type, name, or strength shown.
+ */
+function drawContactMarker(ctx, unit, viewport, canvasWidth, canvasHeight, cols, rows) {
+  if (!unit.position) return;
+  const pos = parseUnitPosition(unit.position);
+  if (!pos || pos.c < 0 || pos.c >= cols || pos.r < 0 || pos.r >= rows) return;
+  const { x, y } = gridToScreen(pos.c, pos.r, viewport, canvasWidth, canvasHeight);
+  const cp = viewport.cellPixels;
+
+  ctx.save();
+  ctx.globalAlpha = 0.6;
+
+  // Amber/yellow color for unidentified contacts
+  const contactColor = "#E8A020";
+  const markerSize = Math.max(3, cp * 0.3);
+  const boxBlend = smoothstep(24, 40, cp);
+
+  if (boxBlend > 0.5) {
+    // Diamond shape with "?" — visually distinct from square NATO boxes
+    const diamondSize = cp * 0.35;
+
+    ctx.beginPath();
+    ctx.moveTo(x, y - diamondSize);
+    ctx.lineTo(x + diamondSize, y);
+    ctx.lineTo(x, y + diamondSize);
+    ctx.lineTo(x - diamondSize, y);
+    ctx.closePath();
+
+    ctx.fillStyle = contactColor + "44";
+    ctx.fill();
+    ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = contactColor;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // "?" in the center
+    ctx.fillStyle = contactColor;
+    ctx.font = `bold ${Math.round(diamondSize * 1.2)}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("?", x, y);
+
+    // "CONTACT" label below if zoomed in enough
+    if (cp >= 50) {
+      ctx.globalAlpha = 0.5;
+      ctx.font = `${Math.max(8, cp * 0.1)}px sans-serif`;
+      ctx.textBaseline = "top";
+      ctx.fillText("CONTACT", x, y + diamondSize + 3);
+    }
+  } else {
+    // Small diamond at lower zoom
+    const sz = markerSize * 0.8;
+    ctx.beginPath();
+    ctx.moveTo(x, y - sz);
+    ctx.lineTo(x + sz, y);
+    ctx.lineTo(x, y + sz);
+    ctx.lineTo(x - sz, y);
+    ctx.closePath();
+    ctx.fillStyle = contactColor + "66";
+    ctx.fill();
+    ctx.setLineDash([2, 2]);
+    ctx.strokeStyle = contactColor;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  ctx.restore();
+}
+
+
+/**
+ * Draw FOW overlay: semi-transparent dark tint on hexes the active actor
+ * cannot currently observe. Terrain is still visible underneath.
+ *
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {Object} fowMode - { visibleCells: Set, activeActorId }
+ * @param {Object} viewport
+ * @param {number} canvasWidth
+ * @param {number} canvasHeight
+ * @param {number} cols
+ * @param {number} rows
+ */
+export function drawFowOverlay(ctx, fowMode, viewport, canvasWidth, canvasHeight, cols, rows) {
+  if (!fowMode?.visibleCells || fowMode.visibleCells.size === 0) return;
+
+  const cp = viewport.cellPixels;
+  // Hex geometry: pointy-top outer radius
+  const hexSize = cp / Math.sqrt(3);
+
+  ctx.save();
+  ctx.globalAlpha = 0.35;
+  ctx.fillStyle = "#0A0A14"; // very dark blue-black tint
+
+  // Use shared visible range calculation (matches WebGL tile culling)
+  const visRange = getVisibleRange(viewport, canvasWidth, canvasHeight, cols, rows);
+  const startCol = visRange.colMin;
+  const endCol = Math.min(visRange.colMax, cols - 1);
+  const startRow = visRange.rowMin;
+  const endRow = Math.min(visRange.rowMax, rows - 1);
+
+  for (let r = startRow; r <= endRow; r++) {
+    for (let c = startCol; c <= endCol; c++) {
+      const key = `${c},${r}`;
+      if (fowMode.visibleCells.has(key)) continue; // visible — no tint
+
+      const { x, y } = gridToScreen(c, r, viewport, canvasWidth, canvasHeight);
+
+      // Draw hex-shaped tint (pointy-top)
+      ctx.beginPath();
+      for (let i = 0; i < 6; i++) {
+        const angle = Math.PI / 180 * (60 * i - 30);
+        const vx = x + hexSize * Math.cos(angle);
+        const vy = y + hexSize * Math.sin(angle);
+        if (i === 0) ctx.moveTo(vx, vy);
+        else ctx.lineTo(vx, vy);
+      }
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  ctx.restore();
 }

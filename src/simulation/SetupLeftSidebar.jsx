@@ -1,17 +1,18 @@
 import { colors, typography, radius, animation, space } from "../theme.js";
 import { Button, Input, Select, CollapsibleSection } from "../components/ui.jsx";
 import { ACTOR_COLORS } from "../terrainColors.js";
-import { SCALE_TIERS, SCALE_KEYS, WEATHER_OPTIONS, VISIBILITY_OPTIONS, GROUND_OPTIONS, TIME_OF_DAY_OPTIONS } from "./schemas.js";
+import { SCALE_TIERS, SCALE_KEYS, WEATHER_OPTIONS, VISIBILITY_OPTIONS, GROUND_OPTIONS, TIME_OF_DAY_OPTIONS, CLIMATE_OPTIONS, STABILITY_OPTIONS, SEVERITY_OPTIONS } from "./schemas.js";
 
 // ═══════════════════════════════════════════════════════════════
 // SETUP LEFT SIDEBAR — Scale, Scenario, Actors, LLM, Turn Settings
 // ═══════════════════════════════════════════════════════════════
 
-export default function SetupLeftSidebar({ state, dispatch, providers, open, onToggle }) {
+export default function SetupLeftSidebar({ state, dispatch, providers, open, onToggle, cellSizeKm }) {
   const {
     scale, title, description, initialConditions, specialRules,
     actors, turnDuration, startDate, environment,
     provider, model, temperature,
+    strategicEnabled, strategicHexSizeKm,
   } = state;
 
   const selectedProvider = providers.find(p => p.id === provider);
@@ -66,6 +67,51 @@ export default function SetupLeftSidebar({ state, dispatch, providers, open, onT
               <div>Unit echelons: <span style={{ color: colors.accent.cyan }}>{currentScale.echelons.join(", ")}</span></div>
             </div>
           </CollapsibleSection>
+
+          {/* Strategic Overlay — optional multi-scale hex rendering */}
+          {cellSizeKm && (
+            <CollapsibleSection title="Strategic Overlay" accent={colors.accent.amber}>
+              <label style={{
+                display: "flex", alignItems: "center", gap: space[2],
+                fontSize: typography.body.sm, color: colors.text.primary,
+                cursor: "pointer", marginBottom: space[2],
+              }}>
+                <input
+                  type="checkbox"
+                  checked={strategicEnabled}
+                  onChange={e => dispatch({ type: "SET_FIELD", field: "strategicEnabled", value: e.target.checked })}
+                  style={{ accentColor: colors.accent.amber }}
+                />
+                Enable Strategic Grid
+              </label>
+              {strategicEnabled && (
+                <>
+                  <div style={{ marginBottom: space[2] }}>
+                    <label style={{ fontSize: typography.body.xs, color: colors.text.muted, display: "block", marginBottom: 2 }}>
+                      Strategic Hex Size: {strategicHexSizeKm} km
+                    </label>
+                    <input
+                      type="range"
+                      min={Math.ceil(cellSizeKm * 3)}
+                      max={Math.min(Math.ceil(cellSizeKm * 20), 100)}
+                      step={1}
+                      value={strategicHexSizeKm}
+                      onChange={e => dispatch({ type: "SET_FIELD", field: "strategicHexSizeKm", value: Number(e.target.value) })}
+                      style={{ width: "100%", accentColor: colors.accent.amber }}
+                    />
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: colors.text.muted }}>
+                      <span>{Math.ceil(cellSizeKm * 3)} km</span>
+                      <span>{Math.min(Math.ceil(cellSizeKm * 20), 100)} km</span>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: typography.body.xs, color: colors.text.muted, lineHeight: 1.5 }}>
+                    Base hex: <span style={{ color: colors.accent.amber }}>{cellSizeKm} km</span>
+                    {" · "}Ratio: <span style={{ color: colors.accent.amber }}>{(strategicHexSizeKm / cellSizeKm).toFixed(1)}×</span>
+                  </div>
+                </>
+              )}
+            </CollapsibleSection>
+          )}
 
           {/* Scenario */}
           <CollapsibleSection title="Scenario" accent={colors.accent.green}>
@@ -143,7 +189,9 @@ export default function SetupLeftSidebar({ state, dispatch, providers, open, onT
                   <select value={provider} onChange={e => {
                     dispatch({ type: "SET_FIELD", field: "provider", value: e.target.value });
                     const p = providers.find(p => p.id === e.target.value);
-                    dispatch({ type: "SET_FIELD", field: "model", value: p?.models?.[0] || "" });
+                    const firstModel = p?.models?.[0];
+                    dispatch({ type: "SET_FIELD", field: "model", value: firstModel?.id || "" });
+                    dispatch({ type: "SET_FIELD", field: "temperature", value: firstModel?.temperature ?? 0.4 });
                   }}
                     style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.md, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}>
                     {providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -151,18 +199,28 @@ export default function SetupLeftSidebar({ state, dispatch, providers, open, onT
                 </div>
                 <div style={{ marginBottom: space[2] }}>
                   <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Model</div>
-                  <select value={model} onChange={e => dispatch({ type: "SET_FIELD", field: "model", value: e.target.value })}
+                  <select value={model} onChange={e => {
+                    dispatch({ type: "SET_FIELD", field: "model", value: e.target.value });
+                    const modelObj = selectedProvider?.models?.find(m => m.id === e.target.value);
+                    dispatch({ type: "SET_FIELD", field: "temperature", value: modelObj?.temperature ?? 0.4 });
+                  }}
                     style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.md, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}>
-                    {selectedProvider?.models?.map(m => <option key={m} value={m}>{m}</option>)}
+                    {selectedProvider?.models?.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
                   </select>
                 </div>
                 <div>
-                  <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2, display: "flex", justifyContent: "space-between" }}>
-                    <span>Temperature</span>
-                    <span style={{ color: colors.accent.amber, fontWeight: typography.weight.semibold, fontFamily: typography.monoFamily }}>{temperature}</span>
-                  </div>
-                  <input type="range" min="0" max="1" step="0.1" value={temperature} onChange={e => dispatch({ type: "SET_FIELD", field: "temperature", value: parseFloat(e.target.value) })}
-                    style={{ width: "100%", accentColor: colors.accent.amber }} />
+                  {(() => {
+                    const selectedModel = selectedProvider?.models?.find(m => m.id === model);
+                    const tempLocked = selectedModel?.temperature != null;
+                    return (<>
+                      <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2, display: "flex", justifyContent: "space-between" }}>
+                        <span>Temperature{tempLocked ? " (locked)" : ""}</span>
+                        <span style={{ color: colors.accent.amber, fontWeight: typography.weight.semibold, fontFamily: typography.monoFamily }}>{temperature}</span>
+                      </div>
+                      <input type="range" min="0" max="1" step="0.1" value={temperature} disabled={tempLocked} onChange={e => dispatch({ type: "SET_FIELD", field: "temperature", value: parseFloat(e.target.value) })}
+                    style={{ width: "100%", accentColor: colors.accent.amber, opacity: tempLocked ? 0.5 : 1 }} />
+                    </>);
+                  })()}
                 </div>
               </>
             )}
@@ -176,6 +234,8 @@ export default function SetupLeftSidebar({ state, dispatch, providers, open, onT
 
           {/* Environment Conditions */}
           <CollapsibleSection title="Environment" accent={colors.accent.green}>
+            <EnvSelect label="Climate" value={environment?.climate || "temperate"} options={CLIMATE_OPTIONS}
+              onChange={v => dispatch({ type: "UPDATE_ENVIRONMENT", field: "climate", value: v })} />
             <EnvSelect label="Weather" value={environment?.weather || "clear"} options={WEATHER_OPTIONS}
               onChange={v => dispatch({ type: "UPDATE_ENVIRONMENT", field: "weather", value: v })} />
             <EnvSelect label="Visibility" value={environment?.visibility || "good"} options={VISIBILITY_OPTIONS}
@@ -184,6 +244,10 @@ export default function SetupLeftSidebar({ state, dispatch, providers, open, onT
               onChange={v => dispatch({ type: "UPDATE_ENVIRONMENT", field: "groundCondition", value: v })} />
             <EnvSelect label="Time of Day" value={environment?.timeOfDay || "morning"} options={TIME_OF_DAY_OPTIONS}
               onChange={v => dispatch({ type: "UPDATE_ENVIRONMENT", field: "timeOfDay", value: v })} />
+            <EnvSelect label="Stability" value={environment?.stability || "medium"} options={STABILITY_OPTIONS}
+              onChange={v => dispatch({ type: "UPDATE_ENVIRONMENT", field: "stability", value: v })} />
+            <EnvSelect label="Severity" value={environment?.severity || "moderate"} options={SEVERITY_OPTIONS}
+              onChange={v => dispatch({ type: "UPDATE_ENVIRONMENT", field: "severity", value: v })} />
           </CollapsibleSection>
         </div>
       </div>

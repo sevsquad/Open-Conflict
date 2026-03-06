@@ -9,13 +9,18 @@ import {
   getBranchesForScale, getEchelonsForScale, ECHELON_LABELS,
   POSTURES, SCALE_TIERS, isSystemActive, MOVEMENT_TYPES,
 } from "./schemas.js";
+import { ERA_DEFINITIONS, getTemplatesForScale } from "./eraTemplates.js";
 
 // ═══════════════════════════════════════════════════════════════
 // SETUP RIGHT SIDEBAR — Unit Palette, Placed Units, Properties
 // ═══════════════════════════════════════════════════════════════
 
-// Render a small NATO icon onto a canvas and return it as a data URL
+// Render a small NATO icon onto a canvas and return it as a data URL.
+// Cached to avoid creating a new canvas + context on every render call.
+const _iconCache = new Map();
 function renderTypeIcon(type, color, size = 24) {
+  const key = `${type}-${color}-${size}`;
+  if (_iconCache.has(key)) return _iconCache.get(key);
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
@@ -27,7 +32,9 @@ function renderTypeIcon(type, color, size = 24) {
     ctx.lineWidth = 1.5;
     iconFn(ctx, size / 2, size / 2, size * 0.3);
   }
-  return canvas.toDataURL();
+  const dataURL = canvas.toDataURL();
+  _iconCache.set(key, dataURL);
+  return dataURL;
 }
 
 // Format type name for display
@@ -45,7 +52,7 @@ function positionDisplay(pos) {
 
 export default function SetupRightSidebar({ state, dispatch, terrainData, onUpdateCell, open, onToggle }) {
   const {
-    actors, units, scale,
+    actors, units, scale, eraSelections,
     interactionMode, placementPayload, selectedUnitId,
   } = state;
 
@@ -56,14 +63,14 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
   const selectedUnit = selectedUnitId ? units.find(u => u.id === selectedUnitId) : null;
   const selectedUnitIdx = selectedUnit ? units.indexOf(selectedUnit) : -1;
 
-  const handlePaletteClick = (actorId, unitType) => {
-    // If already placing this exact combo, cancel
+  const handlePaletteClick = (actorId, template) => {
+    // If already placing this exact template, cancel
     if (interactionMode === "place_unit" &&
         placementPayload?.actorId === actorId &&
-        placementPayload?.unitType === unitType) {
+        placementPayload?.template?.templateId === template.templateId) {
       dispatch({ type: "EXIT_PLACEMENT_MODE" });
     } else {
-      dispatch({ type: "ENTER_PLACEMENT_MODE", actorId, unitType });
+      dispatch({ type: "ENTER_PLACEMENT_MODE", actorId, unitType: template.baseType, template });
     }
   };
 
@@ -125,6 +132,8 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
           <CollapsibleSection title="Unit Palette" accent={colors.accent.amber}>
             {actors.map((actor, ai) => {
               const actorColor = ACTOR_COLORS[ai % ACTOR_COLORS.length];
+              const selectedEra = eraSelections?.[actor.id] || "default";
+              const templates = getTemplatesForScale(selectedEra, scale);
               return (
                 <div key={actor.id} style={{ marginBottom: space[3] }}>
                   <div style={{
@@ -134,16 +143,31 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
                     <div style={{ width: 8, height: 8, borderRadius: "50%", background: actorColor }} />
                     {actor.name}
                   </div>
+                  {/* Era dropdown */}
+                  <select
+                    value={selectedEra}
+                    onChange={e => dispatch({ type: "SET_ACTOR_ERA", actorId: actor.id, eraId: e.target.value })}
+                    style={{
+                      width: "100%", padding: "4px 6px", marginBottom: space[1],
+                      background: colors.bg.input, border: `1px solid ${colors.border.subtle}`,
+                      borderRadius: radius.sm, color: colors.text.primary,
+                      fontSize: typography.body.xs, fontFamily: typography.fontFamily,
+                    }}
+                  >
+                    {ERA_DEFINITIONS.map(era => (
+                      <option key={era.id} value={era.id}>{era.label}</option>
+                    ))}
+                  </select>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
-                    {branches.map(branch => {
+                    {templates.map(tpl => {
                       const isActive = interactionMode === "place_unit" &&
                         placementPayload?.actorId === actor.id &&
-                        placementPayload?.unitType === branch;
+                        placementPayload?.template?.templateId === tpl.templateId;
                       return (
                         <button
-                          key={branch}
-                          onClick={() => handlePaletteClick(actor.id, branch)}
-                          title={`Place ${formatType(branch)} for ${actor.name}`}
+                          key={tpl.templateId}
+                          onClick={() => handlePaletteClick(actor.id, tpl)}
+                          title={tpl.description || `Place ${tpl.name} for ${actor.name}`}
                           style={{
                             padding: "3px 6px", fontSize: typography.body.xs,
                             background: isActive ? actorColor + "30" : colors.bg.input,
@@ -154,7 +178,7 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
                             boxShadow: isActive ? shadows.glow(actorColor) : "none",
                           }}
                         >
-                          {formatType(branch)}
+                          {tpl.name}
                         </button>
                       );
                     })}
@@ -318,6 +342,19 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
                   <input type="range" min="0" max="100" step="5" value={selectedUnit.morale}
                     onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "morale", value: parseInt(e.target.value) })}
                     style={{ width: "100%", accentColor: selectedUnit.morale > 50 ? colors.accent.green : selectedUnit.morale > 25 ? colors.accent.amber : colors.accent.red }} />
+                </div>
+              )}
+
+              {/* Cohesion — Tiers 1-3 */}
+              {isSystemActive("cohesion", scaleTier) && selectedUnit.cohesion !== undefined && (
+                <div style={{ marginBottom: space[2] }}>
+                  <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2, display: "flex", justifyContent: "space-between" }}>
+                    <span>Cohesion</span>
+                    <span style={{ color: selectedUnit.cohesion > 50 ? colors.accent.green : selectedUnit.cohesion > 25 ? colors.accent.amber : colors.accent.red, fontFamily: typography.monoFamily, fontWeight: typography.weight.semibold }}>{selectedUnit.cohesion}%</span>
+                  </div>
+                  <input type="range" min="0" max="100" step="5" value={selectedUnit.cohesion}
+                    onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "cohesion", value: parseInt(e.target.value) })}
+                    style={{ width: "100%", accentColor: selectedUnit.cohesion > 50 ? colors.accent.green : selectedUnit.cohesion > 25 ? colors.accent.amber : colors.accent.red }} />
                 </div>
               )}
 

@@ -19,7 +19,7 @@ flat in vec2 v_neighborElev45;
 
 // Uniforms
 // NOTE: when adding terrain types, update BOTH this array size AND the bounds check in terrainColor()
-uniform vec3 u_terrainColors[29];   // RGB for each terrain type
+uniform vec3 u_terrainColors[65];   // RGB for each terrain type (29 base + 36 urban/fine-grained)
 uniform float u_cellPixels;         // current zoom level
 uniform uint u_activeFeatures;      // bitmask of enabled features
 uniform vec3 u_featureColor;        // tint color for active features (simplified)
@@ -31,6 +31,18 @@ uniform float u_elevMin;
 uniform float u_elevMax;
 uniform float u_contourInterval;    // meters between contour lines
 uniform float u_hillshadeStrength;  // 0.0 to 1.0
+
+// Strategic atlas uniforms (Phase 3: multi-scale rendering)
+// When u_useAtlas is true, the base terrain color is sampled from a texture
+// atlas instead of the u_terrainColors uniform array. v_infraIndex is
+// repurposed as the atlas tile index. Neighbor blending, hillshade,
+// contours, and grid lines still work procedurally on top.
+uniform bool u_useAtlas;
+uniform sampler2D u_atlas;
+uniform float u_atlasGridCols;   // tile columns in atlas
+uniform vec2 u_atlasSize;        // atlas dimensions in pixels
+uniform float u_atlasTileSize;   // content pixels per tile (e.g., 64)
+uniform float u_atlasStride;     // stride per tile (tileSize + 2*padding)
 
 out vec4 fragColor;
 
@@ -77,7 +89,7 @@ float getNeighborTerrain(int i) {
 // Terrain color lookup (index -1 = no neighbor / out of bounds)
 vec3 terrainColor(float idx) {
     int i = int(idx + 0.5);
-    if (i < 0 || i >= 29) return vec3(0.1, 0.1, 0.1);
+    if (i < 0 || i >= 65) return vec3(0.1, 0.1, 0.1);
     return u_terrainColors[i];
 }
 
@@ -137,41 +149,28 @@ vec3 elevationRamp(float t) {
     return mix(c6, c7, f);
 }
 
-// Detect contour line strength near this fragment.
-// For each hex edge, checks if this cell and its neighbor straddle
-// a contour interval boundary. Returns 0-1 line strength.
+// Detect contour line along hex edges.
+// If this cell and a neighbor are in different elevation bands,
+// darken fragments near that shared edge. Produces clean contour
+// lines that follow hex boundaries — correct for discrete-cell maps.
 float contourLine(float elev, float contourInt) {
     float lineStrength = 0.0;
     float apothem = SQRT3 / 2.0;
+    float thisBand = floor(elev / contourInt);
 
     for (int i = 0; i < 6; i++) {
         float nElev = getNeighborElev(i);
-        if (nElev < -9990.0) continue;  // no neighbor
+        if (nElev < -9990.0) continue;
 
-        // Check if a contour crosses between this cell and neighbor
-        float eLo = min(elev, nElev);
-        float eHi = max(elev, nElev);
-        float firstContour = ceil(eLo / contourInt) * contourInt;
+        float nBand = floor(nElev / contourInt);
+        if (thisBand == nBand) continue;  // same band, no contour here
 
-        if (firstContour > eHi) continue;  // no crossing on this edge
-
-        // Where the contour falls between centers (0 = this cell, 1 = neighbor)
-        float crossFrac = (eHi - eLo) > 0.1
-            ? abs((firstContour - elev) / (nElev - elev))
-            : 0.5;
-
-        // Fragment distance from this edge, normalized 0 (edge) to 1 (center)
+        // Draw line along this hex edge
         float dist = edgeDist(v_hexLocal, i);
         float normDist = dist / apothem;
 
-        // Contour sits at position (1 - crossFrac) from center toward edge
-        float contourPos = 1.0 - crossFrac;
-        float proximity = abs(normDist - contourPos);
-
-        // Line width: consistent ~1.5px on screen
         float lineWidth = 2.5 / u_cellPixels;
-        float line = 1.0 - sStep(0.0, lineWidth, proximity);
-
+        float line = 1.0 - sStep(0.0, lineWidth, normDist);
         lineStrength = max(lineStrength, line);
     }
 
@@ -212,9 +211,34 @@ float computeHillshade(float elev) {
     return clamp(shade * 0.5 + 0.5, 0.0, 1.0);
 }
 
+// Sample the atlas texture for a strategic hex's base color.
+// v_infraIndex is repurposed as tile index when atlas is active.
+// Maps v_hexLocal (-1..1) to UV within the tile.
+vec3 sampleAtlas() {
+    float tileIdx = v_infraIndex;
+    float tileCol = mod(tileIdx, u_atlasGridCols);
+    float tileRow = floor(tileIdx / u_atlasGridCols);
+
+    // Map hex-local position to 0..1 within the tile
+    // v_hexLocal ranges [-1, 1]; map to [0, 1]
+    float localU = (v_hexLocal.x + 1.0) * 0.5;
+    float localV = (v_hexLocal.y + 1.0) * 0.5;
+
+    // Padding offset (tiles have PAD pixels of extrusion on each side)
+    float pad = (u_atlasStride - u_atlasTileSize) * 0.5;
+
+    // Atlas UV: tile origin + padding + position within tile
+    // Half-pixel inset to avoid sampling the extrusion border
+    float inset = 0.5;
+    float u = (tileCol * u_atlasStride + pad + inset + localU * (u_atlasTileSize - 2.0 * inset)) / u_atlasSize.x;
+    float v = (tileRow * u_atlasStride + pad + inset + localV * (u_atlasTileSize - 2.0 * inset)) / u_atlasSize.y;
+
+    return texture(u_atlas, vec2(u, v)).rgb;
+}
+
 void main() {
     int tIdx = int(v_terrainIndex + 0.5);
-    vec3 baseColor = terrainColor(v_terrainIndex);
+    vec3 baseColor = u_useAtlas ? sampleAtlas() : terrainColor(v_terrainIndex);
     vec3 color = baseColor;
 
     // ── Edge blending with neighbors ──

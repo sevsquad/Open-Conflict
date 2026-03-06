@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback, forwardRef, useImperativeHandle } from "react";
+import { useRef, useState, useCallback, useMemo, forwardRef, useImperativeHandle } from "react";
 import { TL, ACTOR_COLORS } from "../terrainColors.js";
 import MapView from "../mapRenderer/MapView.jsx";
 import { parseUnitPosition } from "../mapRenderer/overlays/UnitOverlay.js";
@@ -18,6 +18,12 @@ const SimMap = forwardRef(function SimMap({
   onCellHover = null,
   isSetupMode = false,
   fogOfWar = false,
+  fowMode = null,             // { activeActorId, detectedUnits: Set, lastKnown: {} } for per-actor FOW
+  targetingMode = null,       // { orderType, unitId } when selecting a target hex for an order
+  movePath = null,            // array of {col, row} for route visualization
+  proposedMoves = null,       // array of { from, to, color, unitName } for review phase arrows
+  strategicGrid = null,       // from buildStrategicGrid() — enables strategic rendering
+  strategicMode = false,      // true = render strategic hexes
 }, ref) {
   const mapViewRef = useRef(null);
   const [hovCell, setHovCell] = useState(null);
@@ -32,9 +38,12 @@ const SimMap = forwardRef(function SimMap({
 
   const D = terrainData;
 
-  // Build actor color index
-  const actorColorMap = {};
-  (actors || []).forEach((a, i) => { actorColorMap[a.id] = ACTOR_COLORS[i % ACTOR_COLORS.length]; });
+  // Build actor color index — memoized to avoid triggering MapView re-renders
+  const actorColorMap = useMemo(() => {
+    const map = {};
+    (actors || []).forEach((a, i) => { map[a.id] = ACTOR_COLORS[i % ACTOR_COLORS.length]; });
+    return map;
+  }, [actors]);
 
   // Handle hover — track locally for tooltip + forward to parent
   const handleCellHover = useCallback((cell) => {
@@ -43,7 +52,10 @@ const SimMap = forwardRef(function SimMap({
   }, [onCellHover]);
 
   // Measure mode: local toggle overrides default "navigate" but not external modes like "place_unit"
-  const effectiveMode = measuring && interactionMode === "navigate" ? "measure" : interactionMode;
+  // "target_hex" is our order-targeting mode — MapView uses "place_unit" for click-to-select behavior
+  const effectiveMode = interactionMode === "target_hex" ? "place_unit"
+    : measuring && interactionMode === "navigate" ? "measure"
+    : interactionMode;
 
   // When switching away from measure mode, clear measurement points
   const handleToggleMeasure = useCallback(() => {
@@ -82,10 +94,14 @@ const SimMap = forwardRef(function SimMap({
         selectedUnitId={selectedUnitId}
         ghostUnit={ghostUnit}
         isSetupMode={isSetupMode}
-        unitOverlayOptions={!isSetupMode ? { showFrontLines: true } : null}
+        unitOverlayOptions={!isSetupMode ? { showFrontLines: true, fowMode: fowMode || undefined } : null}
         cellSizeKm={cellKm}
         onCellClick={onCellClick}
         onCellHover={handleCellHover}
+        movePath={movePath}
+        proposedMoves={proposedMoves}
+        strategicGrid={strategicGrid}
+        strategicMode={strategicMode}
       />
       {/* Cell tooltip */}
       {cellData && (
@@ -170,6 +186,17 @@ const SimMap = forwardRef(function SimMap({
           border: "1px solid rgba(245,158,11,0.3)", pointerEvents: "none",
         }}>
           Measure — click two hexes, Esc to exit
+        </div>
+      )}
+      {/* Order targeting mode indicator */}
+      {interactionMode === "target_hex" && targetingMode && (
+        <div style={{
+          position: "absolute", top: 4, left: 4, fontSize: 10, color: "#F59E0B",
+          fontFamily: "monospace", background: "rgba(0,0,0,0.85)", padding: "4px 10px", borderRadius: 3,
+          border: "1px solid rgba(245,158,11,0.5)", pointerEvents: "none",
+          zIndex: 20,
+        }}>
+          Select target hex for {targetingMode.orderType} — click hex, Esc to cancel
         </div>
       )}
     </div>

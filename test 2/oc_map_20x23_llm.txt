@@ -1,0 +1,76 @@
+# TERRAIN MAP
+# 20×23 cells, 0.5km/cell
+# Center: 49.1400, 22.5400
+# Bounds: S49.0951 N49.1849 W22.4713 E22.6087
+
+## HOW TO READ THIS DOCUMENT
+This is a hex-grid terrain map encoded for token efficiency.
+COORDINATES: Columns are labeled A-Z, AA-AZ, BA-BZ, etc. (left=west). Rows are numbered 1-N (row 1=north). Cell "M12" = column M, row 12.
+TERRAIN GRID: Each row is RLE-encoded using single-char codes from the LEGEND.
+  RLE format: a number followed by a letter means that letter repeats. 5D = 5 consecutive Deep Water cells. A bare letter means 1 cell.
+  Example: 3|5D2CR means row 3 has 5× D (Deep Water), 2× C (Coastal), 1× R (Forest).
+ELEVATION BANDS: Cells grouped by altitude range. r12[A-M] means row 12, columns A through M fall in that band.
+FEATURES: Same r[cols] notation for widespread features, or individual coords (e.g. E7) for sparse ones.
+  Feature names in parentheses: highway(Main Rd) means that feature is named "Main Rd".
+
+## LEGEND (single-char terrain codes, RLE: 5D = 5 consecutive D)
+# F=Farmland H=Highland G=Forested Hills N=Mtn Forest
+
+## TERRAIN (row 1=north, left=west)
+ 1|2NH8N2G3N4G
+ 2|11N2G3N4G
+ 3|18N2G
+ 4|G13NGN4G
+ 5|2G13N5G
+ 6|F2G6NH5N3G2N
+ 7|F3G7NH4NGNGN
+ 8|4G11NG4N
+ 9|6G9NG4N
+10|H6GHG5NG5N
+11|10G4NG5N
+12|8G3NHFHG5N
+13|2NG9NG2HG4N
+14|NG12NGH4N
+15|2NG12NH4N
+16|3G13NH3N
+17|2N2G12NH3N
+18|2N2G14N2G
+19|4N2G13NG
+20|20N
+21|20N
+22|20N
+23|20N
+
+## ELEVATION: 635m to 1249m
+500-1000m: r1[E-T] r2[A-B,G-T] r3[A-E,I,K-T] r4[A-E,K-T] r5[A-E,L,N-T] r6[A-E,N-T] r7[A-I,N-T] r8[A-J,N-T] r9[A-L,O-T] r10[A-Q,T] r11[A-Q] r12[A-Q] r13[A-R] r14[A-R] r15[A-F,L-T] r16[A-F,M-T] r17[A-I,P-T] r18[A-H,J,P-T] r19[A-L,R-T] r20[A-K,R-T] r21[B-L,R-T] r22[A-G,I-M,S-T] r23[B-E,L-M,S-T]
+1000-2000m: r1[A-D] r2[C-F] r3[F-H,J] r4[F-J] r5[F-K,M] r6[F-M] r7[J-M] r8[K-M] r9[M-N] r10[R-S] r11[R-T] r12[R-T] r13[S-T] r14[S-T] r15[G-K] r16[G-L] r17[J-O] r18[I,K-O] r19[M-Q] r20[L-Q] r21[A,M-Q] r22[H,N-R] r23[A,F-K,N-R]
+
+## FEATURES
+cliffs (428): r1[B,B,M,M-N,N] r2[B,B-C,C,G,G-H,H,K,K-L,L-M,M-N,N-O,O,R,R-S,S] r3[B,B,G,G-H,H,J,J-K,K,N,N,Q,Q-R,R-S,S] r4[B,B-C,C,E,E,J,J-K,K-L,L,N,N-O,O,Q,Q-R,R-S,S] r5[A,A-B,B,D,D-E,E-F,F,I,I-J,J-K,K,M,M-N,N,R,R-S,S] r6[D,D-E,E-F,F-G,G-H,H-I,I-J,J,N,N,P,P-Q,Q,S,S-T,T] r7[C,C-D,D-E,E-F,F-G,G-H,H-I,I,M,M-N,N-O,O-P,P-Q,Q] r8[G,G,I,I-J,J-K,K-L,L-M,M-N,N-O,O-P,P-Q,Q-R,R] r9[F,F,H,H-I,I-J,J-K,K-L,L-M,M-N,N-O,O-P,P-Q,Q] r10[M,M-N,N-O,O,Q,Q-R,R-S,S-T,T] r11[P,P-Q,Q,S,S-T,T] r12[B,B,Q,Q-R,R-S,S-T,T] r13[A,A,C,C,F,F-G,G,P,P-Q,Q-R,R-S,S-T,T] r14[B,B,D,D-E,E,G,G,I,I,K,K-L,L,S,S-T,T] r15[C,C-D,D,H,H,J,J-K,K,R,R-S,S-T,T] r16[E,E-F,F-G,G,J,J,M,M-N,N-O,O-P,P] r17[D,D-E,E-F,F,I,I,M,M-N,N-O,O] r18[D,D,G,G,I,I,K,K,P,P-Q,Q-R,R-S,S] r19[C,C,F,F,H,H-I,I-J,J,L,L-M,M,O,O-P,P-Q,Q-R,R] r20[B,B,G,G,K,K-L,L-M,M-N,N-O,O,Q,Q-R,R-S,S] r21[A,A-B,B,D,D,F,F-G,G,K,K-L,L-M,M-N,N,Q,Q-R,R] r22[B,B-C,C,E,E,H,H,J,J-K,K-L,L-M,M-N,N-O,O,Q,Q-R,R-S,S-T,T] r23[B,B,I,I,K,K,M,M-N,N-O,O-P,P-Q,Q-R,R-S,S-T,T]
+slope_steep (362): r1[M,M-N,N] r2[C,C,G,G-H,H,K,K-L,L,N,N-O,O,R,R-S,S] r3[B,B,G,G,J,J-K,K,N,N,Q,Q-R,R] r4[B,B-C,C,E,E,J,J-K,K-L,L,N,N-O,O,R,R-S,S] r5[A,A-B,B,D,D-E,E-F,F,I,I-J,J-K,K,M,M-N,N,R,R-S,S] r6[E,E-F,F-G,G-H,H-I,I-J,J,N,N,P,P-Q,Q,S,S-T,T] r7[D,D-E,E-F,F-G,G-H,H-I,I,M,M-N,N-O,O-P,P] r8[J,J-K,K-L,L-M,M-N,N-O,O-P,P] r9[I,I-J,J-K,K-L,L-M,M-N,N-O,O-P,P-Q,Q] r10[M,M-N,N-O,O,Q,Q-R,R,T,T] r11[P,P-Q,Q,S,S-T,T] r12[B,B,Q,Q-R,R-S,S] r13[A,A,C,C,F,F-G,G,P,P-Q,Q-R,R-S,S-T,T] r14[D,D,G,G,I,I,K,K-L,L,S,S-T,T] r15[C,C,H,H,J,J-K,K,R,R-S,S-T,T] r16[E,E-F,F-G,G,J,J,M,M-N,N-O,O-P,P] r17[D,D-E,E-F,F,I,I,M,M-N,N-O,O] r18[D,D,G,G,I,I,P,P-Q,Q-R,R-S,S] r19[C,C,F,F,H,H,L,L-M,M,O,O-P,P-Q,Q-R,R] r20[K,K-L,L-M,M-N,N,Q,Q-R,R-S,S] r21[A,A,D,D,G,G,K,K-L,L-M,M-N,N,Q,Q-R,R] r22[B,B-C,C,E,E,H,H,K,K-L,L-M,M-N,N-O,O,R,R-S,S-T,T] r23[B,B,K,K,M,M-N,N,Q,Q-R,R-S,S-T,T]
+elevation_advantage (304): r1[A,A-B,B-C,C-D,D,N,N-O,O-P,P] r2[A,A,C,C-D,D-E,E,N,N-O,O-P,P] r3[F,F-G,G,J,J,O,O-P,P-Q,Q] r4[F,F-G,G-H,H-I,I] r5[F,F-G,G-H,H-I,I-J,J-K,K,M,M] r6[E,E-F,F-G,G-H,H-I,I-J,J-K,K-L,L-M,M-N,N,S,S-T,T] r7[J,J-K,K-L,L-M,M-N,N-O,O,T,T] r8[K,K-L,L-M,M] r9[L,L-M,M-N,N,R,R-S,S] r10[R,R-S,S] r11[Q,Q-R,R-S,S-T,T] r12[Q,Q-R,R-S,S-T,T] r13[A,A-B,B,D,D,R,R-S,S-T,T] r14[A,A,D,D-E,E-F,F-G,G-H,H,S,S-T,T] r15[A,A,E,E-F,F-G,G-H,H-I,I-J,J-K,K] r16[F,F-G,G-H,H-I,I-J,J-K,K-L,L] r17[G,G,J,J-K,K-L,L-M,M-N,N-O,O] r18[A,A,I,I,K,K,M,M-N,N-O,O] r19[A,A,C,C,N,N-O,O-P,P-Q,Q] r20[A,A-B,B,L,L-M,M-N,N-O,O-P,P-Q,Q] r21[A,A-B,B,E,E-F,F,O,O-P,P-Q,Q] r22[A,A,E,E-F,F,H,H-I,I,N,N-O,O-P,P-Q,Q] r23[A,A-B,B,E,E-F,F-G,G-H,H-I,I-J,J-K,K,O,O-P,P-Q,Q]
+trail (248): r1[I,I,R,R-S,S-T] r2[A,A,H,H,L,L,R,R-T] r3[A,A-B,B,O,O] r4[O,O-P,P,S] r5[A,A-B,B-C,C,E,E,O,O-P,P-Q,Q-R] r6[A,A,C,C-D,D-E,E] r7[A,A,C,C-D,D-E,E,L,L] r8[A,A-B,B-C,C-D,D-E,E,K,K-L,L] r9[A-B,B-C,C,E,E,H,H,J,J-K,K-L,L] r10[A-B,B,E-F,H-I,I-J,J,L,L,O] r11[A,A-D,H-J,L-M,M] r12[B,B,K-N] r13[C,C,N,N,P] r14[B,B,E,E,M,M-N,N-O,O] r15[C,C,E,E-F,F,M,M-N,N,P,P] r16[A,A-B,B-C,C-D,D-E,E,O,O,R] r17[B,B-C,C-D,D-E,E-F,F,H,H-I,I,Q,Q-R,R-S,S] r18[A,A,D,D-E,E-F,F-G,G-H,H,P,P] r19[A,A,E,E-F,F-G,G-H,H,K,K-L,L] r20[D,D-E,E-F,F-G,G-H,H-I,I-J,J-K,K] r21[D,D-E,E-F,F-G,G] r22[C,C,E,E-F,F-G,G] r23[D,D,F,F-G,G-H,H]
+treeline (104): r1[B,B,D,D] r2[C,C-D,D] r5[A,A,I,I-J,J] r6[B,B,I,I,K,K-L,L-M,M] r7[B,B,I,I-J,J-K,K,M,M] r8[A,A-B,B,L,L-M,M] r9[A,A,G,G-H,H] r10[B,B,G,G,I,I] r11[A,A,G,G-H,H,K,K-L,L-M,M-N,N] r12[K,K,O,O-P,P] r13[K,K-L,L-M,M,P,P] r14[N,N-O,O,Q,Q] r15[O,O,Q,Q] r16[P,P,R,R] r17[P,P,R,R] r18[Q,Q-R,R]
+major_road (61): r9[A,A] r10[A,D,D-E,E-F,F-G,G-H,H] r11[B,B-C,C-D,D-E,E,G,G-H,H-I,I-J,J,L,L,N,N] r12[J,J-K,K-L,L-M,M-N,N-O,O] r13[M,M,P,P] r14[P,P] r15[Q,Q-R,R] r16[R,R-S,S] r17[T,T]
+river(Nasiczniański, Prowcza, Wetlina, Wetlinka, Górna Solinka, Dwernik) (58): r1[T] r2[T] r3[S-T] r4[R-S] r5[R] r6[Q] r7[Q] r8[P] r9[A,P] r10[A-B,E-F,O] r11[B-J,O] r12[B,I-J,N-O] r13[C,J,O-P] r14[B,I,O-P] r15[C,J,Q] r16[B-C,P] r17[D,P-Q] r18[D,O] r19[E-H,P] r20[G-H]
+road (29): r1[T,T] r2[S,S-T,T] r3[S,S-T,T] r4[R,R-S,S] r5[R,R] r6[Q,Q] r7[Q,Q] r8[P,P] r9[P,P] r10[O,O] r11[O,O] r12[N]
+rough_terrain (24): r1[C,C] r6[J,J] r7[L,L] r10[H,H] r12[L,L-M,M-N,N] r13[N,N-O,O] r14[P,P] r15[P,P] r16[Q,Q]
+ridgeline (18): r16[J,J] r18[I,I,N,N] r20[O,O] r21[A,A,P,P] r22[O,O] r23[I,I,P,P]
+saddle (12): r4[P,P] r6[K,K] r7[R,R] r14[F,F] r15[P,P] r21[C,C]
+military_base: A10, A10
+town(Brzegi Górne): N12
+
+## SUMMARY
+Mtn Forest       349 cells (75.9%)
+Forested Hills   95 cells (20.7%)
+Highland         13 cells (2.8%)
+Farmland         3 cells (0.7%)
+
+## NAMED FEATURES
+river: Wetlina (16 cells)
+river: Prowcza (14 cells)
+river: Górna Solinka (14 cells)
+river: Nasiczniański (6 cells)
+river: Dwernik (5 cells)
+river: Wetlinka (3 cells)
+town: Brzegi Górne (1 cells)

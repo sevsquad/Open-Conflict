@@ -27,6 +27,10 @@ export const FEATURE_SCALE_RELEVANCE = {
   // Strategic infrastructure (Tiers 3-6)
   airfield: [3, 6], military_base: [3, 6], port: [4, 6],
   power_plant: [5, 6], pipeline: [5, 6], dam: [4, 6],
+  // Urban features (Tiers 1-2)
+  courtyard: [1, 2], metro_entrance: [1, 2],
+  // Urban features (Tiers 1-3)
+  fortified_structure: [1, 3],
   // Always relevant
   river_crossing: [1, 6], fortification: [1, 6],
 };
@@ -41,9 +45,32 @@ export function isFeatureRelevant(feature, tierNumber) {
 // ── Terrain Type Collapsing ─────────────────────────────────
 // At higher tiers, merge similar terrain types into broad categories.
 
+// Fine-grained types collapse to aggregated urban at Tier 3 (grand tactical)
+const TERRAIN_COLLAPSE_TIER3 = {
+  // Buildings → aggregated urban types
+  bldg_light: "suburban", bldg_residential: "dense_urban", bldg_commercial: "urban_commercial",
+  bldg_highrise: "urban_commercial", bldg_institutional: "dense_urban", bldg_religious: "dense_urban",
+  bldg_industrial: "urban_industrial", bldg_fortified: "dense_urban", bldg_ruins: "light_urban",
+  bldg_station: "urban_commercial",
+  // Roads → simplified
+  motorway: "open_ground", arterial: "open_ground", street: "light_urban", alley: "dense_urban",
+  road_footpath: "open_ground", rail_track: "open_ground", tram_track: "light_urban",
+  // Open paved
+  plaza: "light_urban", surface_parking: "light_urban", rail_yard: "urban_industrial",
+  // Open green
+  park: "light_veg", sports_field: "open_ground", cemetery: "light_veg", urban_trees: "forest", allotment: "farmland",
+  // Water
+  canal: "river", dock: "coastal_water",
+  // Other
+  bare_ground: "open_ground", bridge_deck: "open_ground", ground_embankment: "highland",
+  underpass: "dense_urban", construction_site: "open_ground",
+};
+
 const TERRAIN_COLLAPSE_TIER4 = {
+  ...TERRAIN_COLLAPSE_TIER3,
   forest: "forested", dense_forest: "forested", mountain_forest: "forested", forested_hills: "forested",
   light_urban: "urban", dense_urban: "urban",
+  suburban: "urban", urban_commercial: "urban", urban_industrial: "urban", urban_dense_core: "urban",
   jungle: "jungle", jungle_hills: "jungle", jungle_mountains: "jungle",
   boreal: "boreal", boreal_hills: "boreal", boreal_mountains: "boreal",
   savanna: "savanna", savanna_hills: "savanna",
@@ -68,6 +95,7 @@ const COLLAPSED_LABELS = {
 export function getTerrainForTier(terrainType, tierNumber) {
   if (tierNumber >= 6) return TERRAIN_COLLAPSE_TIER6[terrainType] || terrainType;
   if (tierNumber >= 4) return TERRAIN_COLLAPSE_TIER4[terrainType] || terrainType;
+  if (tierNumber >= 3) return TERRAIN_COLLAPSE_TIER3[terrainType] || terrainType;
   return terrainType;
 }
 
@@ -90,6 +118,21 @@ export const TERRAIN_CHAR = {
   jungle: "J", jungle_hills: "j", jungle_mountains: "q",
   boreal: "B", boreal_hills: "b", boreal_mountains: "z",
   tundra: "T", savanna: "A", savanna_hills: "a", mangrove: "Y",
+  // Aggregated urban
+  suburban: "s", urban_commercial: "c", urban_industrial: "i", urban_dense_core: "d",
+  // Fine-grained: Buildings
+  bldg_light: "l", bldg_residential: "r", bldg_commercial: "o", bldg_highrise: "h",
+  bldg_institutional: "n", bldg_religious: "e", bldg_industrial: "w", bldg_fortified: "f",
+  bldg_ruins: "u", bldg_station: "t",
+  // Fine-grained: Roads & Rail
+  motorway: "m", arterial: "k", street: "g", alley: "y",
+  road_footpath: "p", rail_track: "v", tram_track: "x",
+  // Fine-grained: Open
+  plaza: "Q", surface_parking: "Z", rail_yard: "#",
+  park: "+", sports_field: "=", cemetery: "^", urban_trees: "~", allotment: "_",
+  // Fine-grained: Water & Other
+  canal: "@", dock: "&",
+  bare_ground: "!", bridge_deck: "%", ground_embankment: "*", underpass: "-", construction_site: ";",
 };
 
 // Human-readable labels for the legend
@@ -99,6 +142,16 @@ const TERRAIN_LABEL = {
   forest: "Forest", dense_forest: "Dense Forest", highland: "Highland", forested_hills: "Forested Hills",
   mountain_forest: "Mtn Forest", mountain: "Mountain", peak: "Peak/Alpine", desert: "Desert",
   ice: "Ice/Glacier", light_urban: "Light Urban", dense_urban: "Dense Urban",
+  suburban: "Suburban", urban_commercial: "Commercial", urban_industrial: "Industrial", urban_dense_core: "Dense Core",
+  bldg_light: "Light Bldg", bldg_residential: "Residential", bldg_commercial: "Comm Bldg", bldg_highrise: "Highrise",
+  bldg_institutional: "Institution", bldg_religious: "Religious", bldg_industrial: "Ind Bldg", bldg_fortified: "Fortified",
+  bldg_ruins: "Ruins", bldg_station: "Station",
+  motorway: "Motorway", arterial: "Arterial", street: "Street", alley: "Alley",
+  road_footpath: "Footpath", rail_track: "Rail", tram_track: "Tram",
+  plaza: "Plaza", surface_parking: "Parking", rail_yard: "Rail Yard",
+  park: "Park", sports_field: "Sports", cemetery: "Cemetery", urban_trees: "Urb Trees", allotment: "Allotment",
+  canal: "Canal", dock: "Dock",
+  bare_ground: "Bare", bridge_deck: "Bridge", ground_embankment: "Embankment", underpass: "Underpass", construction_site: "Construction",
   jungle: "Jungle", jungle_hills: "Jungle Hills", jungle_mountains: "Jungle Mtns",
   boreal: "Boreal", boreal_hills: "Boreal Hills", boreal_mountains: "Boreal Mtns",
   tundra: "Tundra", savanna: "Savanna", savanna_hills: "Savanna Hills", mangrove: "Mangrove",
@@ -167,7 +220,161 @@ export function formatCellDetail(col, row, cell, scaleTier = null) {
     const names = Object.entries(cell.feature_names).map(([k, v]) => `${k}=${v}`).join(",");
     parts.push(`names:{${names}}`);
   }
+
+  // Urban composition (from Strategic Grid aggregation or fine-parse metadata)
+  if (cell.urban && (!scaleTier || scaleTier <= 3)) {
+    const u = cell.urban;
+    const uParts = [`pattern:${u.pattern}`];
+    if (u.buildingCoverage > 0) uParts.push(`bldg:${Math.round(u.buildingCoverage * 100)}%`);
+    if (u.roadCoverage > 0) uParts.push(`road:${Math.round(u.roadCoverage * 100)}%`);
+    if (u.avgHeight > 0) uParts.push(`avgH:${Math.round(u.avgHeight)}m`);
+    parts.push(`urban:{${uParts.join(",")}}`);
+  }
+
+  // Building metadata (from fine-parse OSM extraction)
+  if (cell.buildingFloors && (!scaleTier || scaleTier <= 2)) {
+    const bParts = [`${cell.buildingFloors}fl`];
+    if (cell.buildingHeight) bParts.push(`${Math.round(cell.buildingHeight)}m`);
+    if (cell.buildingMaterial) bParts.push(cell.buildingMaterial);
+    if (cell.protectedSite) bParts.push("PROTECTED");
+    parts.push(`bldg:{${bParts.join(",")}}`);
+  }
+
   return parts.join(" ");
+}
+
+// ── Order-Type Feature Relevance ──────────────────────────────
+// Which features matter for which order types. Features not listed for an
+// order type are omitted from that order's terrain context to save tokens.
+// null = include all features (no filtering).
+
+export const ORDER_FEATURE_RELEVANCE = {
+  ATTACK:       new Set(["building", "building_dense", "wall", "fortification", "fortified_structure", "river", "bridge", "road", "highway", "slope_steep", "slope_extreme", "cliffs", "ridgeline", "treeline", "courtyard", "metro_entrance", "town", "fence"]),
+  DEFEND:       new Set(["building", "building_dense", "wall", "fortification", "fortified_structure", "treeline", "slope_steep", "ridgeline", "river", "bridge", "road", "highway", "courtyard", "town", "fence", "hedgerow"]),
+  FIRE_MISSION: new Set(["building", "building_dense", "ridgeline", "slope_steep", "town", "fortification", "fortified_structure"]),
+  SHORE_BOMBARDMENT: new Set(["building", "building_dense", "fortification", "port", "town"]),
+  RECON:        new Set(["road", "highway", "major_road", "trail", "ridgeline", "treeline", "building", "town", "airfield", "military_base"]),
+  MOVE:         new Set(["road", "highway", "major_road", "trail", "bridge", "river", "ford", "river_crossing", "slope_steep", "slope_extreme"]),
+  ENGINEER:     new Set(["bridge", "fortification", "river", "road", "highway", "dam", "wall", "fence"]),
+};
+
+/**
+ * Filter features for a specific order type. Returns all features if
+ * orderType is null/unknown, or the relevant subset for known types.
+ */
+export function filterFeaturesForOrder(features, orderType) {
+  if (!orderType || !ORDER_FEATURE_RELEVANCE[orderType]) return features;
+  const relevant = ORDER_FEATURE_RELEVANCE[orderType];
+  return features.filter(f => relevant.has(f));
+}
+
+// ── Urban Narrative Builder ─────────────────────────────────
+// Generates a cached prose summary of the map's urban character.
+// Called once at simulation start, injected into every turn prompt.
+
+const URBAN_TERRAINS = new Set([
+  "light_urban", "dense_urban", "suburban", "urban_commercial",
+  "urban_industrial", "urban_dense_core",
+  "bldg_light", "bldg_residential", "bldg_commercial", "bldg_highrise",
+  "bldg_institutional", "bldg_religious", "bldg_industrial", "bldg_fortified",
+  "bldg_ruins", "bldg_station",
+  "motorway", "arterial", "street", "alley", "road_footpath",
+  "rail_track", "tram_track", "plaza", "surface_parking", "rail_yard",
+  "park", "sports_field", "cemetery", "urban_trees", "allotment",
+  "canal", "dock", "bare_ground", "bridge_deck", "ground_embankment",
+  "underpass", "construction_site",
+]);
+
+const PATTERN_DESCRIPTIONS = {
+  A: "dense irregular streets (<10m), infantry only, excellent defense",
+  B: "orderly grid blocks (15-25m streets), moderate vehicle access",
+  C: "dispersed residential, good vehicle access, moderate cover",
+  D: "high-rise towers, wide streets, long sightlines",
+  E: "industrial/transport, wide open spaces, full vehicle access",
+};
+
+/**
+ * Build a prose summary of urban terrain across the map.
+ * Groups urban cells into clusters, describes each cluster's character.
+ * Returns an array of lines (empty if no significant urban presence).
+ */
+export function buildUrbanNarrative(terrainData) {
+  if (!terrainData?.cells) return [];
+  const D = terrainData;
+
+  // Count urban cells and collect clusters by named settlement
+  const urbanCells = [];
+  const settlements = {}; // name → [keys]
+  let totalCells = 0;
+
+  for (const k in D.cells) {
+    totalCells++;
+    const cell = D.cells[k];
+    if (!URBAN_TERRAINS.has(cell.terrain)) continue;
+    urbanCells.push(k);
+
+    // Group by settlement name if available
+    const fn = cell.feature_names;
+    const name = fn?.town || fn?.settlement || null;
+    if (name) {
+      if (!settlements[name]) settlements[name] = [];
+      settlements[name].push(k);
+    }
+  }
+
+  const urbanFrac = urbanCells.length / totalCells;
+  if (urbanFrac < 0.05 || urbanCells.length < 3) return []; // Not enough urban to narrate
+
+  const lines = ["URBAN CONTEXT:"];
+
+  // Overall urban fraction
+  lines.push(`  ${Math.round(urbanFrac * 100)}% of map is urban/built-up terrain (${urbanCells.length} cells).`);
+
+  // Describe each named settlement
+  for (const [name, keys] of Object.entries(settlements).sort((a, b) => b[1].length - a[1].length)) {
+    if (keys.length < 2) continue;
+
+    // Analyze composition of this settlement
+    const comp = {};
+    let hasUrbanObj = false;
+    let pattern = null;
+    let totalHeight = 0, heightCount = 0;
+
+    for (const k of keys) {
+      const cell = D.cells[k];
+      const t = cell.terrain;
+      comp[t] = (comp[t] || 0) + 1;
+      if (cell.urban) {
+        hasUrbanObj = true;
+        if (!pattern) pattern = cell.urban.pattern;
+        if (cell.urban.avgHeight > 0) { totalHeight += cell.urban.avgHeight; heightCount++; }
+      }
+      if (cell.buildingHeight > 0) { totalHeight += cell.buildingHeight; heightCount++; }
+    }
+
+    const avgH = heightCount > 0 ? Math.round(totalHeight / heightCount) : 0;
+
+    // Build description
+    const dominant = Object.entries(comp).sort((a, b) => b[1] - a[1])[0];
+    const desc = [];
+    desc.push(`${name} (${keys.length} cells)`);
+    if (pattern && PATTERN_DESCRIPTIONS[pattern]) {
+      desc.push(`Pattern ${pattern}: ${PATTERN_DESCRIPTIONS[pattern]}`);
+    }
+    if (avgH > 0) desc.push(`avg height ${avgH}m`);
+    const dominantLabel = TERRAIN_LABEL[dominant[0]] || dominant[0];
+    desc.push(`primarily ${dominantLabel}`);
+
+    lines.push(`  ${desc.join(", ")}.`);
+  }
+
+  // Describe unnamed urban clusters if significant
+  const unnamedCount = urbanCells.length - Object.values(settlements).reduce((s, v) => s + v.length, 0);
+  if (unnamedCount > 5) {
+    lines.push(`  ${unnamedCount} additional urban cells outside named settlements.`);
+  }
+
+  return lines;
 }
 
 // ── Run-Length Encoding ─────────────────────────────────────

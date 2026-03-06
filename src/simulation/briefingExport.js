@@ -6,14 +6,91 @@
 import { positionToLabel, buildTerrainSummary } from "./prompts.js";
 import { SCALE_TIERS } from "./schemas.js";
 import { formatFortuneForPrompt } from "./fortuneRoll.js";
+import { MOVEMENT_BUDGETS, TERRAIN_COSTS, WEAPON_RANGE_KM } from "./orderTypes.js";
+import { OBSERVER_VISUAL_KM, TARGET_SIZE_MOD, DEFAULT_OBSERVER_VISUAL_KM, DEFAULT_TARGET_SIZE_MOD } from "./detectionRanges.js";
+
+// ── Capabilities Reference Table Builder ─────────────────────
+// Shared helper for both actor and full briefings.
+// Deduplicates by templateId (or type+movementType fallback) so
+// identical unit types don't repeat rows.
+
+function buildCapabilitiesTable(units, terrainData) {
+  if (!units.length) return [];
+
+  const lines = [];
+  lines.push("## Unit Capabilities Reference");
+  lines.push("");
+
+  // Deduplicate: one row per unique template/type combo
+  const seen = new Map();
+  for (const u of units) {
+    const key = u.templateId || `${u.type}|${u.movementType || "foot"}`;
+    if (seen.has(key)) continue;
+    const rangeKm = u.weaponRangeKm || WEAPON_RANGE_KM[u.type] || WEAPON_RANGE_KM.infantry;
+    const moveBudget = MOVEMENT_BUDGETS[u.movementType || "foot"] ?? 3;
+    const visionKm = OBSERVER_VISUAL_KM[u.type] ?? DEFAULT_OBSERVER_VISUAL_KM;
+    const signature = TARGET_SIZE_MOD[u.type] ?? DEFAULT_TARGET_SIZE_MOD;
+    const rangeStr = (rangeKm.effective === 0 && rangeKm.max === 0)
+      ? "—"
+      : `${rangeKm.effective} / ${rangeKm.max}`;
+    seen.set(key, {
+      name: u.templateId ? u.templateId.replace(/_/g, " ") : u.type,
+      moveType: u.movementType || "foot",
+      moveBudget,
+      rangeStr,
+      visionKm,
+      signature,
+    });
+  }
+
+  lines.push("| Unit Type | Move Type | Move (hex) | Weapon Range eff/max (km) | Vision (km) | Signature |");
+  lines.push("|-----------|-----------|------------|---------------------------|-------------|-----------|");
+  for (const [, row] of seen) {
+    lines.push(`| ${row.name} | ${row.moveType} | ${row.moveBudget} | ${row.rangeStr} | ${row.visionKm} | ${row.signature}× |`);
+  }
+  lines.push("");
+
+  // Terrain movement costs — only terrains present on the current map
+  if (terrainData?.cells) {
+    const terrainTypes = new Set();
+    for (const cell of Object.values(terrainData.cells)) {
+      if (cell.terrain) terrainTypes.add(cell.terrain);
+    }
+    const sorted = [...terrainTypes].sort((a, b) => {
+      const ca = TERRAIN_COSTS[a] ?? 1.0;
+      const cb = TERRAIN_COSTS[b] ?? 1.0;
+      return ca - cb;
+    });
+    if (sorted.length > 0) {
+      lines.push("**Terrain Movement Costs** *(multiply against move budget — 1.0× = normal, higher = slower)*");
+      lines.push("");
+      lines.push("| Terrain | Cost | Terrain | Cost |");
+      lines.push("|---------|------|---------|------|");
+      // Two-column layout to keep it compact
+      for (let i = 0; i < sorted.length; i += 2) {
+        const t1 = sorted[i];
+        const c1 = TERRAIN_COSTS[t1] ?? 1.0;
+        const t2 = sorted[i + 1];
+        const c2 = t2 ? (TERRAIN_COSTS[t2] ?? 1.0) : "";
+        const col2t = t2 || "";
+        const col2c = t2 ? `${c2}×` : "";
+        lines.push(`| ${t1} | ${c1}× | ${col2t} | ${col2c} |`);
+      }
+      lines.push("");
+    }
+  }
+
+  return lines;
+}
 
 // ── Per-Actor Briefing (respects fog of war) ────────────────
 
 /**
  * Build a markdown briefing for one actor's commander perspective.
  * Contains only information that actor would have access to.
+ * @param {Object} visibilityState - from computeDetection(); used to filter enemy units
  */
-export function buildActorBriefing(gameState, actorId, terrainData, { fortuneRolls, frictionEvents } = {}) {
+export function buildActorBriefing(gameState, actorId, terrainData, { fortuneRolls, frictionEvents, visibilityState } = {}) {
   const actor = gameState.scenario.actors.find(a => a.id === actorId);
   if (!actor) return `# Error: Actor "${actorId}" not found`;
 
@@ -34,10 +111,13 @@ export function buildActorBriefing(gameState, actorId, terrainData, { fortuneRol
   if (gameState.environment) {
     const env = gameState.environment;
     const envParts = [];
+    if (env.climate && env.climate !== "temperate") envParts.push(`Climate: ${env.climate}`);
     if (env.weather) envParts.push(`Weather: ${env.weather}`);
     if (env.visibility) envParts.push(`Visibility: ${env.visibility}`);
     if (env.groundCondition) envParts.push(`Ground: ${env.groundCondition}`);
     if (env.timeOfDay) envParts.push(`Time: ${env.timeOfDay}`);
+    if (env.stability && env.stability !== "medium") envParts.push(`Stability: ${env.stability}`);
+    if (env.severity && env.severity !== "moderate") envParts.push(`Severity: ${env.severity}`);
     if (envParts.length) lines.push(`\n**Environment:** ${envParts.join(" · ")}`);
   }
   lines.push("");
@@ -68,17 +148,65 @@ export function buildActorBriefing(gameState, actorId, terrainData, { fortuneRol
     lines.push("");
   }
 
-  // Known enemy forces (only detected units if fog of war applies)
-  const enemyUnits = gameState.units.filter(u => u.actor !== actorId && u.detected !== false);
-  if (enemyUnits.length > 0) {
-    lines.push("## Known Enemy Forces");
-    lines.push("*(Based on current intelligence — may be incomplete)*");
+  // Unit capabilities reference — movement, weapon ranges, vision, terrain costs
+  if (myUnits.length > 0) {
+    lines.push(...buildCapabilitiesTable(myUnits, terrainData));
+  }
+
+  // Known enemy forces — filtered by detection state
+  const actorVis = visibilityState?.actorVisibility?.[actorId];
+  const detectedSet = actorVis?.detectedUnits instanceof Set
+    ? actorVis.detectedUnits
+    : new Set(actorVis?.detectedUnits || []);
+  const contactSet = actorVis?.contactUnits instanceof Set
+    ? actorVis.contactUnits
+    : new Set(actorVis?.contactUnits || []);
+  const lastKnown = actorVis?.lastKnown || {};
+
+  // Identified enemies — full details
+  const identifiedUnits = gameState.units.filter(u => u.actor !== actorId && detectedSet.has(u.id));
+  if (identifiedUnits.length > 0) {
+    lines.push("## Identified Enemy Forces");
+    lines.push("*(Positively identified — high-confidence intelligence)*");
     lines.push("");
     lines.push("| Unit | Actor | Type | Echelon | Position | Strength | Status |");
     lines.push("|------|-------|------|---------|----------|----------|--------|");
-    for (const u of enemyUnits) {
+    for (const u of identifiedUnits) {
       const enemyActor = gameState.scenario.actors.find(a => a.id === u.actor)?.name || u.actor;
       lines.push(`| ${u.name} | ${enemyActor} | ${u.type} | ${u.echelon || "—"} | ${positionToLabel(u.position)} | ${u.strength}% | ${u.status} |`);
+    }
+    lines.push("");
+  }
+
+  // Contact-tier enemies — minimal details (just position and "unknown enemy activity")
+  const contactUnits = gameState.units.filter(u => u.actor !== actorId && contactSet.has(u.id));
+  if (contactUnits.length > 0) {
+    lines.push("## Unidentified Contacts");
+    lines.push("*(Detected activity — type and strength unknown)*");
+    lines.push("");
+    lines.push("| Position | Notes |");
+    lines.push("|----------|-------|");
+    for (const u of contactUnits) {
+      lines.push(`| ${positionToLabel(u.position)} | Enemy activity detected |`);
+    }
+    lines.push("");
+  }
+
+  // Last-known positions — ghost intel from previous turns
+  const lastKnownEntries = Object.entries(lastKnown).filter(([unitId]) => {
+    // Don't show last-known for units currently detected or in contact
+    return !detectedSet.has(unitId) && !contactSet.has(unitId);
+  });
+  if (lastKnownEntries.length > 0) {
+    lines.push("## Last Known Positions");
+    lines.push("*(Historical intelligence — positions may be outdated)*");
+    lines.push("");
+    lines.push("| Type | Last Position | Turns Ago | Reliability |");
+    lines.push("|------|---------------|-----------|-------------|");
+    for (const [unitId, info] of lastKnownEntries) {
+      const age = (gameState.game?.turn || 1) - (info.turn || 0);
+      const reliability = info.stale ? "Stale" : "Recent";
+      lines.push(`| ${info.type || "unknown"} | ${positionToLabel(info.position)} | ${age} | ${reliability} |`);
     }
     lines.push("");
   }
@@ -91,13 +219,18 @@ export function buildActorBriefing(gameState, actorId, terrainData, { fortuneRol
     lines.push("");
   }
 
-  // Recent history (last 2-3 turns)
+  // Recent history (last 2-3 turns) — uses per-actor narrative if available
   if (gameState.turnLog.length > 0) {
     lines.push("## Recent History");
     const recentTurns = gameState.turnLog.slice(-3);
     for (const entry of recentTurns) {
       lines.push(`\n### Turn ${entry.turn}`);
-      if (entry.adjudication?.narrative) {
+      // Prefer per-actor narrative (FOW-safe) over omniscient master narrative
+      const actorNarrative = entry.actorNarratives?.[actorId];
+      if (actorNarrative) {
+        lines.push(actorNarrative);
+      } else if (entry.adjudication?.narrative) {
+        // Fallback to master narrative for old turn logs that don't have per-actor data
         lines.push(entry.adjudication.narrative);
       }
     }
@@ -171,10 +304,13 @@ export function buildFullBriefing(gameState, terrainData, { fortuneRolls, fricti
   if (gameState.environment) {
     const env = gameState.environment;
     const envParts = [];
+    if (env.climate && env.climate !== "temperate") envParts.push(`Climate: ${env.climate}`);
     if (env.weather) envParts.push(`Weather: ${env.weather}`);
     if (env.visibility) envParts.push(`Visibility: ${env.visibility}`);
     if (env.groundCondition) envParts.push(`Ground: ${env.groundCondition}`);
     if (env.timeOfDay) envParts.push(`Time: ${env.timeOfDay}`);
+    if (env.stability && env.stability !== "medium") envParts.push(`Stability: ${env.stability}`);
+    if (env.severity && env.severity !== "moderate") envParts.push(`Severity: ${env.severity}`);
     if (envParts.length) lines.push(`\n**Environment:** ${envParts.join(" · ")}`);
   }
   lines.push("");
@@ -202,6 +338,11 @@ export function buildFullBriefing(gameState, terrainData, { fortuneRolls, fricti
       }
     }
     lines.push("");
+  }
+
+  // Unit capabilities reference — all units across all actors
+  if (gameState.units.length > 0) {
+    lines.push(...buildCapabilitiesTable(gameState.units, terrainData));
   }
 
   // Terrain summary

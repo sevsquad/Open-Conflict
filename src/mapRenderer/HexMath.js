@@ -294,5 +294,184 @@ export function chunkHexCenter(col, row, layout) {
   return { x: wx - refX + padX, y: wy - refY + padY };
 }
 
+// ── Line of Sight ───────────────────────────────────────────
+// Walk a hex line from source to target, checking intervening hexes
+// for terrain/elevation that blocks or degrades visibility.
+// Returns { result: "CLEAR"|"PARTIAL"|"BLOCKED", detail: string|null }
+
+/**
+ * Compute line of sight between two hex positions.
+ * Walks the hex line and checks each INTERVENING hex (skips endpoints).
+ * Terrain blocking uses the losEffect lookup: "block" or "partial".
+ * Elevation blocking: if an intervening hex is higher than BOTH endpoints, it blocks.
+ * Ridgeline features block if the source is on the lower side.
+ *
+ * @param {number} col1 - source column (offset)
+ * @param {number} row1 - source row (offset)
+ * @param {number} col2 - target column (offset)
+ * @param {number} row2 - target row (offset)
+ * @param {Object} terrainData - { cells: { "col,row": { terrain, elevation, features } } }
+ * @param {Object} losTerrainLookup - { terrain_type: "block"|"partial" } (only blocking types)
+ * @returns {{ result: "CLEAR"|"PARTIAL"|"BLOCKED", detail: string|null }}
+ */
+export function computeLOS(col1, row1, col2, row2, terrainData, losTerrainLookup = {}) {
+  const line = hexLine(col1, row1, col2, row2);
+  if (line.length <= 2) {
+    // Adjacent or same hex — always clear
+    return { result: "CLEAR", detail: null };
+  }
+
+  const sourceCell = terrainData.cells[`${col1},${row1}`];
+  const targetCell = terrainData.cells[`${col2},${row2}`];
+  const sourceElev = sourceCell?.elevation ?? 0;
+  const targetElev = targetCell?.elevation ?? 0;
+  const maxEndpoint = Math.max(sourceElev, targetElev);
+
+  let partialCount = 0;
+  let partialDetail = null;
+
+  // Check intervening hexes (skip first = source, skip last = target)
+  for (let i = 1; i < line.length - 1; i++) {
+    const { col, row } = line[i];
+    const key = `${col},${row}`;
+    const cell = terrainData.cells[key];
+    if (!cell) continue;
+
+    // Elevation blocking: intervening hex higher than both endpoints
+    if (cell.elevation > maxEndpoint) {
+      return { result: "BLOCKED", detail: `elevation ${cell.elevation}m at ${cellCoordFromOffset(col, row)}` };
+    }
+
+    // Ridgeline blocking: if intervening hex has ridgeline and source is lower
+    if (cell.features?.includes("ridgeline") && sourceElev < cell.elevation) {
+      return { result: "BLOCKED", detail: `ridgeline at ${cellCoordFromOffset(col, row)}` };
+    }
+
+    // Terrain-based LOS effects
+    const effect = losTerrainLookup[cell.terrain];
+    if (effect === "block") {
+      return { result: "BLOCKED", detail: `${cell.terrain} at ${cellCoordFromOffset(col, row)}` };
+    }
+    if (effect === "partial") {
+      partialCount++;
+      if (!partialDetail) partialDetail = `${cell.terrain} at ${cellCoordFromOffset(col, row)}`;
+    }
+  }
+
+  if (partialCount > 0) {
+    return { result: "PARTIAL", detail: partialDetail };
+  }
+  return { result: "CLEAR", detail: null };
+}
+
+// Helper: convert offset col,row to a label like "H4" for LOS detail strings.
+// Uses simple A-Z mapping (good for grids up to 26 cols).
+function cellCoordFromOffset(col, row) {
+  const letter = col < 26 ? String.fromCharCode(65 + col) : `${String.fromCharCode(64 + Math.floor(col / 26))}${String.fromCharCode(65 + (col % 26))}`;
+  return `${letter}${row + 1}`;
+}
+
+// ── Enhanced LOS with "look over" canopy logic ──────────────
+// An elevated observer can see OVER intervening blocking terrain
+// if the observer's elevation exceeds the terrain's elevation + canopy.
+// But they still can't see INTO the target hex if it's blocking terrain
+// (the target is hiding under the canopy).
+//
+// canopyHeights: { terrain_type: height_meters } — from detectionRanges.js
+
+/**
+ * Compute enhanced line of sight that accounts for canopy heights.
+ * An observer at high elevation can see over forests/urban areas to
+ * hexes beyond, but cannot see units hiding inside blocking terrain.
+ *
+ * @param {number} col1 - source column (offset)
+ * @param {number} row1 - source row (offset)
+ * @param {number} col2 - target column (offset)
+ * @param {number} row2 - target row (offset)
+ * @param {Object} terrainData - { cells: { "col,row": { terrain, elevation, features } } }
+ * @param {Object} losTerrainLookup - { terrain_type: "block"|"partial" }
+ * @param {Object} canopyHeights - { terrain_type: height_meters }
+ * @returns {{ result: "CLEAR"|"PARTIAL"|"BLOCKED", detail: string|null }}
+ */
+export function computeEnhancedLOS(col1, row1, col2, row2, terrainData, losTerrainLookup = {}, canopyHeights = {}) {
+  const line = hexLine(col1, row1, col2, row2);
+  if (line.length <= 2) {
+    // Adjacent or same hex — always clear
+    return { result: "CLEAR", detail: null };
+  }
+
+  const sourceCell = terrainData.cells[`${col1},${row1}`];
+  const targetCell = terrainData.cells[`${col2},${row2}`];
+  const sourceElev = sourceCell?.elevation ?? 0;
+  const targetElev = targetCell?.elevation ?? 0;
+
+  let partialCount = 0;
+  let partialDetail = null;
+
+  // Check if target is IN blocking terrain (can't be identified even if observer is high)
+  const targetTerrain = targetCell?.terrain || "open_ground";
+  const targetLosEffect = losTerrainLookup[targetTerrain];
+  if (targetLosEffect === "block") {
+    // Observer can detect the target hex has activity (Contact tier handled by caller)
+    // but LOS is PARTIAL at best — you can see the canopy, not what's under it
+    // Exception: if observer is in the same terrain type or adjacent, normal LOS applies
+    const dist = line.length - 1;
+    if (dist > 1) {
+      partialCount++;
+      if (!partialDetail) partialDetail = `target in ${targetTerrain.replace(/_/g, " ")}`;
+    }
+  }
+
+  // Check intervening hexes (skip first = source, skip last = target)
+  for (let i = 1; i < line.length - 1; i++) {
+    const { col, row } = line[i];
+    const key = `${col},${row}`;
+    const cell = terrainData.cells[key];
+    if (!cell) continue;
+
+    const cellElev = cell.elevation ?? 0;
+    const terrain = cell.terrain || "open_ground";
+    const canopy = canopyHeights[terrain] || 0;
+    // Effective blocking height = ground elevation + canopy/structure height
+    const effectiveHeight = cellElev + canopy;
+
+    // "Look over" logic: observer can see over this hex if their elevation
+    // exceeds the effective height of the intervening hex
+    const observerCanLookOver = sourceElev > effectiveHeight;
+
+    // Standard elevation blocking: intervening hex higher than both endpoints
+    const maxEndpoint = Math.max(sourceElev, targetElev);
+    if (cellElev > maxEndpoint) {
+      return { result: "BLOCKED", detail: `elevation ${cellElev}m at ${cellCoordFromOffset(col, row)}` };
+    }
+
+    // Ridgeline blocking: source is lower than the ridge
+    if (cell.features?.includes("ridgeline") && sourceElev < cellElev) {
+      return { result: "BLOCKED", detail: `ridgeline at ${cellCoordFromOffset(col, row)}` };
+    }
+
+    // Terrain-based LOS effects
+    const effect = losTerrainLookup[terrain];
+    if (effect === "block") {
+      if (observerCanLookOver) {
+        // High observer can see over but with degraded quality
+        partialCount++;
+        if (!partialDetail) partialDetail = `looking over ${terrain.replace(/_/g, " ")} at ${cellCoordFromOffset(col, row)}`;
+      } else {
+        return { result: "BLOCKED", detail: `${terrain.replace(/_/g, " ")} at ${cellCoordFromOffset(col, row)}` };
+      }
+    }
+    if (effect === "partial") {
+      partialCount++;
+      if (!partialDetail) partialDetail = `${terrain.replace(/_/g, " ")} at ${cellCoordFromOffset(col, row)}`;
+    }
+  }
+
+  if (partialCount > 0) {
+    return { result: "PARTIAL", detail: partialDetail };
+  }
+  return { result: "CLEAR", detail: null };
+}
+
 // Export constants for external use
 export { SQRT3, SQRT3_2 };
