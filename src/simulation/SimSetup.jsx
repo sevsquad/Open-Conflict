@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { loadGameState, createGame, getProviders } from "./orchestrator.js";
 import { getQuickstartPreset } from "./presets.js";
+import { getPresetMap } from "./preset-maps/index.js";
 import { getTestFixture } from "../testFixture.js";
 import SimSetupMapSelect from "./SimSetupMapSelect.jsx";
 import SimSetupConfigure from "./SimSetupConfigure.jsx";
@@ -85,10 +86,12 @@ export default function SimSetup({ onBack, onStart, initialTerrainData, preset }
     setSelectedMap("test-fixture");
   }, []);
 
-  // Load a saved game directly
-  const handleLoadGame = useCallback(async (file) => {
+  // Load a saved game directly — supports folder-based and legacy
+  const handleLoadGame = useCallback(async (file, folder) => {
     try {
-      const gs = await loadGameState(file);
+      const gs = folder
+        ? await loadGameState(folder, { folder: true })
+        : await loadGameState(file);
       onStart(gs, null);
     } catch (e) {
       alert("Failed to load game: " + e.message);
@@ -96,32 +99,56 @@ export default function SimSetup({ onBack, onStart, initialTerrainData, preset }
   }, [onStart]);
 
   // Quick-start: load a map by preset requirement, then auto-apply the preset in configure
-  const handleLoadPreset = useCallback(async (presetId, requiredMap) => {
+  // mapType: "test-fixture" = built-in test grid, "saves" = from saves/ dir, "built-in" = generated from preset-maps/
+  const handleLoadPreset = useCallback(async (presetId, requiredMap, mapType) => {
     setPendingPresetId(presetId);
-    if (requiredMap === "test-fixture") {
+
+    if (mapType === "test-fixture" || requiredMap === "test-fixture") {
       const fixture = getTestFixture();
       setTerrainData(fixture);
       setSelectedMap("test-fixture");
       setSetupPhase("configure");
-    } else {
-      // Find the matching saved map file
-      const match = maps.find(m => m.name.includes(requiredMap));
-      if (!match) {
-        alert(`Preset requires map "${requiredMap}" which is not available. Save the map first.`);
-        return;
-      }
+      return;
+    }
+
+    if (mapType === "built-in") {
+      // Load from preset map generator (checks server cache first, then generates)
       setLoadingMap(true);
       try {
-        const resp = await fetch(`/api/load?file=${encodeURIComponent(match.name)}`);
-        const data = await resp.json();
-        setTerrainData(data.map || data);
-        setSelectedMap(match.name);
+        const mapData = await getPresetMap(presetId);
+        if (!mapData) {
+          alert(`Preset map generator for "${presetId}" is not yet available.`);
+          setLoadingMap(false);
+          return;
+        }
+        setTerrainData(mapData);
+        setSelectedMap(`preset:${presetId}`);
         setSetupPhase("configure");
       } catch (e) {
-        console.error("Failed to load terrain for preset:", e);
+        console.error("Failed to load preset map:", e);
+        alert(`Failed to generate preset map: ${e.message}`);
       }
       setLoadingMap(false);
+      return;
     }
+
+    // mapType === "saves" — find matching saved map file
+    const match = maps.find(m => m.name.includes(requiredMap));
+    if (!match) {
+      alert(`Preset requires map "${requiredMap}" which is not available. Save the map first.`);
+      return;
+    }
+    setLoadingMap(true);
+    try {
+      const resp = await fetch(`/api/load?file=${encodeURIComponent(match.name)}`);
+      const data = await resp.json();
+      setTerrainData(data.map || data);
+      setSelectedMap(match.name);
+      setSetupPhase("configure");
+    } catch (e) {
+      console.error("Failed to load terrain for preset:", e);
+    }
+    setLoadingMap(false);
   }, [maps]);
 
   // Transition to configure phase

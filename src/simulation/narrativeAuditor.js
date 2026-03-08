@@ -44,6 +44,43 @@ function escapeRegex(str) {
 }
 
 /**
+ * Deterministic keyword scrub fallback — used when the LLM audit fails.
+ * Replaces hard keyword matches and forbidden hex labels with "[REDACTED]".
+ * This is cruder than the LLM rewrite but guarantees no hard leaks pass through.
+ *
+ * Returns corrections object (same shape as LLM output), or null if no flags.
+ */
+function deterministicScrub(fields, fieldFlags, hardKeywords, forbiddenUnits) {
+  const corrections = {};
+  let hasCorrections = false;
+
+  for (const { key, text } of fields) {
+    const flags = fieldFlags[key] || [];
+    // Only scrub if there are hard flags or hex flags (soft flags are likely innocent)
+    const dangerousFlags = flags.filter(f => f.tier === "hard" || f.tier === "hex");
+    if (dangerousFlags.length === 0 || !text) {
+      corrections[key] = null;
+      continue;
+    }
+
+    let scrubbed = text;
+    for (const f of dangerousFlags) {
+      const regex = new RegExp(`\\b${escapeRegex(f.word)}(?:'?s)?\\b`, "gi");
+      scrubbed = scrubbed.replace(regex, "[REDACTED]");
+    }
+
+    if (scrubbed !== text) {
+      corrections[key] = scrubbed;
+      hasCorrections = true;
+    } else {
+      corrections[key] = null;
+    }
+  }
+
+  return hasCorrections ? corrections : null;
+}
+
+/**
  * Pre-scan a text field for flagged keywords and forbidden hex positions.
  * Returns array of { word, tier: 'hard'|'soft'|'hex', count, unit? }
  *
@@ -68,7 +105,7 @@ function preScanField(text, hardKeywords, softKeywords, forbiddenUnits) {
 
   for (const u of forbiddenUnits) {
     const hexLabel = positionToLabel(u.position);
-    if (!hexLabel) continue;
+    if (hexLabel == null) continue;
     const regex = new RegExp(`\\b${escapeRegex(hexLabel)}\\b`, "gi");
     if (regex.test(text)) {
       flags.push({ word: hexLabel, tier: "hex", count: 1, unit: u.name });
@@ -86,8 +123,9 @@ function preScanField(text, hardKeywords, softKeywords, forbiddenUnits) {
  * references to units the actor cannot see. Returns corrected text
  * fields or null if clean.
  *
- * Fails open — if the audit call errors, returns null (no corrections)
- * so adjudication is never blocked by the auditor.
+ * Fails closed — if the LLM audit call errors or parsing fails, falls back
+ * to deterministic keyword scrubbing using pre-scan results. This ensures
+ * hard keyword leaks and forbidden hex positions are always removed.
  */
 export async function auditActorNarrative(masterAdjudication, actorId, visibilityState, gameState, llmConfig, abortSignal = null) {
   const perspectives = masterAdjudication?.adjudication?.actor_perspectives;
@@ -160,6 +198,14 @@ export async function auditActorNarrative(masterAdjudication, actorId, visibilit
     probability_assessment: preScanField(probabilityAssessment, hardKeywords, softKeywords, forbiddenUnits),
   };
 
+  // Field list for deterministic scrub fallback
+  const scrubFields = [
+    { key: "narrative", text: narrative },
+    { key: "known_enemy_actions", text: knownEnemyActions },
+    { key: "intel_assessment", text: intelAssessment },
+    { key: "probability_assessment", text: probabilityAssessment },
+  ];
+
   // Build known enemy descriptions for the prompt (with detection tier)
   const knownEnemyDescriptions = visibleEnemies.map(u => {
     const idSet = actorVis?.detectedUnits;
@@ -178,8 +224,8 @@ export async function auditActorNarrative(masterAdjudication, actorId, visibilit
 
   const auditModel = getAuditModel(llmConfig.provider) || llmConfig.model;
 
-  // M9: 10-minute timeout — LLMs can be very slow, especially for auditing multiple actors
-  const AUDIT_TIMEOUT_MS = 600_000;
+  // Audit calls use fast/small models (haiku-class) — 90s is generous
+  const AUDIT_TIMEOUT_MS = 90_000;
 
   try {
     const resp = await fetchWithTimeout("/api/llm/adjudicate", {
@@ -223,16 +269,16 @@ export async function auditActorNarrative(masterAdjudication, actorId, visibilit
     };
 
     if (!data.ok) {
-      logEntry.result = "API_ERROR";
+      logEntry.result = "API_ERROR_SCRUBBED";
       saveAuditLog(logEntry);
-      console.warn(`[NarrativeAuditor] Audit failed for ${actorId}:`, data.error);
-      return null;
+      console.warn(`[NarrativeAuditor] Audit failed for ${actorId}, falling back to deterministic scrub:`, data.error);
+      return deterministicScrub(scrubFields, fieldFlags, hardKeywords, forbiddenUnits);
     }
 
     const content = (data.content || "").trim();
 
     // Clean result — no leaks found
-    if (content === "CLEAN" || content.startsWith("CLEAN")) {
+    if (content === "CLEAN") {
       logEntry.result = "CLEAN";
       saveAuditLog(logEntry);
       return null;
@@ -262,16 +308,16 @@ export async function auditActorNarrative(masterAdjudication, actorId, visibilit
       saveAuditLog(logEntry);
       return corrections;
     } catch (e) {
-      logEntry.result = "PARSE_ERROR";
+      logEntry.result = "PARSE_ERROR_SCRUBBED";
       logEntry.parseError = e.message;
       saveAuditLog(logEntry);
-      console.warn(`[NarrativeAuditor] Failed to parse audit response for ${actorId}:`, e.message);
-      return null;
+      console.warn(`[NarrativeAuditor] Failed to parse audit response for ${actorId}, falling back to deterministic scrub:`, e.message);
+      return deterministicScrub(scrubFields, fieldFlags, hardKeywords, forbiddenUnits);
     }
   } catch (e) {
     if (e.name === "AbortError") return null;
-    console.warn(`[NarrativeAuditor] Network error auditing ${actorId}:`, e.message);
-    return null;
+    console.warn(`[NarrativeAuditor] Network error auditing ${actorId}, falling back to deterministic scrub:`, e.message);
+    return deterministicScrub(scrubFields, fieldFlags, hardKeywords, forbiddenUnits);
   }
 }
 
@@ -290,10 +336,10 @@ export function applyAuditCorrections(masterAdjudication, actorId, corrections) 
   const perspective = masterAdjudication?.adjudication?.actor_perspectives?.[actorId];
   if (!perspective) return;
 
-  if (corrections.narrative) perspective.narrative = corrections.narrative;
-  if (corrections.known_enemy_actions) perspective.known_enemy_actions = corrections.known_enemy_actions;
-  if (corrections.intel_assessment) perspective.intel_assessment = corrections.intel_assessment;
-  if (corrections.probability_assessment) {
+  if (corrections.narrative != null) perspective.narrative = corrections.narrative;
+  if (corrections.known_enemy_actions != null) perspective.known_enemy_actions = corrections.known_enemy_actions;
+  if (corrections.intel_assessment != null) perspective.intel_assessment = corrections.intel_assessment;
+  if (corrections.probability_assessment != null) {
     perspective._clean_probability_assessment = corrections.probability_assessment;
   }
 }

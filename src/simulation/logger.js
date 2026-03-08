@@ -27,14 +27,18 @@ export function createLogger() {
 
   /**
    * Flush accumulated log entries to the server.
+   * @param {string} gameId — game identifier
+   * @param {string} [folder] — game folder name (if folder-based storage)
    */
-  async function flush(gameId) {
+  async function flush(gameId, folder) {
     if (entries.length === 0) return;
     try {
+      const body = { gameId, entries: [...entries] };
+      if (folder) body.folder = folder;
       await fetch("/api/game/log", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ gameId, entries: [...entries] })
+        body: JSON.stringify(body)
       });
       clear(); // Free memory after successful flush
     } catch (e) {

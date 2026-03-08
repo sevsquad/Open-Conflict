@@ -129,6 +129,9 @@ dist
 .yarn/install-state.gz
 .pnp.*
 saves/
+games/
 netlogs/
 parsernetlog/
 auditlogs/
+data/
+compare_paris.cjs

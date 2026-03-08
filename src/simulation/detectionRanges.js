@@ -181,6 +181,7 @@ export const POSTURE_CONCEALMENT = {
 
 export const TERRAIN_CONCEALMENT = {
   open_ground:      1.3,   // Nothing to hide behind
+  grassland:        1.1,   // Low grass, minimal concealment
   farmland:         1.1,   // Low crops, sparse hedgerows
   light_veg:        1.1,   // Scrubland, scattered brush
   light_urban:      0.5,

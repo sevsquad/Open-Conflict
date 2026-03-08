@@ -1405,6 +1405,30 @@ export function formatOrderBundles(bundles, actorIntents = {}, actors = [], fort
     }
   }
 
+  // Combined fire detection: find units targeting the same hex with combat actions.
+  // Groups by target hex within each actor — co-attackers get synergy bonuses.
+  const combatOrderIds = new Set(["ATTACK", "SUPPORT_FIRE", "FIRE_MISSION", "SHORE_BOMBARDMENT"]);
+  const targetGroups = {}; // "actorId:hexKey" → [bundle, ...]
+  for (const b of bundles) {
+    if (!b.actionOrder || !combatOrderIds.has(b.actionOrder.type)) continue;
+    const targetHex = b.actionOrder.targetHex;
+    if (!targetHex) continue;
+    const key = `${b.actor}:${targetHex}`;
+    if (!targetGroups[key]) targetGroups[key] = [];
+    targetGroups[key].push(b);
+  }
+  const combinedFireEntries = Object.entries(targetGroups).filter(([, group]) => group.length >= 2);
+  if (combinedFireEntries.length > 0) {
+    lines.push("=== COMBINED FIRE ===");
+    for (const [key, group] of combinedFireEntries) {
+      const actorName = actors.find(a => a.id === group[0].actor)?.name || group[0].actor;
+      const targetHex = key.split(":")[1];
+      const unitNames = group.map(b => b.unitName).join(", ");
+      lines.push(`${actorName}: [${unitNames}] targeting ${positionToLabel(targetHex)} — COMBINED FIRE (+15% effectiveness for coordinated attack)`);
+    }
+    lines.push("");
+  }
+
   return lines.join("\n");
 }
 

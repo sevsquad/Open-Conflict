@@ -24,8 +24,31 @@ export default function Simulation({ onBack, initialData, preset }) {
     } else if (gs.terrain?._ref === "test-fixture") {
       setTerrainData(getTestFixture());
       setPhase("game");
+    } else if (gs.game?.folder) {
+      // Load terrain from game's own folder (new folder-based storage)
+      fetch(`/api/game/load-terrain?folder=${encodeURIComponent(gs.game.folder)}`)
+        .then(r => {
+          if (!r.ok) throw new Error(`Terrain not found in game folder: ${gs.game.folder}`);
+          return r.json();
+        })
+        .then(data => {
+          setTerrainData(data.map || data);
+          setPhase("game");
+        })
+        .catch(err => {
+          // Fallback: try loading from saves/ (terrain._ref) for compatibility
+          if (gs.terrain?._ref) {
+            fetch(`/api/load?file=${encodeURIComponent(gs.terrain._ref)}`)
+              .then(r => r.ok ? r.json() : Promise.reject(new Error("Not in saves either")))
+              .then(data => { setTerrainData(data.map || data); setPhase("game"); })
+              .catch(err2 => { setTerrainError(err2.message); setPhase("game"); });
+          } else {
+            setTerrainError(err.message);
+            setPhase("game");
+          }
+        });
     } else if (gs.terrain?._ref) {
-      // Load terrain from saved reference
+      // Legacy: load terrain from saves/ by filename reference
       fetch(`/api/load?file=${encodeURIComponent(gs.terrain._ref)}`)
         .then(r => {
           if (!r.ok) throw new Error(`Terrain file not found: ${gs.terrain._ref}`);

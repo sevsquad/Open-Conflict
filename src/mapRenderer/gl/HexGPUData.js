@@ -9,7 +9,7 @@ import { INSTANCE_FLOATS } from "./HexGeometry.js";
 // Terrain type → index mapping (must match u_terrainColors order in shader)
 const TERRAIN_TYPES = [
   "deep_water", "coastal_water", "lake", "river",
-  "wetland", "open_ground", "light_veg", "farmland",
+  "wetland", "open_ground", "light_veg", "grassland", "farmland",
   "forest", "dense_forest", "highland", "mountain_forest",
   "mountain", "peak", "desert", "ice",
   "light_urban", "dense_urban",

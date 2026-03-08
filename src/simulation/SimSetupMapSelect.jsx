@@ -48,7 +48,7 @@ export default function SimSetupMapSelect({ maps, loadingMap, selectedMap, terra
           <div style={{ fontSize: typography.body.sm, color: colors.text.secondary, marginBottom: space[2] }}>Saved Games:</div>
           <div style={{ display: "flex", gap: space[2], flexWrap: "wrap" }}>
             {savedGames.map(g => (
-              <Button key={g.file} variant="secondary" onClick={() => onLoadGame(g.file)} size="sm"
+              <Button key={g.file} variant="secondary" onClick={() => onLoadGame(g.file, g.folder)} size="sm"
                 style={{ display: "flex", alignItems: "center", gap: space[1] }}
               >
                 {g.isAutosave && (
@@ -87,20 +87,55 @@ export default function SimSetupMapSelect({ maps, loadingMap, selectedMap, terra
             placeholder="Select a terrain map..."
           />
 
-          {/* Quick-start scenarios — load map + preset in one click */}
+          {/* Quick-start scenarios — scrollable list with descriptions */}
           <div style={{ marginTop: space[3], borderTop: `1px solid ${colors.border.subtle}`, paddingTop: space[3] }}>
             <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: space[2], textTransform: "uppercase", letterSpacing: 1 }}>
               Quick Start Scenarios
             </div>
-            <Select
-              value=""
-              onChange={v => {
-                const p = getAllPresets().find(pr => pr.id === v);
-                if (p) onLoadPreset(p.id, p.requiredMap);
-              }}
-              options={getAllPresets().map(p => ({ value: p.id, label: `${p.name}${p.era ? ` (${p.era.toUpperCase()})` : ""}` }))}
-              placeholder="Select a scenario..."
-            />
+            <div style={{
+              maxHeight: 220, overflowY: "auto", display: "flex", flexDirection: "column", gap: space[1],
+              paddingRight: space[1],
+            }}>
+              {getAllPresets().map(p => (
+                <button
+                  key={p.id}
+                  onClick={() => onLoadPreset(p.id, p.requiredMap, p.mapType)}
+                  style={{
+                    background: colors.bg.surface, border: `1px solid ${colors.border.subtle}`,
+                    borderRadius: radius.md, padding: `${space[2]}px ${space[3]}px`,
+                    cursor: "pointer", textAlign: "left", color: colors.text.primary,
+                    fontFamily: typography.fontFamily, transition: "border-color 0.15s",
+                    display: "flex", flexDirection: "column", gap: 2,
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.borderColor = colors.accent.amber}
+                  onMouseLeave={e => e.currentTarget.style.borderColor = colors.border.subtle}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: space[2] }}>
+                    <span style={{ fontSize: typography.body.sm, fontWeight: typography.weight.bold }}>{p.name}</span>
+                    {p.era && (
+                      <Badge color={
+                        p.era === "ww2" ? colors.accent.amber :
+                        p.era === "cold_war" ? colors.accent.cyan :
+                        p.era === "modern" ? colors.accent.green :
+                        colors.accent.blue
+                      } style={{ fontSize: 9, padding: "1px 5px" }}>
+                        {p.era.toUpperCase().replace("_", " ")}
+                      </Badge>
+                    )}
+                    {p.scale && (
+                      <Badge color={colors.accent.blue} style={{ fontSize: 9, padding: "1px 5px" }}>
+                        {p.scale.replace("_", " ").toUpperCase()}
+                      </Badge>
+                    )}
+                  </div>
+                  {p.description && (
+                    <div style={{ fontSize: typography.body.xs, color: colors.text.muted, lineHeight: 1.4 }}>
+                      {p.description}
+                    </div>
+                  )}
+                </button>
+              ))}
+            </div>
           </div>
 
           {loadingMap && (

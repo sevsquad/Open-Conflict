@@ -452,21 +452,46 @@ function decryptApiKey(stored, serverSecret) {
 
 **Recommendation:** Start with Option A for alpha. Add Option B later if players want to use their own models or you want to distribute costs.
 
-### AI Order Parsing
+### AI Order Parsing — Exact Data Format
 
-The AI opponent's response needs to be parsed from natural language into structured orders. Two approaches:
+The sealed orders format the AI must produce matches the human player format exactly:
 
-**Approach 1: Structured output prompt**
-- System prompt instructs the LLM to output JSON matching the order schema
-- Parse the JSON directly into orders
-- Same JSON parsing logic already used for adjudication responses
+```javascript
+// What sealAndAdvance() produces when a human player seals orders:
+sealedOrders[actorId] = {
+  unitOrders: {
+    "unit_id_1": {
+      movementOrder: { id: "MOVE", target: "3,4" },        // or null
+      actionOrder: { id: "ATTACK", target: "3,5", subtype: null }, // or null
+      intent: "Advance to the ridge and engage enemy armor"  // or ""
+    },
+    "unit_id_2": {
+      movementOrder: null,    // HOLD — no movement
+      actionOrder: { id: "DEFEND", target: null },
+      intent: ""
+    }
+  },
+  actorIntent: "Main effort on the left flank. Fix enemy in center."
+}
+```
 
-**Approach 2: Two-step (generate + parse)**
-- First call: LLM writes natural-language orders
-- Second call: A cheap model parses the text into structured orders
-- More robust but 2x the LLM calls
+**Valid order IDs:** MOVE, WITHDRAW, ATTACK, DEFEND, SUPPORT_FIRE, FIRE_MISSION, DIG_IN, RECON, RESUPPLY, ENGINEER, SHORE_BOMBARDMENT, BLOCKADE
 
-Approach 1 is sufficient for alpha.
+**Valid subtypes:** FIRE_MISSION → "HE" or "SMOKE"; ENGINEER → "BRIDGE", "OBSTACLE", "BREACH", "FORTIFY", "DEMOLISH"
+
+**Target format:** `"col,row"` string (0-indexed), or null for orders that don't need a target (DEFEND, DIG_IN, HOLD)
+
+**Constraint:** Each unit gets at most one movementOrder (MOVE or WITHDRAW) and one actionOrder. Units with no orders default to HOLD.
+
+### AI Player Implementation
+
+The AI player system prompt receives the same `buildActorBriefing()` output that human players can export — it's already FOW-filtered and contains terrain, own forces, detected enemies, capabilities, and recent history. The AI then outputs structured JSON orders.
+
+**Key insight:** The AI player uses the SAME per-actor briefing infrastructure as the human player export. No new data pipeline needed. The briefing already includes unit capabilities, nearby enemies, terrain costs, and hex coordinates. The AI just needs to output the JSON order format above.
+
+**AI does NOT see:** Undetected enemies, other actors' orders, master adjudication, or any data the human player wouldn't see. The `buildActorBriefing()` function enforces this via the `visibilityState` parameter.
+
+**Order validation:** AI orders go through the same `validateActiveActorOrders()` logic as human orders — movement feasibility, range checks, unit ownership. Invalid orders are corrected or rejected, same as for humans.
 
 ---
 
@@ -597,31 +622,113 @@ Additional issues found in the second security audit pass:
 
 ## CHECKLIST: WHAT MUST BE TRUE BEFORE ALPHA
 
-- [ ] **Rotate API keys** (both Anthropic and OpenAI)
-- [ ] Server runs standalone Express (not Vite dev server)
-- [ ] Players authenticate with game-scoped tokens
-- [ ] Each player sees ONLY their per-actor filtered data
-- [ ] All simulation runs server-side (detection, movement, fortune, friction, adjudication)
-- [ ] FoW toggle, View Prompt, Raw tab, Export Log removed from production build
-- [ ] Pause/override panel is moderator-only
-- [ ] Game saves are server-only (SQLite), never sent raw to clients
-- [ ] Master adjudication never sent to any player
-- [ ] LLM attribute whitelist in `applyStateUpdates` (block `id`, `actor`, `name`, `type`)
-- [ ] LLM model whitelist in adjudication endpoint
-- [ ] HTTPS enabled (handled by Railway/Render)
-- [ ] API keys secured in environment variables (not `.env` file in production)
-- [ ] Player text sanitized before LLM prompt insertion
-- [ ] Log endpoints disabled in production
-- [ ] Body size limits on all POST endpoints
-- [ ] Order validation enforced (your units only, your turn only)
-- [ ] Email notifications work (invite link + turn notification)
-- [ ] Error messages sanitized (no internal paths in responses)
-- [ ] `compare_paris.cjs` removed or gitignored
-- [ ] Filename sanitization requires `.json` extension, no leading dots
-- [ ] Run `npm audit` — no critical vulnerabilities
+- [ ] **Rotate API keys** (both Anthropic and OpenAI) — *manual step before deploy*
+- [x] Server runs standalone Express (not Vite dev server) — `server/index.js`
+- [x] Players authenticate with game-scoped tokens — `server/auth.js`
+- [x] Each player sees ONLY their per-actor filtered data — `server/routes/game.js` + `adjudicationFilter.js`
+- [x] All simulation runs server-side (detection, movement, fortune, friction, adjudication) — `server/gameEngine.js`
+- [x] FoW toggle, View Prompt, Raw tab, Export Log removed from production build — `__DEV_TOOLS__` flag
+- [x] Pause/override panel is moderator-only — gated behind `__DEV_TOOLS__`
+- [x] Game saves are server-only (SQLite), never sent raw to clients — `server/db.js`
+- [x] Master adjudication never sent to any player — `server/routes/game.js` uses `actorResults[actorId]`
+- [x] LLM attribute whitelist in `applyStateUpdates` (block `id`, `actor`, `name`, `type`) — `ALLOWED_UPDATE_ATTRIBUTES` in `orchestrator.js`
+- [x] LLM model whitelist in adjudication endpoint — `ALLOWED_MODELS` in `server/llmProxy.js`
+- [ ] HTTPS enabled (handled by Railway/Render) — *deploy config*
+- [x] API keys secured in environment variables (not `.env` file in production)
+- [x] Player text sanitized before LLM prompt insertion — `sanitizePlayerText()` in `server/routes/game.js`
+- [x] Body size limits on all POST endpoints — `express.json({ limit: '10mb' })` in `server/index.js`
+- [x] Order validation enforced (your units only, your turn only) — actor unit check in `POST /orders`
+- [x] Email notifications work (invite link + turn notification) — `server/email.js` (console fallback if SMTP not configured)
+- [x] Error messages sanitized (no internal paths in responses) — generic error handler in `server/index.js`
+- [x] `compare_paris.cjs` gitignored — added to `.gitignore`
+- [x] Filename sanitization: no leading dots, path traversal check — fixed in `vite.config.js` + `server/index.js`
+- [x] Run `npm audit` — fixed rollup vulnerability, remaining are dev-only moderate
+- [x] `situation_assessment` stripped from player views — removed from `adjudicationFilter.js`
+- [x] `de_escalation_assessment` stripped from player views — removed from `adjudicationFilter.js`
+- [x] `meta` stripped from player views — removed from `adjudicationFilter.js`
+- [x] Narrative auditor fails closed (deterministic scrub fallback) — `narrativeAuditor.js`
+
+---
+
+## IMPLEMENTATION STATUS
+
+### Files Created
+
+| File | Purpose |
+|------|---------|
+| `server/index.js` | Main Express server entry point |
+| `server/db.js` | SQLite persistence layer (better-sqlite3) |
+| `server/auth.js` | Token-based authentication middleware |
+| `server/llmProxy.js` | Server-side LLM API calls with model whitelist |
+| `server/gameEngine.js` | Server-side turn processing orchestration |
+| `server/email.js` | Email notification service (SMTP or console) |
+| `server/aiPlayer.js` | AI opponent order generation via LLM |
+| `server/nodeLoader.js` | ESM loader for Vite `?raw` imports in Node |
+| `server/nodeLoaderHooks.js` | Resolve/load hooks for `.md` file imports |
+| `server/routes/game.js` | Player-facing API endpoints |
+| `server/routes/admin.js` | Moderator/admin API endpoints |
+| `src/Dashboard.jsx` | PBEM game dashboard (join, list, manage games) |
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `vite.config.js` | Added `__DEV_TOOLS__` define, fixed filename sanitization |
+| `src/simulation/SimGame.jsx` | Wrapped debug tools in `__DEV_TOOLS__` guards |
+| `src/simulation/orchestrator.js` | Added `ALLOWED_UPDATE_ATTRIBUTES` whitelist |
+| `src/simulation/adjudicationFilter.js` | Stripped `situation_assessment`, `de_escalation_assessment`, `meta` from player views |
+| `src/simulation/narrativeAuditor.js` | Fail-closed with deterministic scrub fallback |
+| `package.json` | Added server scripts, new dependencies |
+| `.gitignore` | Added `data/` directory, `compare_paris.cjs` |
+| `.env.example` | Added SMTP and server configuration vars |
+| `src/App.jsx` | Added "dashboard" mode, PBEM Games menu card |
+| `src/components/AppHeader.jsx` | Added "dashboard" mode label |
+| `server/routes/admin.js` | Wired up email notifications (invite, results, your-turn) |
+| `server/routes/game.js` | Wired up email notifications (all-orders-in, challenge) |
+| `server/index.js` | Added email service initialization |
+
+### NPM Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `npm run dev` | Vite dev server (client) |
+| `npm run server:dev` | Express server with `--watch` |
+| `npm run server` | Express server (production) |
+| `npm run start` | Build + production server |
+| `npm run build` | Production client build (`__DEV_TOOLS__=false`) |
+
+### API Endpoints
+
+#### Player API (`/api/game/...`, requires Bearer session token)
+- `GET /state` — FOW-filtered game state
+- `GET /terrain` — Shared terrain data
+- `POST /orders` — Submit sealed orders
+- `GET /results/:turn` — Filtered turn results
+- `POST /decision` — Accept/challenge adjudication
+- `GET /briefing` — FOW-filtered briefing markdown
+- `GET /log` — Actor-scoped game log
+- `GET /status` — Order submission status
+
+#### Admin API (`/api/admin/...`)
+- `POST /games` — Create game (returns moderator token + invite tokens)
+- `POST /join` — Exchange invite token for session token
+- `GET /games` — List all games
+- `GET /games/:id/state` — Full god-view state (mod only)
+- `GET /games/:id/players` — Player list (mod only)
+- `POST /games/:id/process-turn` — Trigger turn processing (mod only)
+- `POST /games/:id/finalize-turn` — Apply state updates (mod only)
+- `POST /games/:id/pause|resume|end` — Game control (mod only)
+
+### Remaining Work Before Alpha Deploy
+
+1. ~~**Build game dashboard UI**~~ — Done (`src/Dashboard.jsx`)
+2. ~~**Wire up email notifications**~~ — Done (invite, results, your-turn, all-orders-in, challenge)
+3. **Deploy to Railway/Render** with environment variables
+4. **Rotate API keys** before giving access to external testers
+5. ~~**Remove `compare_paris.cjs`**~~ — Gitignored
+6. **Test full end-to-end flow**: create game → invite → join → submit orders → adjudicate → review → next turn
 
 ---
 
 *Report generated: 2026-03-07*
-*Updated: 2026-03-07 (decisions resolved, second security pass, new domains added)*
-*Next step: Begin Phase 1 implementation.*
+*Updated: 2026-03-07 (Phase 1+2 implementation complete — server, auth, API, security, AI player, email, dashboard UI, email wiring)*

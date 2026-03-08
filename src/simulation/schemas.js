@@ -620,7 +620,7 @@ export function initDiplomacy(actors, defaultStatus = "hostile") {
   const diplomacy = {};
   for (let i = 0; i < actors.length; i++) {
     for (let j = i + 1; j < actors.length; j++) {
-      const key = `${actors[i].id}-${actors[j].id}`;
+      const key = [actors[i].id, actors[j].id].sort().join("||");
       diplomacy[key] = {
         status: defaultStatus,
         channels: ["none"],
@@ -927,7 +927,7 @@ export function progressEnvironment(env, turnDurationMs) {
 /**
  * Create a fresh game state object.
  */
-export function createGameState({ scenario, terrainRef, terrainSummary, llmConfig }) {
+export function createGameState({ scenario, terrainRef, terrainSummary, llmConfig, folder }) {
   const now = new Date().toISOString();
   const id = `game_${now.replace(/[-:T]/g, "").slice(0, 14)}`;
   const scaleTier = SCALE_TIERS[scenario.scale] || SCALE_TIERS.grand_tactical;
@@ -946,6 +946,7 @@ export function createGameState({ scenario, terrainRef, terrainSummary, llmConfi
     game: {
       id,
       name: scenario.title,
+      folder: folder || null, // game folder name in games/ — null for legacy saves
       createdAt: now,
       turn: 1,
       phase: "planning",

@@ -5,6 +5,7 @@ const MODE_META = {
   parser: { label: "Terrain Parser", accent: colors.accent.green },
   viewer: { label: "Map Viewer", accent: colors.accent.blue },
   simulation: { label: "Simulation", accent: colors.accent.amber },
+  dashboard: { label: "PBEM Games", accent: colors.accent.purple },
   worldscan: { label: "World Scanner", accent: colors.accent.cyan },
 };
 

@@ -1,8 +1,8 @@
 import { useReducer, useEffect, useCallback, useState, useRef, useMemo } from "react";
-import { colors, typography, radius, animation, space } from "../theme.js";
+import { colors, typography, radius, animation, space, shadows } from "../theme.js";
 import { Button, Badge } from "../components/ui.jsx";
 import { ACTOR_COLORS } from "../terrainColors.js";
-import { createGame, getProviders } from "./orchestrator.js";
+import { createGame, createGameFolder, getProviders } from "./orchestrator.js";
 import { cellToPositionString, parseUnitPosition } from "../mapRenderer/overlays/UnitOverlay.js";
 import { getPresetsForMap, getPresetById } from "./presets.js";
 import { SCALE_TIERS, getDefaultEchelon, getEchelonsForScale, DEFAULT_ENVIRONMENT, getUnitFieldsForScale } from "./schemas.js";
@@ -308,6 +308,9 @@ function setupReducer(state, action) {
 export default function SimSetupConfigure({ terrainData, selectedMap, onBack, onStart, initialPresetId }) {
   const [state, dispatch] = useReducer(setupReducer, createInitialState(terrainData, selectedMap));
   const [providers, setProviders] = useState([]);
+  const [showNameModal, setShowNameModal] = useState(false);
+  const [gameName, setGameName] = useState("");
+  const [creating, setCreating] = useState(false);
 
   // Auto-apply preset if launched from quick-start
   const presetApplied = useRef(false);
@@ -430,8 +433,8 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
     }
   }, [state.strategicEnabled, state.strategicHexSizeKm, editableTerrainData]);
 
-  // Start simulation
-  const handleStart = () => {
+  // Validate before showing naming modal
+  const handleStartClick = () => {
     if (!state.title.trim()) { alert("Please enter a scenario title."); return; }
     if (!state.provider || !state.model) { alert("No LLM provider configured. Check your .env file."); return; }
 
@@ -451,33 +454,54 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
       if (!confirm("No actor has objectives set. Start anyway?")) return;
     }
 
-    const scenario = {
-      scale: state.scale,
-      title: state.title.trim(),
-      description: state.description.trim(),
-      turnDuration: state.turnDuration,
-      startDate: state.startDate,
-      actors: state.actors.map(a => ({
-        ...a,
-        id: a.id || a.name.toLowerCase().replace(/\s+/g, "_"),
-        objectives: a.objectives.filter(o => o.trim()),
-        constraints: a.constraints.filter(c => c.trim()),
-      })),
-      initialConditions: state.initialConditions,
-      specialRules: state.specialRules,
-      units: namedUnits,
-      environment: state.environment,
-      eraSelections: state.eraSelections,
-    };
+    // Show naming modal with scenario title as default
+    setGameName(state.title.trim());
+    setShowNameModal(true);
+  };
 
-    const gameState = createGame({
-      scenario,
-      terrainRef: selectedMap,
-      terrainData: editableTerrainData,
-      llmConfig: { provider: state.provider, model: state.model, temperature: state.temperature },
-    });
+  // Actually create the game folder and start simulation
+  const handleConfirmStart = async () => {
+    if (!gameName.trim()) return;
+    setCreating(true);
+    try {
+      // Create game folder and copy terrain into it
+      const folder = await createGameFolder(gameName.trim(), editableTerrainData);
 
-    onStart(gameState, editableTerrainData);
+      const namedUnits = state.units.filter(u => u.name.trim());
+      const scenario = {
+        scale: state.scale,
+        title: state.title.trim(),
+        description: state.description.trim(),
+        turnDuration: state.turnDuration,
+        startDate: state.startDate,
+        actors: state.actors.map(a => ({
+          ...a,
+          id: a.id || a.name.toLowerCase().replace(/\s+/g, "_"),
+          objectives: a.objectives.filter(o => o.trim()),
+          constraints: a.constraints.filter(c => c.trim()),
+        })),
+        initialConditions: state.initialConditions,
+        specialRules: state.specialRules,
+        units: namedUnits,
+        environment: state.environment,
+        eraSelections: state.eraSelections,
+      };
+
+      const gameState = createGame({
+        scenario,
+        terrainRef: selectedMap,
+        terrainData: editableTerrainData,
+        llmConfig: { provider: state.provider, model: state.model, temperature: state.temperature },
+        folder,
+      });
+
+      setShowNameModal(false);
+      onStart(gameState, editableTerrainData);
+    } catch (e) {
+      alert("Failed to create game: " + e.message);
+    } finally {
+      setCreating(false);
+    }
   };
 
   return (
@@ -545,7 +569,7 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
           <Badge color={colors.accent.blue}>{state.units.length} units</Badge>
         )}
         <Button
-          onClick={handleStart}
+          onClick={handleStartClick}
           disabled={!state.title.trim() || !state.provider}
           size="sm"
         >
@@ -591,6 +615,62 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
           onToggle={() => dispatch({ type: "TOGGLE_RIGHT_SIDEBAR" })}
         />
       </div>
+
+      {/* Game Naming Modal */}
+      {showNameModal && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 9999,
+          background: "rgba(0,0,0,0.6)", display: "flex",
+          alignItems: "center", justifyContent: "center",
+        }}>
+          <div style={{
+            background: colors.bg.raised, borderRadius: radius.lg,
+            padding: space[6], width: 420, maxWidth: "90%",
+            border: `1px solid ${colors.border.subtle}`,
+            boxShadow: shadows?.lg || "0 8px 32px rgba(0,0,0,0.4)",
+          }}>
+            <div style={{
+              fontSize: typography.heading.md, fontWeight: typography.weight.bold,
+              marginBottom: space[4], color: colors.text.primary,
+            }}>
+              Name Your Game
+            </div>
+            <p style={{
+              fontSize: typography.body.sm, color: colors.text.secondary,
+              marginBottom: space[3], lineHeight: 1.5,
+            }}>
+              This creates a dedicated folder for your game with its own copy of the terrain map.
+              Clearing your saved maps won't affect this game.
+            </p>
+            <input
+              type="text"
+              value={gameName}
+              onChange={e => setGameName(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter" && gameName.trim()) handleConfirmStart(); }}
+              placeholder="e.g. Bastogne Campaign"
+              autoFocus
+              style={{
+                width: "100%", padding: `${space[2]}px ${space[3]}px`,
+                background: colors.bg.surface, color: colors.text.primary,
+                border: `1px solid ${colors.border.subtle}`, borderRadius: radius.md,
+                fontSize: typography.body.md, fontFamily: typography.fontFamily,
+                outline: "none", boxSizing: "border-box",
+              }}
+            />
+            <div style={{
+              display: "flex", gap: space[2], justifyContent: "flex-end",
+              marginTop: space[4],
+            }}>
+              <Button variant="ghost" size="sm" onClick={() => setShowNameModal(false)} disabled={creating}>
+                Cancel
+              </Button>
+              <Button size="sm" onClick={handleConfirmStart} disabled={!gameName.trim() || creating}>
+                {creating ? "Creating..." : "Create & Start"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

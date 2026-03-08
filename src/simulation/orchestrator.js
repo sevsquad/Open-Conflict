@@ -17,13 +17,14 @@ import { WEAPON_RANGE_KM } from "./orderTypes.js";
 /**
  * Create a new game from scenario configuration and terrain data.
  */
-export function createGame({ scenario, terrainRef, terrainData, llmConfig }) {
+export function createGame({ scenario, terrainRef, terrainData, llmConfig, folder }) {
   const scaleTier = SCALE_TIERS[scenario.scale]?.tier || 3;
   return createGameState({
     scenario,
     terrainRef,
     terrainSummary: buildTerrainSummary(terrainData, { scaleTier }),
-    llmConfig
+    llmConfig,
+    folder
   });
 }
 
@@ -69,15 +70,23 @@ const FETCH_TIMEOUT_MS = 900_000; // 15 minutes — cancel button is the real es
 export function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS, externalSignal = null) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  // Forward external abort to our controller; clean up listener on completion
+  // to prevent closure accumulation when the signal never fires.
+  const onExternalAbort = externalSignal ? () => controller.abort() : null;
   if (externalSignal) {
     if (externalSignal.aborted) {
       controller.abort();
     } else {
-      externalSignal.addEventListener("abort", () => controller.abort(), { once: true });
+      externalSignal.addEventListener("abort", onExternalAbort, { once: true });
     }
   }
   return fetch(url, { ...options, signal: controller.signal })
-    .finally(() => clearTimeout(timer));
+    .finally(() => {
+      clearTimeout(timer);
+      if (onExternalAbort && externalSignal) {
+        externalSignal.removeEventListener("abort", onExternalAbort);
+      }
+    });
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -91,7 +100,7 @@ function saveNetLog(entry) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ filename, data: entry })
-  }).catch(() => {}); // best-effort, never fail adjudication
+  }).catch(e => console.warn("[saveNetLog] failed:", e.message)); // best-effort, never fail adjudication
 }
 
 const MAX_RETRIES = 3;
@@ -258,10 +267,12 @@ export async function adjudicate(gameState, playerActions, terrainData, logger, 
       const errLower = (llmResponse.error || "").toLowerCase();
       const isRateLimit = errLower.includes("rate") || errLower.includes("429") || errLower.includes("overloaded");
       lastError = `LLM API error: ${llmResponse.error}`;
-      if (isRateLimit && attempt < MAX_RETRIES) {
-        const delay = RATE_LIMIT_BACKOFF_MS[attempt - 1] || 30_000;
-        lastError += ` (rate limited, waiting ${delay / 1000}s)`;
-        if (logger) logger.log(gameState.game.turn, "rate_limited", { attempt, delay, error: llmResponse.error });
+      if (attempt < MAX_RETRIES) {
+        const delay = isRateLimit
+          ? (RATE_LIMIT_BACKOFF_MS[attempt - 1] || 30_000)
+          : 2_000; // Brief pause before non-rate-limit retries to avoid hammering
+        if (isRateLimit) lastError += ` (rate limited, waiting ${delay / 1000}s)`;
+        if (logger) logger.log(gameState.game.turn, isRateLimit ? "rate_limited" : "api_error_retry", { attempt, delay, error: llmResponse.error });
         await sleep(delay);
       }
       saveNetLog({
@@ -344,8 +355,9 @@ export async function adjudicate(gameState, playerActions, terrainData, logger, 
           { role: "assistant", content: llmResponse.content },
           { role: "user", content: `Your previous response failed validation with these errors:\n${validation.errors.map(e => `- ${e}`).join("\n")}\n\nPlease regenerate your response as valid JSON conforming to the adjudication schema. Ensure all required fields are present.` }
         ];
-        continue;
       }
+      // Invalid on final retry — fall through to error return at end of loop
+      continue;
     }
 
     // M19: Save a deep copy before engine mutations (position validation, etc.)
@@ -373,7 +385,7 @@ export async function adjudicate(gameState, playerActions, terrainData, logger, 
         // Apply correction in-place: replace LLM's proposed position with clamped position
         const update = parsed.adjudication.state_updates.find(u => u.entity === c.entity);
         if (update) {
-          update.position = c.corrected;
+          update.new_value = c.corrected;
           // Annotate justification so it's visible in turn log
           const tag = `[ENGINE CORRECTED: ${c.reason}]`;
           if (update.justification) {
@@ -564,10 +576,12 @@ export async function adjudicateRebuttal(gameState, playerActions, terrainData, 
       const errLower = (llmResponse.error || "").toLowerCase();
       const isRateLimit = errLower.includes("rate") || errLower.includes("429") || errLower.includes("overloaded");
       lastError = `LLM API error: ${llmResponse.error}`;
-      if (isRateLimit && attempt < MAX_RETRIES) {
-        const delay = RATE_LIMIT_BACKOFF_MS[attempt - 1] || 30_000;
-        lastError += ` (rate limited, waiting ${delay / 1000}s)`;
-        if (logger) logger.log(gameState.game.turn, "rate_limited", { attempt, delay, error: llmResponse.error });
+      if (attempt < MAX_RETRIES) {
+        const delay = isRateLimit
+          ? (RATE_LIMIT_BACKOFF_MS[attempt - 1] || 30_000)
+          : 2_000; // Brief pause before non-rate-limit retries to avoid hammering
+        if (isRateLimit) lastError += ` (rate limited, waiting ${delay / 1000}s)`;
+        if (logger) logger.log(gameState.game.turn, isRateLimit ? "rate_limited" : "api_error_retry", { attempt, delay, error: llmResponse.error });
         await sleep(delay);
       }
       saveNetLog({
@@ -629,13 +643,17 @@ export async function adjudicateRebuttal(gameState, playerActions, terrainData, 
     }
 
     const validation = validateAdjudication(parsed, { scaleTier });
-    if (!validation.valid && attempt < MAX_RETRIES) {
+    if (!validation.valid) {
       lastError = `Rebuttal validation failed: ${validation.errors.join("; ")}`;
-      retryMessages = [
-        ...messages,
-        { role: "assistant", content: llmResponse.content },
-        { role: "user", content: `Your previous response failed validation:\n${validation.errors.map(e => `- ${e}`).join("\n")}\n\nPlease regenerate as valid JSON.` }
-      ];
+      if (attempt < MAX_RETRIES) {
+        retryMessages = [
+          ...messages,
+          { role: "assistant", content: llmResponse.content },
+          { role: "user", content: `Your previous response failed validation:\n${validation.errors.map(e => `- ${e}`).join("\n")}\n\nPlease regenerate as valid JSON.` }
+        ];
+        continue;
+      }
+      // Final retry also invalid — fall through to error return at end of loop
       continue;
     }
 
@@ -645,7 +663,7 @@ export async function adjudicateRebuttal(gameState, playerActions, terrainData, 
       for (const c of posResult.corrections) {
         const update = parsed.adjudication.state_updates.find(u => u.entity === c.entity);
         if (update) {
-          update.position = c.corrected;
+          update.new_value = c.corrected;
           const tag = `[ENGINE CORRECTED: ${c.reason}]`;
           update.justification = update.justification ? `${update.justification} ${tag}` : tag;
         }
@@ -712,6 +730,18 @@ const NUMERIC_FIELDS = new Set([
 // Fields managed by the engine — LLM proposals are silently dropped
 const MECHANICAL_FIELDS = new Set(["supply"]);
 
+// Whitelist of attributes the LLM is allowed to modify via state_updates.
+// Anything not on this list is silently dropped. This prevents the LLM from
+// changing identity fields (id, actor, name, type) or internal engine fields.
+const ALLOWED_UPDATE_ATTRIBUTES = new Set([
+  "position", "posture", "status", "strength", "morale", "ammo", "fuel",
+  "fatigue", "entrenchment", "cohesion", "supply",
+  // Combat results
+  "casualties", "kills",
+  // Special states
+  "retreating", "routing", "pinned", "suppressed",
+]);
+
 /**
  * Apply validated state updates from an adjudication to the game state.
  * Returns a new game state object (immutable update).
@@ -754,9 +784,15 @@ export function applyStateUpdates(gameState, adjudication, playerActions = {}) {
     // Skip mechanically-managed fields — engine handles these, LLM proposals cause double-dipping
     if (MECHANICAL_FIELDS.has(attribute)) continue;
 
-    // Find and update matching unit
+    // Security: only allow whitelisted attributes. Prevents LLM from changing
+    // identity fields (id, actor, name, type) or internal engine fields.
+    if (!ALLOWED_UPDATE_ATTRIBUTES.has(attribute) && entity !== "diplomacy") continue;
+
+    // Find and update matching unit.
+    // Guard uses the allowlist, not field existence — LLM must be able to set new
+    // fields like "routing" or "pinned" that aren't present at unit initialization.
     const unitIdx = newUnits.findIndex(u => u.id === entity);
-    if (unitIdx !== -1 && attribute in newUnits[unitIdx]) {
+    if (unitIdx !== -1) {
       let normalizedValue = new_value;
 
       // Normalize position values: LLM returns Excel-style ("H4"), state uses comma ("7,3")
@@ -874,9 +910,18 @@ export function advanceTurn(gameState) {
         totalConsumed += add;
         return { ...u, supply: u.supply + add };
       });
-      // Deduct from depot
+      // Deduct from depots proportionally based on each depot's share of total supply.
+      // Without proportional distribution, totalConsumed was subtracted from EVERY depot,
+      // draining N× the actual consumption (where N = depot count).
       if (totalConsumed > 0) {
-        const newDepots = net.depots.map(d => ({ ...d, current: Math.max(0, d.current - totalConsumed) }));
+        let remaining = totalConsumed;
+        const newDepots = net.depots.map(d => {
+          if (remaining <= 0 || d.current <= 0) return d;
+          // Each depot's share: proportional to its current supply / totalAvail
+          const share = Math.min(Math.ceil(totalConsumed * (d.current / totalAvail)), remaining, d.current);
+          remaining -= share;
+          return { ...d, current: d.current - share };
+        });
         newSupplyNetwork[actorId] = { ...net, depots: newDepots };
       }
     }
@@ -1000,9 +1045,30 @@ export function endGame(gameState) {
 }
 
 // ── Persistence ─────────────────────────────────────────────
+// Games are stored in per-game folders under ./games/<name>/
+// Each folder has: terrain.json, state.json, autosave_t*.json, log.json
+// Legacy saves in saves/games/ are still loadable for backwards compat.
+
+/**
+ * Create a named game folder and copy terrain data into it.
+ * Returns the folder name to store in game.folder.
+ */
+export async function createGameFolder(name, terrainData) {
+  const resp = await fetch("/api/game/create", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, terrainData })
+  });
+  if (!resp.ok) throw new Error(`Failed to create game folder: ${resp.statusText}`);
+  const result = await resp.json();
+  if (!result.ok) throw new Error(result.error || "Failed to create game folder");
+  return result.folder;
+}
 
 /**
  * Save game state to server.
+ * If game.folder is set, saves to games/<folder>/state.json.
+ * Otherwise falls back to legacy saves/games/ flat file.
  */
 export async function saveGameState(gameState) {
   const filename = `${gameState.game.id}.json`;
@@ -1011,6 +1077,7 @@ export async function saveGameState(gameState) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ filename, data: gameState })
   });
+  if (!resp.ok) throw new Error(`Failed to save game: ${resp.statusText}`);
   return resp.json();
 }
 
@@ -1020,6 +1087,8 @@ export async function saveGameState(gameState) {
  */
 function migrateGameState(gs) {
   if (!gs?.units) return gs;
+  // Deep-clone so we don't mutate the caller's object (e.g. cached server responses)
+  gs = JSON.parse(JSON.stringify(gs));
   for (const unit of gs.units) {
     if (unit.weaponRangeKm) continue;
     // Try template-specific range first (searches all eras since saves don't store eraId)
@@ -1038,39 +1107,66 @@ function migrateGameState(gs) {
 
 /**
  * Load game state from server.
+ * Supports both folder-based (new) and flat-file (legacy) loading.
+ * @param {string} fileOrFolder — folder name (new) or filename (legacy)
+ * @param {Object} [opts] — { folder: true } to force folder-based loading
  */
-export async function loadGameState(file) {
-  const resp = await fetch(`/api/game/load?file=${encodeURIComponent(file)}`);
+export async function loadGameState(fileOrFolder, opts = {}) {
+  const isFolder = opts.folder || false;
+  const url = isFolder
+    ? `/api/game/load?folder=${encodeURIComponent(fileOrFolder)}`
+    : `/api/game/load?file=${encodeURIComponent(fileOrFolder)}`;
+  const resp = await fetch(url);
   if (!resp.ok) throw new Error(`Failed to load game: ${resp.statusText}`);
   const gs = await resp.json();
   return migrateGameState(gs);
 }
 
 /**
- * List saved games.
+ * Load terrain data from a game's folder.
  */
-export async function listSavedGames() {
-  const resp = await fetch("/api/game/list");
+export async function loadGameTerrain(folder) {
+  const resp = await fetch(`/api/game/load-terrain?folder=${encodeURIComponent(folder)}`);
+  if (!resp.ok) throw new Error(`Terrain not found for game: ${folder}`);
   return resp.json();
 }
 
 /**
- * Delete a game save file (server only allows autosave files).
+ * List saved games (both folder-based and legacy).
  */
-export async function deleteGameSave(file) {
-  const resp = await fetch(`/api/game/delete?file=${encodeURIComponent(file)}`, { method: "DELETE" });
+export async function listSavedGames() {
+  const resp = await fetch("/api/game/list");
+  if (!resp.ok) throw new Error(`Failed to list games: ${resp.statusText}`);
+  return resp.json();
+}
+
+/**
+ * Delete a game autosave.
+ * Supports folder-based (new) and flat-file (legacy).
+ */
+export async function deleteGameSave(fileOrFolder, opts = {}) {
+  let url;
+  if (opts.folder && opts.autosaveTurn != null) {
+    url = `/api/game/delete?folder=${encodeURIComponent(opts.folder)}&autosave=${opts.autosaveTurn}`;
+  } else {
+    url = `/api/game/delete?file=${encodeURIComponent(fileOrFolder)}`;
+  }
+  const resp = await fetch(url, { method: "DELETE" });
+  if (!resp.ok) throw new Error(`Failed to delete game save: ${resp.statusText}`);
   return resp.json();
 }
 
 /**
  * Autosave game state with rolling 5-turn window.
- * Saves as {gameId}_autosave_t{turn}.json, then prunes old autosaves.
+ * Uses game folder if available, otherwise legacy flat-file.
  */
 export async function autosave(gameState) {
   const gameId = gameState.game.id;
   const turn = gameState.game.turn;
-  const filename = `${gameId}_autosave_t${turn}.json`;
+  const folder = gameState.game.folder;
 
+  // The filename signals autosave to the server; server routes to correct location
+  const filename = `${gameId}_autosave_t${turn}.json`;
   await fetch("/api/game/save", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1078,19 +1174,39 @@ export async function autosave(gameState) {
   });
 
   // Prune old autosaves beyond the 5-turn window
-  const AUTOSAVE_WINDOW = 5;
-  const list = await listSavedGames();
-  const prefix = `${gameId}_autosave_t`;
-  const autosaves = list
-    .filter(g => g.file.startsWith(prefix))
-    .sort((a, b) => {
-      const tA = parseInt(a.file.match(/_t(\d+)\.json$/)?.[1] || "0");
-      const tB = parseInt(b.file.match(/_t(\d+)\.json$/)?.[1] || "0");
-      return tB - tA; // newest first
-    });
+  try {
+    const AUTOSAVE_WINDOW = 5;
+    const list = await listSavedGames();
 
-  for (const old of autosaves.slice(AUTOSAVE_WINDOW)) {
-    await deleteGameSave(old.file).catch(() => {});
+    if (folder) {
+      // Folder-based: find autosaves in this game's folder
+      const autosaves = list
+        .filter(g => g.folder === folder && g.isAutosave)
+        .sort((a, b) => {
+          const tA = parseInt(a.file.match(/autosave_t(\d+)/)?.[1] || "0");
+          const tB = parseInt(b.file.match(/autosave_t(\d+)/)?.[1] || "0");
+          return tB - tA;
+        });
+      for (const old of autosaves.slice(AUTOSAVE_WINDOW)) {
+        const oldTurn = parseInt(old.file.match(/autosave_t(\d+)/)?.[1] || "0");
+        await deleteGameSave(null, { folder, autosaveTurn: oldTurn }).catch(() => {});
+      }
+    } else {
+      // Legacy flat-file pruning
+      const prefix = `${gameId}_autosave_t`;
+      const autosaves = list
+        .filter(g => g.file.startsWith(prefix))
+        .sort((a, b) => {
+          const tA = parseInt(a.file.match(/_t(\d+)\.json$/)?.[1] || "0");
+          const tB = parseInt(b.file.match(/_t(\d+)\.json$/)?.[1] || "0");
+          return tB - tA;
+        });
+      for (const old of autosaves.slice(AUTOSAVE_WINDOW)) {
+        await deleteGameSave(old.file).catch(() => {});
+      }
+    }
+  } catch (e) {
+    console.warn("[autosave] prune failed:", e.message);
   }
 }
 
@@ -1099,5 +1215,6 @@ export async function autosave(gameState) {
  */
 export async function getProviders() {
   const resp = await fetch("/api/llm/providers");
+  if (!resp.ok) throw new Error(`Failed to fetch providers: ${resp.statusText}`);
   return resp.json();
 }

@@ -19,7 +19,7 @@ flat in vec2 v_neighborElev45;
 
 // Uniforms
 // NOTE: when adding terrain types, update BOTH this array size AND the bounds check in terrainColor()
-uniform vec3 u_terrainColors[65];   // RGB for each terrain type (29 base + 36 urban/fine-grained)
+uniform vec3 u_terrainColors[66];   // RGB for each terrain type (30 base + 36 urban/fine-grained)
 uniform float u_cellPixels;         // current zoom level
 uniform uint u_activeFeatures;      // bitmask of enabled features
 uniform vec3 u_featureColor;        // tint color for active features (simplified)
@@ -89,7 +89,7 @@ float getNeighborTerrain(int i) {
 // Terrain color lookup (index -1 = no neighbor / out of bounds)
 vec3 terrainColor(float idx) {
     int i = int(idx + 0.5);
-    if (i < 0 || i >= 65) return vec3(0.1, 0.1, 0.1);
+    if (i < 0 || i >= 66) return vec3(0.1, 0.1, 0.1);
     return u_terrainColors[i];
 }
 

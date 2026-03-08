@@ -37,9 +37,12 @@ function savePlugin() {
             const { filename, data } = JSON.parse(body);
             const savesDir = path.resolve(process.cwd(), 'saves');
             if (!fs.existsSync(savesDir)) fs.mkdirSync(savesDir, { recursive: true });
-            // Sanitize filename
-            const safe = filename.replace(/[^a-zA-Z0-9_\-\.]/g, '_').slice(0, 200);
+            // Sanitize filename — strip non-alphanumeric, strip leading dots (prevents .env etc)
+            const safe = filename.replace(/[^a-zA-Z0-9_\-\.]/g, '_').replace(/^\.+/, '').slice(0, 200);
+            if (!safe) { res.statusCode = 400; res.end(JSON.stringify({ ok: false, error: 'Invalid filename' })); return; }
             const filepath = path.join(savesDir, safe);
+            // Verify resolved path is inside saves/ (prevent path traversal)
+            if (!filepath.startsWith(savesDir)) { res.statusCode = 400; res.end(JSON.stringify({ ok: false, error: 'Invalid filename' })); return; }
             fs.writeFileSync(filepath, JSON.stringify(data, null, 2));
             res.setHeader('Content-Type', 'application/json');
             res.end(JSON.stringify({ ok: true, path: `saves/${safe}` }));
@@ -72,9 +75,10 @@ function savePlugin() {
         const url = new URL(req.url, 'http://localhost');
         const file = url.searchParams.get('file');
         if (!file) { res.statusCode = 400; res.end('Missing file param'); return; }
-        const safe = file.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
-        const filepath = path.resolve(process.cwd(), 'saves', safe);
-        if (!fs.existsSync(filepath)) { res.statusCode = 404; res.end('Not found'); return; }
+        const safe = file.replace(/[^a-zA-Z0-9_\-\.]/g, '_').replace(/^\.+/, '');
+        const savesDir = path.resolve(process.cwd(), 'saves');
+        const filepath = path.join(savesDir, safe);
+        if (!filepath.startsWith(savesDir) || !fs.existsSync(filepath)) { res.statusCode = 404; res.end('Not found'); return; }
         res.setHeader('Content-Type', 'application/json');
         res.end(fs.readFileSync(filepath, 'utf8'));
       });
@@ -340,8 +344,10 @@ function auditlogPlugin() {
             return;
           }
           const dir = logDir();
-          const safeFilename = filename.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
-          fs.writeFileSync(path.join(dir, safeFilename), JSON.stringify(data, null, 2));
+          const safeFilename = filename.replace(/[^a-zA-Z0-9_\-\.]/g, '_').replace(/^\.+/, '');
+          const filepath = path.join(dir, safeFilename);
+          if (!filepath.startsWith(dir)) { res.statusCode = 400; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ ok: false, error: 'Invalid filename' })); return; }
+          fs.writeFileSync(filepath, JSON.stringify(data, null, 2));
 
           // Prune: keep only the 6 most recent log files
           const files = fs.readdirSync(dir)
@@ -388,8 +394,10 @@ function netlogPlugin() {
             return;
           }
           const dir = logDir();
-          const safeFilename = filename.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
-          fs.writeFileSync(path.join(dir, safeFilename), JSON.stringify(data, null, 2));
+          const safeFilename = filename.replace(/[^a-zA-Z0-9_\-\.]/g, '_').replace(/^\.+/, '');
+          const filepath = path.join(dir, safeFilename);
+          if (!filepath.startsWith(dir)) { res.statusCode = 400; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ ok: false, error: 'Invalid filename' })); return; }
+          fs.writeFileSync(filepath, JSON.stringify(data, null, 2));
 
           // Prune: keep only the 5 most recent log files
           const files = fs.readdirSync(dir)
@@ -468,26 +476,78 @@ function parserNetlogPlugin() {
 }
 
 // Plugin: game state save/load
+// Games are stored in per-game folders under ./games/<name>/
+// Each folder contains: terrain.json, state.json, autosave_t*.json, log.json
+// Preset terrain maps live in ./games/presets/
 function gamePlugin() {
   return {
     name: 'game-state',
     configureServer(server) {
-      const gamesDir = () => {
+      // New folder-based root: ./games/
+      const gamesRoot = () => {
+        const d = path.resolve(process.cwd(), 'games');
+        if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+        return d;
+      };
+
+      // Legacy flat-file dir for backwards compat with old saves
+      const legacyDir = () => {
         const d = path.resolve(process.cwd(), 'saves', 'games');
         if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
         return d;
       };
 
-      // POST /api/game/save — save game state
-      server.middlewares.use('/api/game/save', async (req, res) => {
+      // Preset terrain folder
+      const presetsDir = () => {
+        const d = path.join(gamesRoot(), 'presets');
+        if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+        return d;
+      };
+
+      // Slugify a game name for use as folder name
+      function slugify(name) {
+        return name.trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9\s\-]/g, '')
+          .replace(/\s+/g, '-')
+          .replace(/-+/g, '-')
+          .replace(/^-|-$/g, '')
+          .slice(0, 100) || 'unnamed-game';
+      }
+
+      // Get a unique folder name (append -2, -3, etc. if taken)
+      function uniqueFolder(baseName) {
+        const root = gamesRoot();
+        let folder = baseName;
+        let i = 2;
+        while (fs.existsSync(path.join(root, folder))) {
+          folder = `${baseName}-${i++}`;
+        }
+        return folder;
+      }
+
+      // POST /api/game/create — create a named game folder with terrain
+      // Body: { name: "My Campaign", terrainData: {...} }
+      // Returns: { ok, folder } — the folder name to store in game.folder
+      server.middlewares.use('/api/game/create', async (req, res) => {
         if (req.method !== 'POST') { res.statusCode = 405; res.end('POST only'); return; }
         try {
-          const { filename, data } = JSON.parse(await readBody(req));
-          const safe = filename.replace(/[^a-zA-Z0-9_\-\.]/g, '_').slice(0, 200);
-          const filepath = path.join(gamesDir(), safe);
-          fs.writeFileSync(filepath, JSON.stringify(data, null, 2));
+          const body = JSON.parse(await readBody(req, 50 * 1024 * 1024)); // 50MB for large terrain
+          const { name, terrainData } = body;
+          if (!name || !terrainData) {
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ ok: false, error: 'Missing name or terrainData' }));
+            return;
+          }
+          const slug = slugify(name);
+          const folder = uniqueFolder(slug);
+          const folderPath = path.join(gamesRoot(), folder);
+          fs.mkdirSync(folderPath, { recursive: true });
+          // Write terrain copy — this is the game's own copy, independent of saves/
+          fs.writeFileSync(path.join(folderPath, 'terrain.json'), JSON.stringify(terrainData));
           res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ ok: true, path: `saves/games/${safe}` }));
+          res.end(JSON.stringify({ ok: true, folder }));
         } catch (e) {
           res.statusCode = 500;
           res.setHeader('Content-Type', 'application/json');
@@ -495,59 +555,253 @@ function gamePlugin() {
         }
       });
 
-      // GET /api/game/list — list saved games with metadata
-      server.middlewares.use('/api/game/list', (req, res) => {
-        if (req.method !== 'GET') { res.statusCode = 405; res.end('GET only'); return; }
-        const dir = gamesDir();
-        const files = fs.readdirSync(dir)
-          .filter(f => f.endsWith('.json') && !f.endsWith('_log.json'))
-          .map(f => {
-            const stat = fs.statSync(path.join(dir, f));
-            let name = f, turn = null, status = null, terrainRef = null, actorCount = 0, unitCount = 0, gameId = null;
-            const isAutosave = /_autosave_t\d+\.json$/.test(f);
-            try {
-              const content = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
-              name = content.game?.name || f;
-              turn = content.game?.turn || null;
-              status = content.game?.status || null;
-              terrainRef = content.terrain?._ref || null;
-              actorCount = content.scenario?.actors?.length || 0;
-              unitCount = content.units?.length || 0;
-              gameId = content.game?.id || null;
-            } catch {}
-            return { file: f, name, size: stat.size, modified: stat.mtime.toISOString(), turn, status, terrainRef, actorCount, unitCount, isAutosave, gameId };
-          })
-          .sort((a, b) => b.modified.localeCompare(a.modified));
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify(files));
+      // POST /api/game/save — save game state
+      // If data.game.folder exists, save to games/<folder>/state.json
+      // Otherwise fall back to legacy saves/games/<filename>.json
+      server.middlewares.use('/api/game/save', async (req, res) => {
+        if (req.method !== 'POST') { res.statusCode = 405; res.end('POST only'); return; }
+        try {
+          const { filename, data } = JSON.parse(await readBody(req));
+          const folder = data?.game?.folder;
+
+          if (folder) {
+            // Folder-based save
+            const safe = folder.replace(/[^a-zA-Z0-9_\-]/g, '_');
+            const folderPath = path.join(gamesRoot(), safe);
+            if (!folderPath.startsWith(gamesRoot()) || !fs.existsSync(folderPath)) {
+              res.statusCode = 400;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ ok: false, error: 'Invalid game folder' }));
+              return;
+            }
+            // Determine filename: autosave or main state
+            const isAutosave = filename && /_autosave_t\d+/.test(filename);
+            const saveName = isAutosave
+              ? `autosave_t${data.game?.turn || 0}.json`
+              : 'state.json';
+            fs.writeFileSync(path.join(folderPath, saveName), JSON.stringify(data, null, 2));
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ ok: true, path: `games/${safe}/${saveName}` }));
+          } else {
+            // Legacy flat-file save (backwards compat)
+            const safe = filename.replace(/[^a-zA-Z0-9_\-\.]/g, '_').replace(/^\.+/, '').slice(0, 200);
+            const dir = legacyDir();
+            const filepath = path.join(dir, safe);
+            if (!filepath.startsWith(dir)) { res.statusCode = 400; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ ok: false, error: 'Invalid filename' })); return; }
+            fs.writeFileSync(filepath, JSON.stringify(data, null, 2));
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ ok: true, path: `saves/games/${safe}` }));
+          }
+        } catch (e) {
+          res.statusCode = 500;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ ok: false, error: e.message }));
+        }
       });
 
-      // GET /api/game/load?file=xxx — load a game state
+      // GET /api/game/list — list saved games from both folder-based and legacy
+      server.middlewares.use('/api/game/list', (req, res) => {
+        if (req.method !== 'GET') { res.statusCode = 405; res.end('GET only'); return; }
+        const results = [];
+
+        // Scan folder-based games in ./games/
+        const root = gamesRoot();
+        for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+          if (!entry.isDirectory() || entry.name === 'presets') continue;
+          const folderPath = path.join(root, entry.name);
+          const statePath = path.join(folderPath, 'state.json');
+          if (!fs.existsSync(statePath)) continue;
+
+          try {
+            const stat = fs.statSync(statePath);
+            const content = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+            results.push({
+              file: entry.name, // folder name doubles as identifier
+              folder: entry.name,
+              name: content.game?.name || entry.name,
+              size: stat.size,
+              modified: stat.mtime.toISOString(),
+              turn: content.game?.turn || null,
+              status: content.game?.status || null,
+              terrainRef: content.terrain?._ref || null,
+              actorCount: content.scenario?.actors?.length || 0,
+              unitCount: content.units?.length || 0,
+              isAutosave: false,
+              gameId: content.game?.id || null,
+            });
+
+            // Also list autosaves from this folder
+            for (const f of fs.readdirSync(folderPath)) {
+              if (!f.startsWith('autosave_t') || !f.endsWith('.json')) continue;
+              const autoStat = fs.statSync(path.join(folderPath, f));
+              let autoContent;
+              try { autoContent = JSON.parse(fs.readFileSync(path.join(folderPath, f), 'utf8')); } catch { continue; }
+              results.push({
+                file: `${entry.name}/${f}`,
+                folder: entry.name,
+                name: autoContent.game?.name || entry.name,
+                size: autoStat.size,
+                modified: autoStat.mtime.toISOString(),
+                turn: autoContent.game?.turn || null,
+                status: autoContent.game?.status || null,
+                terrainRef: autoContent.terrain?._ref || null,
+                actorCount: autoContent.scenario?.actors?.length || 0,
+                unitCount: autoContent.units?.length || 0,
+                isAutosave: true,
+                gameId: autoContent.game?.id || null,
+              });
+            }
+          } catch { /* skip unreadable folders */ }
+        }
+
+        // Scan legacy flat-file saves in saves/games/ (backwards compat)
+        const legDir = legacyDir();
+        for (const f of fs.readdirSync(legDir)) {
+          if (!f.endsWith('.json') || f.endsWith('_log.json')) continue;
+          try {
+            const stat = fs.statSync(path.join(legDir, f));
+            const content = JSON.parse(fs.readFileSync(path.join(legDir, f), 'utf8'));
+            // Skip if this game already exists in folder-based storage
+            if (content.game?.folder) continue;
+            const isAutosave = /_autosave_t\d+\.json$/.test(f);
+            results.push({
+              file: f,
+              folder: null, // legacy — no folder
+              name: content.game?.name || f,
+              size: stat.size,
+              modified: stat.mtime.toISOString(),
+              turn: content.game?.turn || null,
+              status: content.game?.status || null,
+              terrainRef: content.terrain?._ref || null,
+              actorCount: content.scenario?.actors?.length || 0,
+              unitCount: content.units?.length || 0,
+              isAutosave,
+              gameId: content.game?.id || null,
+            });
+          } catch { /* skip unreadable files */ }
+        }
+
+        results.sort((a, b) => b.modified.localeCompare(a.modified));
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(results));
+      });
+
+      // GET /api/game/load — load game state
+      // ?folder=<name> — load from games/<name>/state.json (new)
+      // ?folder=<name>&autosave=<turn> — load autosave from folder
+      // ?file=<filename> — load from saves/games/<filename> (legacy)
       server.middlewares.use('/api/game/load', (req, res) => {
         if (req.method !== 'GET') { res.statusCode = 405; res.end('GET only'); return; }
         const url = new URL(req.url, 'http://localhost');
+        const folder = url.searchParams.get('folder');
         const file = url.searchParams.get('file');
-        if (!file) { res.statusCode = 400; res.end('Missing file param'); return; }
-        const safe = file.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
-        const filepath = path.join(gamesDir(), safe);
-        if (!fs.existsSync(filepath)) { res.statusCode = 404; res.end('Not found'); return; }
+        const autosaveTurn = url.searchParams.get('autosave');
+
+        if (folder) {
+          const safe = folder.replace(/[^a-zA-Z0-9_\-]/g, '_');
+          const folderPath = path.join(gamesRoot(), safe);
+          if (!folderPath.startsWith(gamesRoot()) || !fs.existsSync(folderPath)) {
+            res.statusCode = 404; res.end('Game folder not found'); return;
+          }
+          const filename = autosaveTurn ? `autosave_t${autosaveTurn}.json` : 'state.json';
+          const filepath = path.join(folderPath, filename);
+          if (!fs.existsSync(filepath)) { res.statusCode = 404; res.end('State file not found'); return; }
+          res.setHeader('Content-Type', 'application/json');
+          res.end(fs.readFileSync(filepath, 'utf8'));
+        } else if (file) {
+          // Legacy load from saves/games/
+          const safe = file.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
+          const filepath = path.join(legacyDir(), safe);
+          if (!fs.existsSync(filepath)) { res.statusCode = 404; res.end('Not found'); return; }
+          res.setHeader('Content-Type', 'application/json');
+          res.end(fs.readFileSync(filepath, 'utf8'));
+        } else {
+          res.statusCode = 400; res.end('Missing folder or file param'); return;
+        }
+      });
+
+      // GET /api/game/load-terrain?folder=<name> — load terrain from game folder
+      // This is the game's own terrain copy, independent of saves/
+      server.middlewares.use('/api/game/load-terrain', (req, res) => {
+        if (req.method !== 'GET') { res.statusCode = 405; res.end('GET only'); return; }
+        const url = new URL(req.url, 'http://localhost');
+        const folder = url.searchParams.get('folder');
+        if (!folder) { res.statusCode = 400; res.end('Missing folder param'); return; }
+        const safe = folder.replace(/[^a-zA-Z0-9_\-]/g, '_');
+        const filepath = path.join(gamesRoot(), safe, 'terrain.json');
+        if (!filepath.startsWith(gamesRoot()) || !fs.existsSync(filepath)) {
+          res.statusCode = 404; res.end('Terrain not found'); return;
+        }
         res.setHeader('Content-Type', 'application/json');
         res.end(fs.readFileSync(filepath, 'utf8'));
       });
 
-      // POST /api/game/log — append log entries
+      // GET /api/game/preset-terrain?preset=<id> — load or generate preset terrain
+      server.middlewares.use('/api/game/preset-terrain', (req, res) => {
+        if (req.method !== 'GET') { res.statusCode = 405; res.end('GET only'); return; }
+        const url = new URL(req.url, 'http://localhost');
+        const preset = url.searchParams.get('preset');
+        if (!preset) { res.statusCode = 400; res.end('Missing preset param'); return; }
+        const safe = preset.replace(/[^a-zA-Z0-9_\-]/g, '_');
+        const filepath = path.join(presetsDir(), `${safe}.json`);
+        if (!fs.existsSync(filepath)) {
+          res.statusCode = 404;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ ok: false, error: 'Preset terrain not found. Generate it first.' }));
+          return;
+        }
+        res.setHeader('Content-Type', 'application/json');
+        res.end(fs.readFileSync(filepath, 'utf8'));
+      });
+
+      // POST /api/game/save-preset-terrain — save preset terrain map
+      // Body: { presetId, terrainData }
+      server.middlewares.use('/api/game/save-preset-terrain', async (req, res) => {
+        if (req.method !== 'POST') { res.statusCode = 405; res.end('POST only'); return; }
+        try {
+          const body = JSON.parse(await readBody(req, 50 * 1024 * 1024));
+          const { presetId, terrainData } = body;
+          if (!presetId || !terrainData) {
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ ok: false, error: 'Missing presetId or terrainData' }));
+            return;
+          }
+          const safe = presetId.replace(/[^a-zA-Z0-9_\-]/g, '_');
+          const filepath = path.join(presetsDir(), `${safe}.json`);
+          fs.writeFileSync(filepath, JSON.stringify(terrainData));
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ ok: true }));
+        } catch (e) {
+          res.statusCode = 500;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ ok: false, error: e.message }));
+        }
+      });
+
+      // POST /api/game/log — append log entries (supports folder-based and legacy)
       server.middlewares.use('/api/game/log', async (req, res) => {
         if (req.method !== 'POST') { res.statusCode = 405; res.end('POST only'); return; }
         try {
-          const { gameId, entries } = JSON.parse(await readBody(req));
-          if (!gameId || !entries) {
+          const { gameId, folder, entries } = JSON.parse(await readBody(req));
+          if (!entries || (!gameId && !folder)) {
             res.statusCode = 400;
             res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ ok: false, error: 'Missing gameId or entries' }));
+            res.end(JSON.stringify({ ok: false, error: 'Missing gameId/folder or entries' }));
             return;
           }
-          const safe = gameId.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
-          const logPath = path.join(gamesDir(), `${safe}_log.json`);
+
+          let logPath;
+          if (folder) {
+            const safe = folder.replace(/[^a-zA-Z0-9_\-]/g, '_');
+            const folderPath = path.join(gamesRoot(), safe);
+            if (!fs.existsSync(folderPath)) fs.mkdirSync(folderPath, { recursive: true });
+            logPath = path.join(folderPath, 'log.json');
+          } else {
+            const safe = gameId.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
+            logPath = path.join(legacyDir(), `${safe}_log.json`);
+          }
+
           let existing = [];
           if (fs.existsSync(logPath)) {
             try { existing = JSON.parse(fs.readFileSync(logPath, 'utf8')); } catch {}
@@ -563,25 +817,40 @@ function gamePlugin() {
         }
       });
 
-      // DELETE /api/game/delete?file=xxx — delete a game save (autosaves only for safety)
+      // DELETE /api/game/delete — delete a game save (autosaves only for safety)
+      // ?folder=<name>&autosave=<turn> — delete autosave from folder
+      // ?file=<filename> — legacy delete from saves/games/
       server.middlewares.use('/api/game/delete', (req, res) => {
         if (req.method !== 'DELETE') { res.statusCode = 405; res.end('DELETE only'); return; }
         const url = new URL(req.url, 'http://localhost');
+        const folder = url.searchParams.get('folder');
+        const autosaveTurn = url.searchParams.get('autosave');
         const file = url.searchParams.get('file');
-        if (!file) { res.statusCode = 400; res.end('Missing file param'); return; }
-        const safe = file.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
-        // Safety: only allow deletion of autosave files
-        if (!/_autosave_t\d+\.json$/.test(safe)) {
-          res.statusCode = 403;
-          res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ ok: false, error: 'Only autosave files can be deleted' }));
-          return;
-        }
-        const filepath = path.join(gamesDir(), safe);
+
         try {
-          if (fs.existsSync(filepath)) fs.unlinkSync(filepath);
-          res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ ok: true }));
+          if (folder && autosaveTurn) {
+            const safe = folder.replace(/[^a-zA-Z0-9_\-]/g, '_');
+            const filepath = path.join(gamesRoot(), safe, `autosave_t${parseInt(autosaveTurn)}.json`);
+            if (!filepath.startsWith(gamesRoot())) { res.statusCode = 400; res.end('Invalid path'); return; }
+            if (fs.existsSync(filepath)) fs.unlinkSync(filepath);
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ ok: true }));
+          } else if (file) {
+            // Legacy delete
+            const safe = file.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
+            if (!/_autosave_t\d+\.json$/.test(safe)) {
+              res.statusCode = 403;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ ok: false, error: 'Only autosave files can be deleted' }));
+              return;
+            }
+            const filepath = path.join(legacyDir(), safe);
+            if (fs.existsSync(filepath)) fs.unlinkSync(filepath);
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ ok: true }));
+          } else {
+            res.statusCode = 400; res.end('Missing folder+autosave or file param');
+          }
         } catch (e) {
           res.statusCode = 500;
           res.setHeader('Content-Type', 'application/json');
@@ -610,10 +879,17 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
+  // Compile-time constant: true in dev, false in production builds.
+  // Wrap debug-only UI (raw JSON tabs, export buttons, moderator panel,
+  // FOW toggle, prompt viewer) in `if (__DEV_TOOLS__)` blocks so they
+  // are tree-shaken from production bundles.
+  define: {
+    __DEV_TOOLS__: mode !== 'production',
+  },
   plugins: [react(), serverTimeoutPlugin(), savePlugin(), llmPlugin(), netlogPlugin(), parserNetlogPlugin(), gamePlugin(), auditlogPlugin()],
   server: {
     watch: {
-      ignored: ['**/saves/**'],
+      ignored: ['**/saves/**', '**/games/**'],
     },
     proxy: {
       '/api/topo': {
@@ -631,6 +907,29 @@ export default defineConfig(({ mode }) => {
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/srtm/, ''),
       },
+      // ── PBEM server proxy (Express on port 3001) ──────────
+      // Admin routes — no conflict with Vite middleware
+      '/api/admin': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+      },
+      // Player game routes that DON'T collide with Vite's gamePlugin.
+      // Vite middleware handles: /api/game/save, /api/game/list,
+      // /api/game/load, /api/game/log, /api/game/delete
+      // PBEM uses: /api/game/state, /api/game/terrain, /api/game/orders,
+      // /api/game/results, /api/game/decision, /api/game/briefing,
+      // /api/game/events, /api/game/status
+      // Non-conflicting paths fall through Vite middleware to this proxy.
+      '/api/game/state': { target: 'http://localhost:3001', changeOrigin: true },
+      '/api/game/terrain': { target: 'http://localhost:3001', changeOrigin: true },
+      '/api/game/orders': { target: 'http://localhost:3001', changeOrigin: true },
+      '/api/game/results': { target: 'http://localhost:3001', changeOrigin: true },
+      '/api/game/decision': { target: 'http://localhost:3001', changeOrigin: true },
+      '/api/game/briefing': { target: 'http://localhost:3001', changeOrigin: true },
+      '/api/game/events': { target: 'http://localhost:3001', changeOrigin: true },
+      '/api/game/status': { target: 'http://localhost:3001', changeOrigin: true },
+      '/api/game/draft-orders': { target: 'http://localhost:3001', changeOrigin: true },
+      '/api/game/challenges': { target: 'http://localhost:3001', changeOrigin: true },
     },
   },
 };})

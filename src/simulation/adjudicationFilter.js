@@ -30,7 +30,7 @@ export function filterAdjudicationForActor(masterAdjudication, actorId, visibili
   const visibleUnitIds = new Set();
 
   // Own units are always visible
-  for (const unit of gameState.units) {
+  for (const unit of (gameState.units || [])) {
     if (unit.actor === actorId) visibleUnitIds.add(unit.id);
   }
 
@@ -84,20 +84,27 @@ export function filterAdjudicationForActor(masterAdjudication, actorId, visibili
     }),
   };
 
+  // Security: strip god-view fields that could leak enemy intel.
+  // situation_assessment contains full strategic analysis of all actors.
+  // de_escalation_assessment may reference hidden actors/units.
+  // meta may contain debug/internal info.
+  // Only pass through the actor's own perspective narrative.
+
   return {
     adjudication: {
-      situation_assessment: adj.situation_assessment,
+      // Omit situation_assessment — it contains god-view strategic analysis
       action_interpretation: {
         actions_received: (adj.action_interpretation?.actions_received || []).filter(a => {
-          // Show own actions and any enemy actions that are observable
+          // Show own actions only — enemy actions visible via known_enemy_actions
           return a.actor === actorId;
         }),
       },
       feasibility_analysis: filteredFeasibility,
-      de_escalation_assessment: adj.de_escalation_assessment,
+      // Omit de_escalation_assessment — may reference hidden actors
       outcome_determination: {
-        ...adj.outcome_determination,
+        // Only pass safe fields, not the full god-view outcome
         narrative: actorNarrative,
+        outcome_type: adj.outcome_determination?.outcome_type || "",
         // Use auditor-cleaned probability_assessment if available (strips enemy unit names)
         ...(perspective?._clean_probability_assessment
           ? { probability_assessment: perspective._clean_probability_assessment }
@@ -114,7 +121,7 @@ export function filterAdjudicationForActor(masterAdjudication, actorId, visibili
         visible_state_updates: perspective?.visible_state_updates || filteredUpdates,
       },
     },
-    meta: masterAdjudication.meta,
+    // Omit meta — may contain debug/internal info
   };
 }
 

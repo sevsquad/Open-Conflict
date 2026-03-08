@@ -3,13 +3,14 @@ import Parser from "./Parser.jsx";
 import Viewer from "./Viewer.jsx";
 import Simulation from "./simulation/Simulation.jsx";
 import WorldScanner from "./WorldScanner.jsx";
+import Dashboard from "./Dashboard.jsx";
 import { colors, typography, radius, shadows, animation, space } from "./theme.js";
 import { Badge } from "./components/ui.jsx";
 import AppHeader from "./components/AppHeader.jsx";
 import { getTestFixture } from "./testFixture.js";
 
 export default function App() {
-  const [mode, setMode] = useState("menu"); // "menu" | "parser" | "viewer" | "simulation" | "worldscan"
+  const [mode, setMode] = useState("menu"); // "menu" | "parser" | "viewer" | "simulation" | "worldscan" | "dashboard"
   const [viewerData, setViewerData] = useState(null);
   const [simPreset, setSimPreset] = useState(null);
   const [recentMaps, setRecentMaps] = useState([]);
@@ -31,7 +32,7 @@ export default function App() {
 
     if (!urlMode) return;
 
-    const validModes = ["viewer", "simulation", "parser", "worldscan"];
+    const validModes = ["viewer", "simulation", "parser", "worldscan", "dashboard"];
     if (!validModes.includes(urlMode)) {
       console.warn(`[URL] Invalid mode: ${urlMode}. Valid: ${validModes.join(", ")}`);
       return;
@@ -140,7 +141,8 @@ export default function App() {
       if (e.key === "1" || e.key === "p") setMode("parser");
       if (e.key === "2" || e.key === "v") setMode("viewer");
       if (e.key === "3" || e.key === "s") setMode("simulation");
-      if (e.key === "4" || e.key === "w") setMode("worldscan");
+      if (e.key === "4" || e.key === "d") setMode("dashboard");
+      if (e.key === "5" || e.key === "w") setMode("worldscan");
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -160,6 +162,7 @@ export default function App() {
           {mode === "viewer" && <Viewer onBack={goMenu} onParser={goParser} initialData={viewerData} initialFineData={viewerFineData} initialStratGrid={viewerStratGrid} />}
           {mode === "simulation" && <Simulation onBack={goMenu} initialData={viewerData} preset={simPreset} />}
           {mode === "worldscan" && <WorldScanner onBack={goMenu} />}
+          {mode === "dashboard" && <Dashboard onBack={goMenu} />}
         </div>
       </div>
     );
@@ -217,7 +220,20 @@ export default function App() {
       ),
     },
     {
-      id: "worldscan", label: "World Scanner", accent: colors.accent.cyan, key: "4",
+      id: "dashboard", label: "PBEM Games", accent: colors.accent.purple, key: "4",
+      desc: "Join and manage play-by-email multiplayer games. View game status, submit orders, and review adjudication results.",
+      tags: ["Multiplayer", "Async", "Orders", "Review"],
+      icon: (
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+          <circle cx="9" cy="7" r="4" />
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+        </svg>
+      ),
+    },
+    {
+      id: "worldscan", label: "World Scanner", accent: colors.accent.cyan, key: "5",
       desc: "Pre-scan the entire planet at strategic (10km) or tactical (0.5km) resolution. Cached data enables instant map generation anywhere.",
       tags: ["Global", "10km", "0.5km", "Offline Cache"],
       icon: (
@@ -319,9 +335,7 @@ export default function App() {
         textAlign: "center", lineHeight: 1.6, position: "relative", zIndex: 1,
         opacity: 0.6, animation: "fadeIn 1s ease-out 0.4s both",
       }}>
-        Press <kbd style={{ padding: "1px 5px", borderRadius: 3, background: colors.bg.surface, border: `1px solid ${colors.border.subtle}`, fontSize: 9 }}>1</kbd>{" "}
-        <kbd style={{ padding: "1px 5px", borderRadius: 3, background: colors.bg.surface, border: `1px solid ${colors.border.subtle}`, fontSize: 9 }}>2</kbd>{" "}
-        <kbd style={{ padding: "1px 5px", borderRadius: 3, background: colors.bg.surface, border: `1px solid ${colors.border.subtle}`, fontSize: 9 }}>3</kbd> to navigate
+        Press <kbd style={{ padding: "1px 5px", borderRadius: 3, background: colors.bg.surface, border: `1px solid ${colors.border.subtle}`, fontSize: 9 }}>1</kbd>-<kbd style={{ padding: "1px 5px", borderRadius: 3, background: colors.bg.surface, border: `1px solid ${colors.border.subtle}`, fontSize: 9 }}>5</kbd> to navigate
       </div>
     </div>
   );
