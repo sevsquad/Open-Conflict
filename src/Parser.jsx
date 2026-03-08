@@ -4321,10 +4321,11 @@ export async function scanSinglePatch(bbox, cellKm, callbacks = {}) {
   const feat = parseFeatures(els, tier);
 
   const wikidataNames = await wikidataPromise;
+  // Strategic/operational: use curated whitelist only.
+  // Wikidata added too many secondary rivers (e.g. 20+ in France alone at ≥100km).
+  // Tactical/sub-tactical: use Wikidata for broader coverage at smaller scales.
   const whitelistNames = (tier === "strategic" || tier === "operational")
     ? getRiverWhitelistNames(tier, cellKm) : null;
-  // Whitelist-only at strategic/operational (matches go() behavior).
-  // Merging whitelist + Wikidata added too many secondary rivers.
   const wikidataRivers = whitelistNames || wikidataNames;
   const aridityGrid = await aridityPromise;
   const metroCities = await metroCitiesPromise;
