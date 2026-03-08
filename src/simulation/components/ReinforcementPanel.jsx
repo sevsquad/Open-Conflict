@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { colors, typography, radius, space } from "../../theme.js";
 import { Button, Badge, Card, SectionHeader, Select } from "../../components/ui.jsx";
 import { SCALE_TIERS, SCALE_ECHELONS, BRANCH_SCALE_RELEVANCE, MOVEMENT_TYPES, DIPLOMATIC_STATUSES, getUnitFieldsForScale, getBranchesForScale, getEchelonsForScale, ECHELON_LABELS } from "../schemas.js";
@@ -26,6 +26,7 @@ export default function ReinforcementPanel({
   placingPosition, // "col,row" or null — set by map click during placement
   onStartPlacing,  // () => void — enter map-click mode for position selection
   onCancelPlacing, // () => void — exit placement mode
+  terrainData,     // terrain grid data (optional, for placement validation)
 }) {
   const [expanded, setExpanded] = useState(false);
   const [showAddUnit, setShowAddUnit] = useState(false);
@@ -38,6 +39,10 @@ export default function ReinforcementPanel({
   const [unitName, setUnitName] = useState("");
   const [unitTiming, setUnitTiming] = useState("immediate"); // "immediate" | "scheduled"
   const [arrivalTurn, setArrivalTurn] = useState(gameState.game.turn + 1);
+  // L20: Keep arrivalTurn current as turns advance
+  useEffect(() => {
+    setArrivalTurn(prev => Math.max(prev, gameState.game.turn + 1));
+  }, [gameState.game.turn]);
   // Per-actor era override — defaults to what was set during setup
   const [eraOverrides, setEraOverrides] = useState({});
 
@@ -85,8 +90,28 @@ export default function ReinforcementPanel({
     setShowAddActor(false);
   };
 
+  // M10: Water terrain types that ground units cannot be placed on
+  const WATER_TERRAIN = new Set(["deep_water", "shallow_water", "coastal_water", "river"]);
+
   const handleConfirmUnit = () => {
     if (!unitName.trim() || !selectedTemplate || !unitEchelon || !placingPosition) return;
+
+    // M10: Validate placement terrain — reject water for non-naval units
+    if (terrainData?.cells) {
+      const cell = terrainData.cells[placingPosition];
+      const movType = selectedTemplate.defaults?.movementType || "foot";
+      if (cell && WATER_TERRAIN.has(cell.terrain) && movType !== "naval" && movType !== "amphibious") {
+        alert(`Cannot place ground unit on ${cell.terrain.replace(/_/g, " ")}. Choose a land hex.`);
+        return;
+      }
+    }
+
+    // M10: Warn about stacking — other units already at this hex
+    const existingAtHex = gameState.units.filter(u => u.position === placingPosition && u.status !== "destroyed" && u.status !== "eliminated");
+    if (existingAtHex.length > 0) {
+      const names = existingAtHex.map(u => u.name).join(", ");
+      if (!confirm(`${names} already at this hex. Place here anyway?`)) return;
+    }
 
     const scaleFields = getUnitFieldsForScale(scaleTier);
     const tpl = selectedTemplate;

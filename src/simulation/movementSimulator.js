@@ -64,10 +64,20 @@ export function simulateMovement(gameState, terrainData, sealedOrders, previousV
       const from = parsePosition(unit.position);
       const to = parsePosition(moveOrder.target);
       if (from && to) {
+        // Bounds check: skip movement to off-map targets
+        const cols = terrainData?.cols ?? Infinity;
+        const rows = terrainData?.rows ?? Infinity;
+        if (to.col < 0 || to.col >= cols || to.row < 0 || to.row >= rows) {
+          movePaths[unit.id] = [];
+          unitPaths[unit.id] = [`${from.col},${from.row}`];
+          continue;
+        }
         const path = hexLine(from.col, from.row, to.col, to.row);
+        // Filter out any intermediate hexes that go off-map
+        const inBounds = path.filter(p => p.col >= 0 && p.col < cols && p.row >= 0 && p.row < rows);
         // Convert to {col, row} objects and skip the starting position
-        movePaths[unit.id] = path.slice(1);
-        unitPaths[unit.id] = path.map(p => `${p.col},${p.row}`);
+        movePaths[unit.id] = inBounds.slice(1);
+        unitPaths[unit.id] = inBounds.map(p => `${p.col},${p.row}`);
         movingUnits.add(unit.id);
       }
     }
@@ -96,6 +106,14 @@ export function simulateMovement(gameState, terrainData, sealedOrders, previousV
 
   // Step 0: Initial detection at starting positions
   const startVis = computeDetection(gameState, terrainData, sealedOrders, previousVisibility);
+
+  // Accumulate all cells each actor sees across every movement step.
+  // The LLM gets terrain context for every cell any friendly unit could
+  // observe at any point during the turn, not just the final snapshot.
+  const accumulatedVisible = {};  // actorId → Set of hex keys
+  for (const [actorId, av] of Object.entries(startVis.actorVisibility)) {
+    accumulatedVisible[actorId] = new Set(av.visibleCells || []);
+  }
 
   // Track what each actor knew at the start (for surprise determination)
   const initialDetected = {};  // actorId → Set of detected unit IDs
@@ -128,6 +146,12 @@ export function simulateMovement(gameState, terrainData, sealedOrders, previousV
 
     // Run detection at this step
     const stepVis = computeDetection(stepGameState, terrainData, sealedOrders, startVis);
+
+    // Accumulate visible cells from this step into per-actor running total
+    for (const [actorId, av] of Object.entries(stepVis.actorVisibility)) {
+      if (!accumulatedVisible[actorId]) accumulatedVisible[actorId] = new Set();
+      for (const cell of (av.visibleCells || [])) accumulatedVisible[actorId].add(cell);
+    }
 
     // Check for contact events at this step
     for (const actor of gameState.scenario.actors) {
@@ -219,10 +243,37 @@ export function simulateMovement(gameState, terrainData, sealedOrders, previousV
   };
   const finalVisibility = computeDetection(finalGameState, terrainData, sealedOrders, startVis);
 
+  // Merge accumulated visible cells into final visibility.
+  // Final detection only has cells visible from end positions — the LLM needs
+  // everything the actor could see during the entire turn (start + each step + end).
+  for (const [actorId, av] of Object.entries(finalVisibility.actorVisibility)) {
+    const accumulated = accumulatedVisible[actorId];
+    if (accumulated) {
+      for (const cell of accumulated) av.visibleCells.add(cell);
+    }
+    // Guarantee: every unit's own cell is always visible to its actor
+    const myUnits = simUnits.filter(u => u.actor === actorId);
+    for (const u of myUnits) {
+      const pos = parsePosition(u._simPos);
+      if (pos) av.visibleCells.add(`${pos.col},${pos.row}`);
+    }
+  }
+
+  // Build movement paths as hex key arrays per actor (for LLM full-detail tier)
+  const actorMovePaths = {};  // actorId → Set of hex keys traversed
+  for (const unit of simUnits) {
+    if (!actorMovePaths[unit.actor]) actorMovePaths[unit.actor] = new Set();
+    const path = unitPaths[unit.id];
+    if (path) {
+      for (const hexKey of path) actorMovePaths[unit.actor].add(hexKey);
+    }
+  }
+
   return {
     finalVisibility,
     contactEvents,
     unitPaths,
+    actorMovePaths,
     // The final positions for each unit (so SimGame can update before adjudication)
     finalPositions: Object.fromEntries(
       simUnits.map(u => [u.id, u._simPos])

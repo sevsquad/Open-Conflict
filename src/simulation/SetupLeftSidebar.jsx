@@ -25,6 +25,8 @@ export default function SetupLeftSidebar({ state, dispatch, providers, open, onT
     if (tier) {
       dispatch({ type: "SET_FIELD", field: "turnDuration", value: tier.defaultTurn });
     }
+    // Re-validate placed units — fix echelons invalid for the new scale
+    dispatch({ type: "VALIDATE_UNITS_FOR_SCALE", newScale });
   };
 
   return (

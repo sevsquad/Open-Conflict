@@ -5,7 +5,7 @@ import { ACTOR_COLORS } from "../terrainColors.js";
 import { createGame, getProviders } from "./orchestrator.js";
 import { cellToPositionString, parseUnitPosition } from "../mapRenderer/overlays/UnitOverlay.js";
 import { getPresetsForMap, getPresetById } from "./presets.js";
-import { SCALE_TIERS, getDefaultEchelon, DEFAULT_ENVIRONMENT, getUnitFieldsForScale } from "./schemas.js";
+import { SCALE_TIERS, getDefaultEchelon, getEchelonsForScale, DEFAULT_ENVIRONMENT, getUnitFieldsForScale } from "./schemas.js";
 import SimMap from "./SimMap.jsx";
 import SetupLeftSidebar from "./SetupLeftSidebar.jsx";
 import SetupRightSidebar from "./SetupRightSidebar.jsx";
@@ -77,10 +77,12 @@ function setupReducer(state, action) {
 
     case "ADD_ACTOR": {
       const num = state.actors.length + 1;
+      // Timestamp-based ID avoids collisions after add/remove cycles
+      const newId = `actor_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`;
       return {
         ...state,
         actors: [...state.actors, {
-          id: `actor_${num}`,
+          id: newId,
           name: `Side ${String.fromCharCode(64 + num)}`,
           controller: "player",
           objectives: [""],
@@ -89,9 +91,16 @@ function setupReducer(state, action) {
       };
     }
 
-    case "REMOVE_ACTOR":
+    case "REMOVE_ACTOR": {
       if (state.actors.length <= 2) return state;
-      return { ...state, actors: state.actors.filter((_, i) => i !== action.idx) };
+      const removedActorId = state.actors[action.idx]?.id;
+      return {
+        ...state,
+        actors: state.actors.filter((_, i) => i !== action.idx),
+        // Clean up orphaned units belonging to the removed actor
+        units: removedActorId ? state.units.filter(u => u.actor !== removedActorId) : state.units,
+      };
+    }
 
     case "UPDATE_ACTOR":
       return {
@@ -165,10 +174,26 @@ function setupReducer(state, action) {
     }
 
     case "UPDATE_UNIT":
+      // Supports both idx (legacy) and unitId (preferred) for identification
       return {
         ...state,
-        units: state.units.map((u, i) => i === action.idx ? { ...u, [action.field]: action.value } : u),
+        units: state.units.map((u, i) =>
+          (action.unitId ? u.id === action.unitId : i === action.idx)
+            ? { ...u, [action.field]: action.value } : u
+        ),
       };
+
+    case "VALIDATE_UNITS_FOR_SCALE": {
+      // Auto-fix echelons that are invalid for the new scale
+      const validEchelons = new Set(getEchelonsForScale(action.newScale));
+      const defaultEch = getDefaultEchelon(action.newScale);
+      return {
+        ...state,
+        units: state.units.map(u =>
+          validEchelons.has(u.echelon) ? u : { ...u, echelon: defaultEch }
+        ),
+      };
+    }
 
     case "DUPLICATE_UNIT": {
       const original = state.units.find(u => u.id === action.unitId);
@@ -410,6 +435,22 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
     if (!state.title.trim()) { alert("Please enter a scenario title."); return; }
     if (!state.provider || !state.model) { alert("No LLM provider configured. Check your .env file."); return; }
 
+    // M12: Warn about unnamed units that will be excluded
+    const unnamedCount = state.units.filter(u => !u.name.trim()).length;
+    if (unnamedCount > 0) {
+      if (!confirm(`${unnamedCount} unit(s) have no name and will be excluded. Continue?`)) return;
+    }
+
+    // M15: Warn if no units or no objectives
+    const namedUnits = state.units.filter(u => u.name.trim());
+    if (namedUnits.length === 0) {
+      if (!confirm("No units have been placed. Start anyway?")) return;
+    }
+    const noObjectives = state.actors.every(a => a.objectives.filter(o => o.trim()).length === 0);
+    if (noObjectives) {
+      if (!confirm("No actor has objectives set. Start anyway?")) return;
+    }
+
     const scenario = {
       scale: state.scale,
       title: state.title.trim(),
@@ -424,7 +465,7 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
       })),
       initialConditions: state.initialConditions,
       specialRules: state.specialRules,
-      units: state.units.filter(u => u.name.trim()),
+      units: namedUnits,
       environment: state.environment,
       eraSelections: state.eraSelections,
     };
@@ -472,7 +513,7 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
             if (preset) dispatch({ type: "LOAD_PRESET", preset });
           }}
           style={{
-            background: colors.bg.secondary,
+            background: colors.bg.surface,
             color: colors.text.primary,
             border: `1px solid ${colors.border.subtle}`,
             borderRadius: radius.sm,

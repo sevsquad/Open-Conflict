@@ -240,7 +240,43 @@ export function formatCellDetail(col, row, cell, scaleTier = null) {
     parts.push(`bldg:{${bParts.join(",")}}`);
   }
 
+  // Terrain composition from sub-cells (strategic grid over fine grid).
+  // Shows what fine-grained terrains compose this game hex. Single-char legend
+  // keeps it compact: e.g. "mix:{R:30%,g:15%,P:20%}" = 30% residential, 15% grass, 20% park
+  if (cell.terrainComposition && Object.keys(cell.terrainComposition).length > 1) {
+    const entries = Object.entries(cell.terrainComposition)
+      .sort((a, b) => b[1] - a[1])           // highest % first
+      .filter(([, pct]) => pct >= 5)          // skip <5% slivers
+      .slice(0, 6);                            // cap at 6 entries
+    if (entries.length > 1) {
+      const legend = entries.map(([t, pct]) => `${COMP_LEGEND[t] || t.charAt(0)}:${Math.round(pct)}%`).join(",");
+      parts.push(`mix:{${legend}}`);
+    }
+  }
+
   return parts.join(" ");
+}
+
+// Compact terrain composition legend — single-char codes for common terrain types.
+// Keeps the composition string short while remaining readable to the LLM.
+const COMP_LEGEND = {
+  bldg_residential: "R", bldg_commercial: "C", bldg_industrial: "I", bldg_mixed: "M",
+  bldg_historic: "H", bldg_dense: "D", street: "s", road: "r", highway: "h",
+  park: "P", garden: "G", open_ground: "o", farmland: "f", forest: "F",
+  dense_forest: "Fd", light_veg: "v", wetland: "w", river: "~", lake: "L",
+  rail_track: "=", light_urban: "u", dense_urban: "U", suburban: "S",
+  urban_commercial: "Uc", urban_industrial: "Ui", urban_dense_core: "Ud",
+  highland: "^", mountain: "^^", desert: "d", tundra: "T",
+};
+
+// Light-weight cell format: terrain + elevation only. Used for visible cells
+// outside the "full detail" tier to save tokens while still giving the LLM
+// awareness of the surrounding terrain landscape.
+export function formatCellLight(col, row, cell) {
+  if (!cell) return `${cellCoord(col, row)}:[off]`;
+  const terrain = TERRAIN_LABEL[cell.terrain] || cell.terrain;
+  const elev = cell.elevation !== undefined ? `,${Math.round(cell.elevation)}m` : "";
+  return `${cellCoord(col, row)}:${terrain}${elev}`;
 }
 
 // ── Order-Type Feature Relevance ──────────────────────────────
@@ -476,6 +512,7 @@ export function buildTerrainGrid(terrainData) {
 // ── Elevation Bands ─────────────────────────────────────────
 
 const ELEV_BANDS = [
+  { label: "0-50m", min: 0, max: 50 },
   { label: "50-200m", min: 50, max: 200 },
   { label: "200-500m", min: 200, max: 500 },
   { label: "500-1000m", min: 500, max: 1000 },

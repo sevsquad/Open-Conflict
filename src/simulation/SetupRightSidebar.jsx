@@ -254,7 +254,7 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
                 <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Name</div>
                 <input
                   value={selectedUnit.name}
-                  onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "name", value: e.target.value })}
+                  onChange={e => dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "name", value: e.target.value })}
                   placeholder="Unit name"
                   style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily, outline: "none", boxSizing: "border-box" }}
                 />
@@ -266,7 +266,7 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
                   <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Branch</div>
                   <select
                     value={selectedUnit.type}
-                    onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "type", value: e.target.value })}
+                    onChange={e => dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "type", value: e.target.value })}
                     style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}
                   >
                     {branches.map(t => <option key={t} value={t}>{formatType(t)}</option>)}
@@ -280,7 +280,7 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
                   <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Echelon</div>
                   <select
                     value={selectedUnit.echelon || ""}
-                    onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "echelon", value: e.target.value })}
+                    onChange={e => dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "echelon", value: e.target.value })}
                     style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}
                   >
                     {echelons.map(e => <option key={e} value={e}>{ECHELON_LABELS[e] || formatType(e)}</option>)}
@@ -296,7 +296,7 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
                 <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Posture</div>
                 <select
                   value={selectedUnit.posture || "ready"}
-                  onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "posture", value: e.target.value })}
+                  onChange={e => dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "posture", value: e.target.value })}
                   style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}
                 >
                   {POSTURES.map(p => <option key={p} value={p}>{formatType(p)}</option>)}
@@ -318,7 +318,7 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
                   }}>{selectedUnit.strength}%</span>
                 </div>
                 <input type="range" min="0" max="100" step="5" value={selectedUnit.strength}
-                  onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "strength", value: parseInt(e.target.value) })}
+                  onChange={e => dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "strength", value: parseInt(e.target.value) })}
                   style={{ width: "100%", accentColor: selectedUnit.strength > 50 ? colors.accent.green : selectedUnit.strength > 25 ? colors.accent.amber : colors.accent.red }} />
               </div>
 
@@ -328,7 +328,7 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
                   <span style={{ color: colors.accent.cyan, fontFamily: typography.monoFamily, fontWeight: typography.weight.semibold }}>{selectedUnit.supply}%</span>
                 </div>
                 <input type="range" min="0" max="100" step="5" value={selectedUnit.supply}
-                  onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "supply", value: parseInt(e.target.value) })}
+                  onChange={e => dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "supply", value: parseInt(e.target.value) })}
                   style={{ width: "100%", accentColor: colors.accent.cyan }} />
               </div>
 
@@ -340,7 +340,7 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
                     <span style={{ color: selectedUnit.morale > 50 ? colors.accent.green : selectedUnit.morale > 25 ? colors.accent.amber : colors.accent.red, fontFamily: typography.monoFamily, fontWeight: typography.weight.semibold }}>{selectedUnit.morale}%</span>
                   </div>
                   <input type="range" min="0" max="100" step="5" value={selectedUnit.morale}
-                    onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "morale", value: parseInt(e.target.value) })}
+                    onChange={e => dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "morale", value: parseInt(e.target.value) })}
                     style={{ width: "100%", accentColor: selectedUnit.morale > 50 ? colors.accent.green : selectedUnit.morale > 25 ? colors.accent.amber : colors.accent.red }} />
                 </div>
               )}
@@ -353,7 +353,7 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
                     <span style={{ color: selectedUnit.cohesion > 50 ? colors.accent.green : selectedUnit.cohesion > 25 ? colors.accent.amber : colors.accent.red, fontFamily: typography.monoFamily, fontWeight: typography.weight.semibold }}>{selectedUnit.cohesion}%</span>
                   </div>
                   <input type="range" min="0" max="100" step="5" value={selectedUnit.cohesion}
-                    onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "cohesion", value: parseInt(e.target.value) })}
+                    onChange={e => dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "cohesion", value: parseInt(e.target.value) })}
                     style={{ width: "100%", accentColor: selectedUnit.cohesion > 50 ? colors.accent.green : selectedUnit.cohesion > 25 ? colors.accent.amber : colors.accent.red }} />
                 </div>
               )}
@@ -366,7 +366,7 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
                     <span style={{ color: selectedUnit.ammo > 50 ? colors.accent.green : selectedUnit.ammo > 25 ? colors.accent.amber : colors.accent.red, fontFamily: typography.monoFamily, fontWeight: typography.weight.semibold }}>{selectedUnit.ammo}%</span>
                   </div>
                   <input type="range" min="0" max="100" step="5" value={selectedUnit.ammo}
-                    onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "ammo", value: parseInt(e.target.value) })}
+                    onChange={e => dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "ammo", value: parseInt(e.target.value) })}
                     style={{ width: "100%", accentColor: selectedUnit.ammo > 50 ? colors.accent.green : selectedUnit.ammo > 25 ? colors.accent.amber : colors.accent.red }} />
                 </div>
               )}
@@ -379,7 +379,7 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
                     <span style={{ color: selectedUnit.fuel > 50 ? colors.accent.green : selectedUnit.fuel > 25 ? colors.accent.amber : colors.accent.red, fontFamily: typography.monoFamily, fontWeight: typography.weight.semibold }}>{selectedUnit.fuel}%</span>
                   </div>
                   <input type="range" min="0" max="100" step="5" value={selectedUnit.fuel}
-                    onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "fuel", value: parseInt(e.target.value) })}
+                    onChange={e => dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "fuel", value: parseInt(e.target.value) })}
                     style={{ width: "100%", accentColor: selectedUnit.fuel > 50 ? colors.accent.green : selectedUnit.fuel > 25 ? colors.accent.amber : colors.accent.red }} />
                 </div>
               )}
@@ -392,7 +392,7 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
                     <span style={{ color: selectedUnit.fatigue < 30 ? colors.accent.green : selectedUnit.fatigue < 60 ? colors.accent.amber : colors.accent.red, fontFamily: typography.monoFamily, fontWeight: typography.weight.semibold }}>{selectedUnit.fatigue}%</span>
                   </div>
                   <input type="range" min="0" max="100" step="5" value={selectedUnit.fatigue}
-                    onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "fatigue", value: parseInt(e.target.value) })}
+                    onChange={e => dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "fatigue", value: parseInt(e.target.value) })}
                     style={{ width: "100%", accentColor: selectedUnit.fatigue < 30 ? colors.accent.green : selectedUnit.fatigue < 60 ? colors.accent.amber : colors.accent.red }} />
                 </div>
               )}
@@ -405,7 +405,7 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
                     <span style={{ color: colors.accent.cyan, fontFamily: typography.monoFamily, fontWeight: typography.weight.semibold }}>{selectedUnit.entrenchment}%</span>
                   </div>
                   <input type="range" min="0" max="100" step="10" value={selectedUnit.entrenchment}
-                    onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "entrenchment", value: parseInt(e.target.value) })}
+                    onChange={e => dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "entrenchment", value: parseInt(e.target.value) })}
                     style={{ width: "100%", accentColor: colors.accent.cyan }} />
                 </div>
               )}
@@ -416,7 +416,7 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
                   <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Movement</div>
                   <select
                     value={selectedUnit.movementType || "foot"}
-                    onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "movementType", value: e.target.value })}
+                    onChange={e => dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "movementType", value: e.target.value })}
                     style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}
                   >
                     {MOVEMENT_TYPES.map(mt => <option key={mt} value={mt}>{formatType(mt)}</option>)}
@@ -427,7 +427,7 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
                     <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Parent HQ</div>
                     <select
                       value={selectedUnit.parentHQ || ""}
-                      onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "parentHQ", value: e.target.value })}
+                      onChange={e => dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "parentHQ", value: e.target.value })}
                       style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}
                     >
                       <option value="">None</option>
@@ -445,7 +445,7 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
                   <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Task Organization</div>
                   <textarea
                     value={selectedUnit.taskOrg || ""}
-                    onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "taskOrg", value: e.target.value })}
+                    onChange={e => dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "taskOrg", value: e.target.value })}
                     placeholder="e.g., 1x armor co, 2x mech inf co, 1x eng plt"
                     style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.xs, fontFamily: typography.fontFamily, outline: "none", minHeight: 36, resize: "vertical", boxSizing: "border-box" }}
                   />
@@ -456,7 +456,7 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
                 <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Notes</div>
                 <textarea
                   value={selectedUnit.notes || ""}
-                  onChange={e => dispatch({ type: "UPDATE_UNIT", idx: selectedUnitIdx, field: "notes", value: e.target.value })}
+                  onChange={e => dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "notes", value: e.target.value })}
                   placeholder="Optional notes..."
                   style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.xs, fontFamily: typography.fontFamily, outline: "none", minHeight: 40, resize: "vertical", boxSizing: "border-box" }}
                 />

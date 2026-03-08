@@ -66,7 +66,7 @@ function normalizeOrdersForComputer(unitOrders) {
 // whichever fires first: timeout or external cancel.
 const FETCH_TIMEOUT_MS = 900_000; // 15 minutes — cancel button is the real escape hatch
 
-function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS, externalSignal = null) {
+export function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS, externalSignal = null) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   if (externalSignal) {
@@ -112,6 +112,18 @@ const RATE_LIMIT_BACKOFF_MS = [5_000, 15_000, 30_000];
 export async function adjudicate(gameState, playerActions, terrainData, logger, structuredOrders = null, detectionContext = null, abortSignal = null) {
   const scaleKey = gameState.game?.scale || "grand_tactical";
   const scaleTier = SCALE_TIERS[scaleKey]?.tier || 3;
+
+  // Calculate dynamic max_tokens early — needed by buildSystemPrompt and LLM call.
+  const unitCount = gameState.units.length;
+  const actorCount = gameState.scenario.actors.length;
+  const gridArea = (terrainData?.cols || 12) * (terrainData?.rows || 15);
+  const baseTokens = 8000 + Math.round(2000 * Math.log10(Math.max(gridArea / 100, 1)));
+  const perUnitTokens = 1000;
+  const perspectiveTokens = detectionContext ? (actorCount * 800) : 0;
+  const maxTokens = Math.min(
+    baseTokens + (unitCount * perUnitTokens) + perspectiveTokens,
+    64000
+  );
 
   // Scale-conditional corpus loading
   const corpus = loadCorpus(scaleTier);
@@ -189,24 +201,6 @@ export async function adjudicate(gameState, playerActions, terrainData, logger, 
     { role: "system", content: systemPrompt },
     { role: "user", content: userPrompt }
   ];
-
-  // Calculate dynamic max_tokens based on scenario complexity
-  // Base scales logarithmically with grid area (bigger maps = longer narratives)
-  // Per-unit cost covers feasibility assessment + citations + weaknesses + state update
-  // Detection context adds ~500 tokens per actor for actor_perspectives narratives
-  const unitCount = gameState.units.length;
-  const actorCount = gameState.scenario.actors.length;
-  const gridArea = (terrainData?.cols || 12) * (terrainData?.rows || 15);
-  // Raised from 6000/500 — Sonnet's narrative quality needs ~1000 tokens/unit
-  const baseTokens = 8000 + Math.round(2000 * Math.log10(Math.max(gridArea / 100, 1)));
-  const perUnitTokens = 1000;
-  const perspectiveTokens = detectionContext ? (actorCount * 800) : 0;
-  // High ceiling — Sonnet supports 64K, user's plan allows up to 80K.
-  // Completing in one shot is cheaper than truncation retries that double output usage.
-  const maxTokens = Math.min(
-    baseTokens + (unitCount * perUnitTokens) + perspectiveTokens,
-    64000
-  );
 
   // Attempt adjudication with retry logic (C.5)
   let lastError = null;
@@ -317,7 +311,7 @@ export async function adjudicate(gameState, playerActions, terrainData, logger, 
     let parsed;
     try {
       // Handle potential markdown code fences around JSON
-      let content = llmResponse.content.trim();
+      let content = (llmResponse.content || "").trim();
       if (content.startsWith("```")) {
         content = content.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "");
       }
@@ -329,7 +323,7 @@ export async function adjudicate(gameState, playerActions, terrainData, logger, 
       // Append error for retry
       retryMessages = [
         ...messages,
-        { role: "assistant", content: llmResponse.content },
+        { role: "assistant", content: llmResponse.content || "" },
         { role: "user", content: `Your previous response was not valid JSON. Error: ${e.message}\n\nPlease respond with ONLY a valid JSON object conforming to the adjudication schema. Do not include any text before or after the JSON.` }
       ];
       continue;
@@ -353,6 +347,10 @@ export async function adjudicate(gameState, playerActions, terrainData, logger, 
         continue;
       }
     }
+
+    // M19: Save a deep copy before engine mutations (position validation, etc.)
+    // so adjudicateRebuttal sends the original LLM output, not the mutated version
+    const rawAdjudication = JSON.parse(JSON.stringify(parsed));
 
     // Validate state updates against current game state
     if (parsed.adjudication?.state_updates) {
@@ -413,6 +411,7 @@ export async function adjudicate(gameState, playerActions, terrainData, logger, 
 
     return {
       adjudication: parsed,
+      rawAdjudication,  // M19: pre-mutation copy for use in rebuttal
       promptLog,
       fortuneRolls,
       frictionEvents,
@@ -446,9 +445,20 @@ export async function adjudicate(gameState, playerActions, terrainData, logger, 
  * @param {Object} counterRebuttals - { actorId: "counter-rebuttal text", ... } (from non-challengers)
  * @returns {{ adjudication, promptLog, error }}
  */
-export async function adjudicateRebuttal(gameState, playerActions, terrainData, originalResult, rebuttals, logger, counterRebuttals = {}, abortSignal = null) {
+export async function adjudicateRebuttal(gameState, playerActions, terrainData, originalResult, rebuttals, logger, counterRebuttals = {}, abortSignal = null, structuredOrders = null, detectionContext = null) {
   const scaleKey = gameState.game?.scale || "grand_tactical";
   const scaleTier = SCALE_TIERS[scaleKey]?.tier || 3;
+
+  // Calculate maxTokens early — needed by buildSystemPrompt
+  const unitCount = gameState.units.length;
+  const actorCount = gameState.scenario.actors.length;
+  const gridArea = (terrainData?.cols || 12) * (terrainData?.rows || 15);
+  const baseTokens = 8000 + Math.round(2000 * Math.log10(Math.max(gridArea / 100, 1)));
+  const perspectiveTokens = actorCount * 800; // M7: was missing from rebuttal calculation
+  const maxTokens = Math.min(
+    baseTokens + (unitCount * 1000) + perspectiveTokens,
+    64000
+  );
 
   const corpus = loadCorpus(scaleTier);
   const systemPrompt = buildSystemPrompt(scaleKey, { maxTokens });
@@ -461,6 +471,21 @@ export async function adjudicateRebuttal(gameState, playerActions, terrainData, 
     actions.push({ actor, report });
   }
 
+  // M6: Build order bundles for rebuttal so the LLM sees the same pre-computed data
+  let orderBundleSection = null;
+  if (structuredOrders?.unitOrders) {
+    const normalizedOrders = normalizeOrdersForComputer(structuredOrders.unitOrders);
+    const unitFortuneMap = originalResult.fortuneRolls?.unitRolls || {};
+    const bundles = buildAllBundles(normalizedOrders, gameState, terrainData, unitFortuneMap, {}, detectionContext);
+    orderBundleSection = formatOrderBundles(
+      bundles,
+      structuredOrders.actorIntents || {},
+      gameState.scenario.actors,
+      { wildCard: originalResult.fortuneRolls?.wildCard },
+      originalResult.frictionEvents?.events || []
+    );
+  }
+
   const userPrompt = buildAdjudicationPrompt({
     scenario: gameState.scenario,
     gameState,
@@ -470,6 +495,8 @@ export async function adjudicateRebuttal(gameState, playerActions, terrainData, 
     playerActions,
     fortuneRolls: originalResult.fortuneRolls,
     frictionEvents: originalResult.frictionEvents,
+    orderBundleSection,
+    detectionContext,
     maxTokens,
   });
 
@@ -477,7 +504,8 @@ export async function adjudicateRebuttal(gameState, playerActions, terrainData, 
   const rebuttalPrompt = buildRebuttalPrompt(rebuttals, gameState.scenario.actors, counterRebuttals);
 
   // Multi-turn conversation: system → original prompt → original response → rebuttal
-  const originalResponseJSON = JSON.stringify(originalResult.adjudication);
+  // M19: Use rawAdjudication (pre-mutation) if available, so the LLM sees its original output
+  const originalResponseJSON = JSON.stringify(originalResult.rawAdjudication || originalResult.adjudication);
   const messages = [
     { role: "system", content: systemPrompt },
     { role: "user", content: userPrompt },
@@ -488,15 +516,6 @@ export async function adjudicateRebuttal(gameState, playerActions, terrainData, 
   if (logger) {
     logger.log(gameState.game.turn, "rebuttal_submitted", { rebuttals });
   }
-
-  // Dynamic max_tokens (same formula as adjudicate)
-  const unitCount = gameState.units.length;
-  const gridArea = (terrainData?.cols || 12) * (terrainData?.rows || 15);
-  const baseTokens = 8000 + Math.round(2000 * Math.log10(Math.max(gridArea / 100, 1)));
-  const maxTokens = Math.min(
-    baseTokens + (unitCount * 1000),
-    64000
-  );
 
   // Same retry logic as adjudicate()
   let lastError = null;
@@ -594,7 +613,7 @@ export async function adjudicateRebuttal(gameState, playerActions, terrainData, 
     // Parse JSON
     let parsed;
     try {
-      let content = llmResponse.content.trim();
+      let content = (llmResponse.content || "").trim();
       if (content.startsWith("```")) {
         content = content.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "");
       }
@@ -603,7 +622,7 @@ export async function adjudicateRebuttal(gameState, playerActions, terrainData, 
       lastError = `Failed to parse rebuttal response as JSON: ${e.message}`;
       retryMessages = [
         ...messages,
-        { role: "assistant", content: llmResponse.content },
+        { role: "assistant", content: llmResponse.content || "" },
         { role: "user", content: `Your previous response was not valid JSON. Error: ${e.message}\n\nPlease respond with ONLY a valid JSON object conforming to the adjudication schema.` }
       ];
       continue;
@@ -717,7 +736,11 @@ export function applyStateUpdates(gameState, adjudication, playerActions = {}) {
   for (const a of assessments) {
     if (a.feasibility === "impossible" && a.action) {
       // Match the specific unit named in the assessment's action field (e.g., "Thunder Battery move L7→A5")
-      const matchedUnit = newUnits.find(u => a.action.includes(u.name));
+      // Use word-boundary regex to avoid partial matches (e.g., "Fox" matching "Foxtrot")
+      const matchedUnit = newUnits.find(u => {
+        const escaped = u.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        return new RegExp(`\\b${escaped}\\b`, "i").test(a.action);
+      });
       if (matchedUnit) impossibleEntities.add(matchedUnit.id);
     }
   }
@@ -737,8 +760,10 @@ export function applyStateUpdates(gameState, adjudication, playerActions = {}) {
       let normalizedValue = new_value;
 
       // Normalize position values: LLM returns Excel-style ("H4"), state uses comma ("7,3")
+      // Guard: if labelToCommaPosition returns non-comma format, keep current position
       if (attribute === "position" && typeof new_value === "string") {
-        normalizedValue = labelToCommaPosition(new_value);
+        const converted = labelToCommaPosition(new_value);
+        normalizedValue = (converted && converted.includes(",")) ? converted : newUnits[unitIdx].position;
       }
 
       // Normalize numeric fields: strip "%", parse to number, clamp 0-100
@@ -909,7 +934,7 @@ function processReinforcementQueue(gameState) {
       if (scaleTier >= 4) {
         for (const existing of newActors) {
           if (existing.id === reinf.newActor.id) continue;
-          const key = [existing.id, reinf.newActor.id].sort().join("-");
+          const key = [existing.id, reinf.newActor.id].sort().join("||");
           if (!newDiplomacy[key]) {
             newDiplomacy[key] = { status: "neutral", channels: ["none"], agreements: [] };
           }

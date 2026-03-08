@@ -12,11 +12,12 @@ import { ORDER_TYPES } from "./orderTypes.js";
 import { parseUnitPosition } from "../mapRenderer/overlays/UnitOverlay.js";
 import { positionToLabel } from "./prompts.js";
 import { hexLine } from "../mapRenderer/HexMath.js";
-import { computeMovePath } from "./orderComputer.js";
+import { computeMovePath, computeRange } from "./orderComputer.js";
 import { PHASES, getNextPhase, isBusyPhase, actorNeedsInput } from "./turnPhases.js";
 import { computeDetection, serializeVisibility, deserializeVisibility } from "./detectionEngine.js";
 import { simulateMovement } from "./movementSimulator.js";
 import { filterAdjudicationForActor, extractProposedMoves } from "./adjudicationFilter.js";
+import { auditAllNarratives } from "./narrativeAuditor.js";
 import HandoffScreen from "./components/HandoffScreen.jsx";
 import ReinforcementPanel from "./components/ReinforcementPanel.jsx";
 import { ACTOR_COLORS } from "../terrainColors.js";
@@ -66,6 +67,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
   });
   const [providers, setProviders] = useState([]);
   const [adjudicatingLLM, setAdjudicatingLLM] = useState(false);
+  const [adjPhaseLabel, setAdjPhaseLabel] = useState(null); // override loading spinner text
   const [currentAdjudication, setCurrentAdjudication] = useState(null);
   const [fortuneRolls, setFortuneRolls] = useState(null);
   const [frictionEvents, setFrictionEvents] = useState(null);
@@ -85,6 +87,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
   const [perActorAdjudication, setPerActorAdjudication] = useState({}); // { actorId: filtered adj }
   const [pendingResult, setPendingResult] = useState(null); // full result with fortuneRolls/frictionEvents/promptLog
   const [contactEvents, setContactEvents] = useState([]);   // contact events from movement simulation
+  const [actorMovePaths, setActorMovePaths] = useState(null); // per-actor movement path hex keys
 
   // ── Challenge/rebuttal state ──
   const [actorDecisions, setActorDecisions] = useState({}); // { actorId: "accept"|"challenge" }
@@ -98,6 +101,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
   const [showRaw, setShowRaw] = useState(false);
   const [moderatorNote, setModeratorNote] = useState("");
   const [orderWarnings, setOrderWarnings] = useState(null);
+  const [rangeWarning, setRangeWarning] = useState(null); // M11: { unit, order, range, targetStr } when target is out of range
   const [pendingRuling, setPendingRuling] = useState(null); // re-adjudication result shown at start of next turn
   const loggerRef = useRef(createLogger());
   const adjDisplayRef = useRef(null);
@@ -123,6 +127,10 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
 
   // ── Derived values ──
   const actors = gs.scenario.actors;
+  // L1: Guard against empty actor list (shouldn't happen but prevents crash)
+  if (actors.length === 0) {
+    return <div style={{ padding: space[4], color: colors.text.primary }}>No actors configured. Return to setup.</div>;
+  }
   const activeActor = actors[activeActorIndex] || actors[0];
   const actorColor = ACTOR_COLORS[activeActorIndex % ACTOR_COLORS.length];
 
@@ -225,13 +233,15 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Compute initial detection when FOW is turned on but no visibility exists yet
+  // Compute initial detection when FOW is turned on but no visibility exists yet.
+  // L3: Only run during PLANNING to avoid recomputing mid-turn
   useEffect(() => {
+    if (turnPhase !== PHASES.PLANNING) return;
     if (fogOfWar && !visibilityState && gs.units.length > 0 && terrainData) {
       const vis = computeDetection(gs, terrainData, null, null);
       setVisibilityState(vis);
     }
-  }, [fogOfWar]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fogOfWar, turnPhase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── MOVEMENT_AND_DETECTION phase: per-hex stepping + detection ──
   useEffect(() => {
@@ -243,14 +253,23 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
 
     setVisibilityState(simResult.finalVisibility);
     setContactEvents(simResult.contactEvents || []);
+    setActorMovePaths(simResult.actorMovePaths || null);
 
     setTurnPhase(PHASES.ADJUDICATING);
   }, [turnPhase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── RESOLVING phase: apply adjudication + advance turn ──
+  // M18: try/catch so a crash during state application doesn't freeze the UI
   useEffect(() => {
     if (turnPhase !== PHASES.RESOLVING) return;
-    applyMasterAdjudication();
+    try {
+      applyMasterAdjudication();
+    } catch (e) {
+      console.error("[SimGame] Error applying adjudication:", e);
+      setError(`Failed to apply adjudication: ${e.message}`);
+      setTurnPhase(PHASES.REVIEW);
+      setActiveActorIndex(0);
+    }
   }, [turnPhase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── ADJUDICATING phase: call LLM with sealed orders + detection context ──
@@ -307,15 +326,19 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
       }
       const structuredOrders = { unitOrders: allUnitOrders, actorIntents: allActorIntents };
 
-      // Build detection context for prompt injection
+      // Build detection context for prompt injection.
+      // Now includes visibleCells (accumulated across movement) and movePaths
+      // so the LLM terrain builder can send appropriate detail for each cell.
       const detectionContext = visibilityState ? {
         actorVisibility: Object.fromEntries(
           Object.entries(visibilityState.actorVisibility || {}).map(([actorId, av]) => [
             actorId, {
+              visibleCells: [...(av.visibleCells instanceof Set ? av.visibleCells : new Set(av.visibleCells || []))],
               detectedUnits: [...(av.detectedUnits instanceof Set ? av.detectedUnits : new Set(av.detectedUnits || []))],
               contactUnits: [...(av.contactUnits instanceof Set ? av.contactUnits : new Set(av.contactUnits || []))],
               detectionDetails: av.detectionDetails || {},
               lastKnown: av.lastKnown || {},
+              movePaths: actorMovePaths?.[actorId] ? [...actorMovePaths[actorId]] : [],
             },
           ])
         ),
@@ -341,6 +364,19 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
       setMasterAdjudication(result.adjudication);
       setCurrentAdjudication(result.adjudication);
       setPendingResult(result);
+
+      // FOW narrative audit: send each actor's narrative to a fast model
+      // to check for leaks about undetected enemy units
+      if (fogOfWar && visibilityState && result.adjudication?.adjudication?.actor_perspectives) {
+        setAdjPhaseLabel("Verifying narrative...");
+        const auditResults = await auditAllNarratives(
+          result.adjudication, visibilityState, gs, gs.game.config.llm, abortController.signal
+        );
+        if (auditResults.length > 0 && loggerRef.current) {
+          loggerRef.current.log(gs.game.turn, "narrative_audit", auditResults);
+        }
+        setAdjPhaseLabel(null);
+      }
 
       // Build per-actor filtered views
       const perActor = {};
@@ -424,32 +460,66 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
     if (unit) setSelectedUnit(unit);
   }, [gs.units, turnPhase, fogOfWar, activeActor.id, placingReinforcement]);
 
+  // Helper: actually store the target in unit orders
+  const applyTarget = useCallback((unit, orderType, targetStr, outOfRange = false) => {
+    const orderDef = ORDER_TYPES[orderType];
+    if (!orderDef) return;
+
+    setUnitOrders(prev => {
+      const actorOrders = prev[unit.actor] || {};
+      const currentOrders = actorOrders[unit.id] || {};
+      const isMovement = orderDef.slot === "movement";
+      const updated = { ...currentOrders };
+
+      if (isMovement) {
+        updated.movementOrder = { id: orderType, target: targetStr };
+      } else {
+        updated.actionOrder = {
+          id: orderType, target: targetStr, subtype: currentOrders.actionOrder?.subtype,
+          ...(outOfRange && { _outOfRange: true }),
+        };
+      }
+
+      return {
+        ...prev,
+        [unit.actor]: { ...actorOrders, [unit.id]: updated },
+      };
+    });
+  }, []);
+
   // Map click during targeting mode — set the target on the current order
+  // M11: For combat orders, check range accounting for ordered movement
+  const COMBAT_ORDER_IDS = new Set(["ATTACK", "SUPPORT_FIRE", "FIRE_MISSION", "SHORE_BOMBARDMENT"]);
+
   const handleTargetSelect = useCallback((cell) => {
     if (!targetingMode || !selectedUnit) return;
     const targetStr = `${cell.c},${cell.r}`;
     const orderDef = ORDER_TYPES[targetingMode.orderType];
     if (!orderDef) return;
 
-    setUnitOrders(prev => {
-      const actorOrders = prev[selectedUnit.actor] || {};
-      const currentOrders = actorOrders[selectedUnit.id] || {};
-      const isMovement = orderDef.slot === "movement";
-      const updated = { ...currentOrders };
+    // M11: Range check for combat orders
+    if (orderDef.slot === "action" && COMBAT_ORDER_IDS.has(targetingMode.orderType)) {
+      // Effective position = where the unit will be after any ordered movement
+      const currentOrders = (unitOrders[selectedUnit.actor] || {})[selectedUnit.id] || {};
+      const effectivePos = currentOrders.movementOrder?.target || selectedUnit.position;
+      const range = computeRange(effectivePos, targetStr, selectedUnit, terrainData?.cellSizeKm || 1);
 
-      if (isMovement) {
-        updated.movementOrder = { id: targetingMode.orderType, target: targetStr };
-      } else {
-        updated.actionOrder = { id: targetingMode.orderType, target: targetStr, subtype: currentOrders.actionOrder?.subtype };
+      if (range.band === "OUT_OF_RANGE") {
+        // Show warning dialog, don't store order yet
+        setRangeWarning({
+          unit: selectedUnit,
+          orderType: targetingMode.orderType,
+          targetStr,
+          range,
+          effectivePos,
+        });
+        return; // stay in targeting mode until user confirms or cancels
       }
+    }
 
-      return {
-        ...prev,
-        [selectedUnit.actor]: { ...actorOrders, [selectedUnit.id]: updated },
-      };
-    });
+    applyTarget(selectedUnit, targetingMode.orderType, targetStr);
     setTargetingMode(null);
-  }, [targetingMode, selectedUnit]);
+  }, [targetingMode, selectedUnit, unitOrders, terrainData, applyTarget]);
 
   const handleActorIntentChange = useCallback((actorId, text) => {
     setActorIntents(prev => ({ ...prev, [actorId]: text }));
@@ -536,14 +606,22 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
     }
   }, [unitOrders, actorIntents, activeActor, sealedOrders, activeActorIndex, actors, actorDecisions, fogOfWar]);
 
+  // L2: Guard against double-click on seal orders
+  const sealingRef = useRef(false);
+
   // ── Submit orders: validate → seal ──
   const handleSealOrders = useCallback(() => {
+    if (sealingRef.current) return;
+    sealingRef.current = true;
     const warnings = validateActiveActorOrders();
     if (warnings.length > 0) {
       setOrderWarnings(warnings);
+      sealingRef.current = false;
       return;
     }
     sealAndAdvance();
+    // Reset after brief delay to allow state to settle
+    setTimeout(() => { sealingRef.current = false; }, 300);
   }, [validateActiveActorOrders, sealAndAdvance]);
 
   // ── Force submit — user saw warnings and chose to proceed anyway ──
@@ -588,7 +666,8 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
         setHandoffResumePhase(PHASES.REVIEW);
         setTurnPhase(PHASES.HANDOFF);
       } else {
-        // no handoff needed
+        // L5: Non-FOW multi-actor review: no handoff screen needed, just advance activeActorIndex.
+        // The UI re-renders with the next actor's perspective automatically.
       }
     }
   }, [actorDecisions, activeActor, activeActorIndex, actors, fogOfWar]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -611,6 +690,9 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
         } else {
           setTurnPhase(PHASES.CHALLENGE_COLLECT);
         }
+      } else {
+        // M3: No challengers found despite someone marking "challenge" — advance to resolve
+        setTurnPhase(PHASES.RESOLVING);
       }
     } else {
       setActiveActorIndex(nextIdx);
@@ -755,9 +837,27 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
     }
     setAdjudicatingLLM(false);
     setError("Adjudication cancelled");
-    setTurnPhase(PHASES.PLANNING);
-    setActiveActorIndex(0);
-  }, []);
+
+    if (turnPhase === PHASES.RE_ADJUDICATING) {
+      // Cancel re-adjudication → return to review with original adjudication intact
+      setTurnPhase(PHASES.REVIEW);
+      setActiveActorIndex(0);
+    } else {
+      // H5: Cancel initial adjudication → restore orders from sealed state, then back to planning
+      // Without this, the user's orders are lost because sealAndAdvance clears them for privacy
+      const restoredOrders = {};
+      const restoredIntents = {};
+      for (const [actorId, sealed] of Object.entries(sealedOrders)) {
+        restoredOrders[actorId] = sealed.unitOrders || {};
+        restoredIntents[actorId] = sealed.actorIntent || "";
+      }
+      setUnitOrders(restoredOrders);
+      setActorIntents(restoredIntents);
+      setSealedOrders({});
+      setTurnPhase(PHASES.PLANNING);
+      setActiveActorIndex(0);
+    }
+  }, [turnPhase, sealedOrders]);
 
   const triggerReAdjudication = useCallback(async () => {
     setTurnPhase(PHASES.RE_ADJUDICATING);
@@ -773,8 +873,20 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
       playerActions[actor.id] = sealed ? `${sealed.actorIntent || ""}\n${Object.entries(sealed.unitOrders || {}).map(([uid, o]) => `${uid}: ${JSON.stringify(o)}`).join("\n")}` : "HOLD";
     }
 
+    // M6: Pass structuredOrders and detectionContext so the rebuttal LLM sees the same pre-computed data
+    const structuredOrdersForRebuttal = {
+      unitOrders: Object.fromEntries(
+        Object.entries(sealedOrders).map(([actorId, sealed]) => [actorId, sealed.unitOrders || {}])
+      ),
+      actorIntents: Object.fromEntries(
+        Object.entries(sealedOrders).map(([actorId, sealed]) => [actorId, sealed.actorIntent || ""])
+      ),
+    };
+    const detectionContextForRebuttal = visibilityState ? { actorVisibility: visibilityState.actorVisibility } : null;
+
     const result = await adjudicateRebuttal(
-      gs, playerActions, terrainData, pendingResult, challenges, loggerRef.current, counterRebuttals, abortController.signal
+      gs, playerActions, terrainData, pendingResult, challenges, loggerRef.current, counterRebuttals, abortController.signal,
+      structuredOrdersForRebuttal, detectionContextForRebuttal
     );
     adjAbortRef.current = null;
 
@@ -792,6 +904,18 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
     setCurrentAdjudication(result.adjudication);
     if (result.promptLog && pendingResult) {
       setPendingResult({ ...pendingResult, promptLog: result.promptLog, adjudication: result.adjudication });
+    }
+
+    // FOW narrative audit for re-adjudication
+    if (fogOfWar && visibilityState && result.adjudication?.adjudication?.actor_perspectives) {
+      setAdjPhaseLabel("Verifying narrative...");
+      const auditResults = await auditAllNarratives(
+        result.adjudication, visibilityState, gs, gs.game.config.llm, abortController.signal
+      );
+      if (auditResults.length > 0 && loggerRef.current) {
+        loggerRef.current.log(gs.game.turn, "narrative_audit_rebuttal", auditResults);
+      }
+      setAdjPhaseLabel(null);
     }
 
     // Rebuild per-actor views
@@ -838,6 +962,12 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
     setActiveActorIndex(0);
     setTurnPhase(PHASES.PLANNING);
     setActiveTab("narrative");
+    // M2/L4: Reset state that was previously leaked across start-overs
+    setContactEvents([]);
+    setActorMovePaths(null);
+    setVisibilityState(null);
+    setError(null);
+    setPendingRuling(null);
   }, []);
 
   // ── Pause / Resume / End ──
@@ -904,7 +1034,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
       let newDiplomacy = { ...(prev.diplomacy || {}) };
       if (scaleTier >= 4 && diplomacyPairs) {
         for (const [existingId, status] of Object.entries(diplomacyPairs)) {
-          const key = [existingId, actor.id].sort().join("-");
+          const key = [existingId, actor.id].sort().join("||");
           newDiplomacy[key] = { status, channels: ["none"], agreements: [] };
         }
       }
@@ -1033,7 +1163,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
                   newLlm.temperature = firstModel?.temperature ?? 0.4;
                   setGs({ ...gs, game: { ...gs.game, config: { ...gs.game.config, llm: newLlm } } });
                 }}
-                style={{ padding: "2px 4px", fontSize: typography.body.xs, background: colors.bg.secondary, color: colors.text.primary, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, height: 26 }}
+                style={{ padding: "2px 4px", fontSize: typography.body.xs, background: colors.bg.surface, color: colors.text.primary, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, height: 26 }}
               >
                 {providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
@@ -1046,7 +1176,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
                   newLlm.temperature = modelObj?.temperature ?? 0.4;
                   setGs({ ...gs, game: { ...gs.game, config: { ...gs.game.config, llm: newLlm } } });
                 }}
-                style={{ padding: "2px 4px", fontSize: typography.body.xs, background: colors.bg.secondary, color: colors.text.primary, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, height: 26 }}
+                style={{ padding: "2px 4px", fontSize: typography.body.xs, background: colors.bg.surface, color: colors.text.primary, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, height: 26 }}
               >
                 {(providers.find(p => p.id === gs.game.config.llm.provider)?.models || []).map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
               </select>
@@ -1183,6 +1313,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
             {!isEnded && turnPhase === PHASES.PLANNING && (
               <ReinforcementPanel
                 gameState={gs}
+                terrainData={terrainData}
                 onAddUnit={handleAddReinforcementUnit}
                 onScheduleUnit={handleScheduleReinforcementUnit}
                 onAddActor={handleAddActor}
@@ -1199,7 +1330,13 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
                 <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: space[2], letterSpacing: 1, textTransform: "uppercase", fontWeight: typography.weight.semibold }}>Fortune of War — Turn {gs.game.turn}</div>
                 {fortuneRolls.unitRolls ? (
                   <div style={{ display: "flex", flexDirection: "column", gap: space[2] }}>
-                    {gs.scenario.actors.map(actor => {
+                    {/* FOW: only show own actor + detected enemy units during review */}
+                    {gs.scenario.actors
+                      .filter(actor => {
+                        if (!fogOfWar || !visibilityState) return true; // no FOW — show all
+                        return actor.id === activeActor.id; // only own forces
+                      })
+                      .map(actor => {
                       const actorUnits = gs.units.filter(u => u.actor === actor.id);
                       return (
                         <div key={actor.id}>
@@ -1232,7 +1369,12 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
                   </div>
                 ) : fortuneRolls.actorRolls ? (
                   <div style={{ display: "flex", flexWrap: "wrap", gap: space[2] }}>
-                    {Object.entries(fortuneRolls.actorRolls).map(([actorId, roll]) => {
+                    {Object.entries(fortuneRolls.actorRolls)
+                      .filter(([actorId]) => {
+                        if (!fogOfWar || !visibilityState) return true;
+                        return actorId === activeActor.id;
+                      })
+                      .map(([actorId, roll]) => {
                       const actorName = gs.scenario.actors.find(a => a.id === actorId)?.name || actorId;
                       const rollColor = roll.roll <= 8 ? colors.accent.red : roll.roll >= 93 ? colors.accent.green : colors.text.secondary;
                       const glowBg = roll.roll <= 8 ? colors.glow.red : roll.roll >= 93 ? colors.glow.green : "transparent";
@@ -1296,12 +1438,14 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
               <div style={{ textAlign: "center", padding: space[8] }}>
                 <div style={{ width: 32, height: 32, border: `3px solid ${colors.border.subtle}`, borderTop: `3px solid ${colors.accent.amber}`, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} />
                 <div style={{ fontSize: typography.heading.sm, color: colors.accent.amber, marginBottom: space[2], animation: "pulse 2s infinite" }}>
-                  {turnPhase === PHASES.COMPUTING_DETECTION ? "Computing detection..." :
+                  {adjPhaseLabel ? adjPhaseLabel :
+                   turnPhase === PHASES.COMPUTING_DETECTION ? "Computing detection..." :
                    turnPhase === PHASES.RE_ADJUDICATING ? "Re-adjudicating with challenges..." :
                    `Adjudicating Turn ${gs.game.turn}...`}
                 </div>
                 <div style={{ fontSize: typography.body.sm, color: colors.text.muted }}>
-                  {turnPhase === PHASES.COMPUTING_DETECTION
+                  {adjPhaseLabel ? "Checking for fog-of-war leaks in narrative" :
+                   turnPhase === PHASES.COMPUTING_DETECTION
                     ? "Calculating line of sight and detection probabilities"
                     : `Sending to ${gs.game.config.llm.provider} (${gs.game.config.llm.model})`}
                 </div>
@@ -1642,7 +1786,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
                 <SectionHeader>Diplomacy</SectionHeader>
                 <div style={{ display: "flex", flexDirection: "column", gap: space[1] }}>
                   {Object.entries(gs.diplomacy).map(([pairKey, rel]) => {
-                    const [aId, bId] = pairKey.split("-");
+                    const [aId, bId] = pairKey.split("||");
                     const aName = gs.scenario.actors.find(a => a.id === aId)?.name || aId;
                     const bName = gs.scenario.actors.find(a => a.id === bId)?.name || bId;
                     const statusColor = rel.status === "allied" || rel.status === "friendly" ? colors.accent.green
@@ -1862,6 +2006,60 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
             <div style={{ display: "flex", gap: space[2], justifyContent: "flex-end", marginTop: space[4] }}>
               <Button variant="secondary" onClick={() => setOrderWarnings(null)}>Revise Orders</Button>
               <Button variant="primary" onClick={handleForceSubmit}>Submit Anyway</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* M11: Out-of-range warning modal */}
+      {rangeWarning && (
+        <div
+          style={{
+            position: "fixed", inset: 0, zIndex: 1000,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)",
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setRangeWarning(null);
+              // Stay in targeting mode so user can pick a different hex
+            }
+          }}
+        >
+          <div style={{
+            width: 440, padding: space[6],
+            background: colors.bg.raised, borderRadius: radius.xl,
+            border: `1px solid ${colors.border.default}`,
+          }}>
+            <div style={{ fontSize: typography.heading.md, fontWeight: typography.weight.bold, marginBottom: space[3], color: colors.accent.red }}>
+              Target Out of Range
+            </div>
+            <div style={{ fontSize: typography.body.sm, color: colors.text.secondary, marginBottom: space[3], lineHeight: 1.6 }}>
+              <strong>{rangeWarning.unit.name}</strong> cannot reach{" "}
+              <strong>{positionToLabel(rangeWarning.targetStr)}</strong> with {rangeWarning.orderType}.
+            </div>
+            <div style={{
+              padding: space[3], marginBottom: space[3], borderRadius: radius.md,
+              background: `${colors.accent.red}10`, border: `1px solid ${colors.accent.red}30`,
+              fontSize: typography.body.sm, lineHeight: 1.6,
+            }}>
+              <div>Distance: {rangeWarning.range.hexes} hexes ({rangeWarning.range.km.toFixed(1)} km)</div>
+              <div>Max range: {rangeWarning.range.rangeKm?.max?.toFixed(1) || "?"} km</div>
+              <div>Firing from: {positionToLabel(rangeWarning.effectivePos)}</div>
+            </div>
+            <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: space[4] }}>
+              Submitting an out-of-range order will flag it as highly improbable for the adjudicator.
+            </div>
+            <div style={{ display: "flex", gap: space[2], justifyContent: "flex-end" }}>
+              <Button variant="secondary" onClick={() => {
+                setRangeWarning(null);
+                // Stay in targeting mode to pick a different hex
+              }}>Pick Different Target</Button>
+              <Button variant="primary" onClick={() => {
+                applyTarget(rangeWarning.unit, rangeWarning.orderType, rangeWarning.targetStr, true);
+                setRangeWarning(null);
+                setTargetingMode(null);
+              }}>Issue Anyway</Button>
             </div>
           </div>
         </div>

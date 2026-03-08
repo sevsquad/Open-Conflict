@@ -4,8 +4,8 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { ADJUDICATION_SCHEMA_EXAMPLE, SCALE_TIERS } from "./schemas.js";
-import { cellCoord, labelToColRow, formatCellDetail, isFeatureRelevant, getTerrainLabelForTier, buildElevationBands, buildElevationNarrative, buildFeatureRegions, buildNamedFeatures, buildUrbanNarrative } from "./terrainCodec.js";
-import { getNeighbors, hexRange } from "../mapRenderer/HexMath.js";
+import { colLbl, cellCoord, labelToColRow, formatCellDetail, formatCellLight, isFeatureRelevant, getTerrainLabelForTier, buildElevationBands, buildElevationNarrative, buildFeatureRegions, buildNamedFeatures, buildUrbanNarrative } from "./terrainCodec.js";
+import { getNeighbors, hexRange, hexLine } from "../mapRenderer/HexMath.js";
 
 // ── Scale Declaration Blocks ────────────────────────────────
 // Tells the LLM what scale it's operating at and what to focus on.
@@ -151,6 +151,7 @@ An action is IMPOSSIBLE (not merely infeasible) if it:
 1. Requires physical capabilities the unit does not possess (infantry flying, vehicles swimming oceans, units teleporting between distant hexes in a single turn)
 2. Requires technology that does not exist in the scenario's setting or era
 3. Violates fundamental physical laws
+4. Attempts direct fire (ATTACK, SUPPORT_FIRE) against a target with BLOCKED line of sight. Terrain obstructions (hills, dense urban, forest) physically prevent direct fire weapons from engaging. This does NOT apply to artillery FIRE_MISSION orders, which use indirect fire and can engage via observers or map registration.
 
 For IMPOSSIBLE actions:
 - Do NOT generate an outcome. The action does not occur.
@@ -163,7 +164,9 @@ Examples:
 - "Infantry swim across the Pacific Ocean" → IMPOSSIBLE
 - "Infantry assault fortified position at 1:5 without support" → INFEASIBLE (attempt it, fail)
 - "Napoleonic cavalry conduct an airstrike" → IMPOSSIBLE
-- "Attack without air superiority" → INFEASIBLE (risky but doable)`);
+- "Attack without air superiority" → INFEASIBLE (risky but doable)
+- "Tanks engage target behind a ridgeline with BLOCKED LOS" → IMPOSSIBLE (no line of sight for direct fire)
+- "Artillery fire mission on target with BLOCKED LOS but observer available" → FEASIBLE (indirect fire via observer)`);
 
   // ── Order Compliance (always) ──
   sections.push(`\n## ORDER COMPLIANCE
@@ -536,6 +539,21 @@ export function labelToCommaPosition(label) {
   return p ? `${p.col},${p.row}` : label;
 }
 
+// Compute cardinal/intercardinal direction from one hex label to another.
+// Returns "N", "NE", "E", "SE", "S", "SW", "W", "NW", or null if same hex.
+function cardinalDirection(fromLabel, toLabel) {
+  const from = labelToColRow(fromLabel);
+  const to = labelToColRow(toLabel);
+  if (!from || !to) return null;
+  const dc = to.col - from.col;   // + = east
+  const dr = to.row - from.row;   // + = south (row 1 = north)
+  if (dc === 0 && dr === 0) return null;
+  const angle = Math.atan2(dc, -dr) * (180 / Math.PI); // 0°=N, 90°=E, 180°=S
+  const dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+  const idx = Math.round(((angle + 360) % 360) / 45) % 8;
+  return dirs[idx];
+}
+
 // ── Terrain Summary Builder ─────────────────────────────────
 
 const TERRAIN_LABELS = {
@@ -583,6 +601,152 @@ function buildTier2UnitContext(terrainData, units, scaleTier) {
       neighborDetails.push(formatCellDetail(nc, nr, D.cells[nk], scaleTier));
     }
     if (neighborDetails.length) lines.push(`    neighbors: ${neighborDetails.join("; ")}`);
+  }
+
+  return { lines, seen };
+}
+
+// Visibility-based Tier 2: replaces the old unit+6 neighbors approach when
+// FOW is active. Uses visibleCells accumulated during the movement simulation.
+//
+// Full detail (formatCellDetail): cells with units, movement paths, LOS corridors
+// between attackers and targets, and cells within weapon effective range.
+// Light detail (formatCellLight): all other visible cells — terrain+elevation only.
+//
+// Soft cap: if total visible cells exceed VISIBLE_CELL_CAP, light-detail cells
+// are sorted by distance to nearest unit and the farthest are dropped.
+const VISIBLE_CELL_CAP = 400;
+
+function buildTier2VisibilityContext(terrainData, units, scaleTier, detectionContext, actionTexts) {
+  if (!units?.length) return { lines: [], seen: new Set() };
+  const D = terrainData;
+
+  // Union all actors' visible cells, move paths, etc. for terrain context.
+  // The LLM sees all terrain (it needs it to adjudicate) — FOW constraints
+  // prevent actors from using knowledge they shouldn't have.
+  const allVisible = new Set();
+  const allMovePaths = new Set();
+  const actorVis = detectionContext.actorVisibility || {};
+
+  for (const av of Object.values(actorVis)) {
+    for (const cell of (av.visibleCells || [])) allVisible.add(cell);
+    for (const cell of (av.movePaths || [])) allMovePaths.add(cell);
+  }
+
+  // Build the "full detail" set: unit cells + move paths + engagement corridors
+  const fullDetailCells = new Set();
+
+  // 1. Cells containing units (and their immediate neighbors for local context)
+  const unitCellKeys = new Set();
+  for (const u of units) {
+    if (u.status === "destroyed" || u.status === "eliminated") continue;
+    const pos = parsePosition(u.position);
+    if (!pos) continue;
+    const key = `${pos.col},${pos.row}`;
+    unitCellKeys.add(key);
+    fullDetailCells.add(key);
+    // Immediate neighbors of unit cells get full detail too
+    for (const [nc, nr] of getNeighbors(pos.col, pos.row)) {
+      if (nc >= 0 && nc < D.cols && nr >= 0 && nr < D.rows) {
+        fullDetailCells.add(`${nc},${nr}`);
+      }
+    }
+  }
+
+  // 2. Movement path cells
+  for (const cell of allMovePaths) fullDetailCells.add(cell);
+
+  // 3. LOS corridors: hexLine between each unit and action-referenced targets.
+  //    Extract attack/fire targets from action text (same pattern as Tier 3).
+  const allText = Object.values(actionTexts || {}).join(" ");
+  const targetRefs = [...allText.matchAll(/\b([A-Z]{1,3})(\d{1,3})\b/g)]
+    .map(m => labelToColRow(m[0]))
+    .filter(p => p && p.col >= 0 && p.col < D.cols && p.row >= 0 && p.row < D.rows);
+
+  for (const u of units) {
+    if (u.status === "destroyed" || u.status === "eliminated") continue;
+    const pos = parsePosition(u.position);
+    if (!pos) continue;
+    // Draw LOS corridors to any target refs within reasonable range
+    for (const tgt of targetRefs) {
+      const losLine = hexLine(pos.col, pos.row, tgt.col, tgt.row);
+      for (const hex of losLine) {
+        const k = `${hex.col},${hex.row}`;
+        if (hex.col >= 0 && hex.col < D.cols && hex.row >= 0 && hex.row < D.rows) {
+          fullDetailCells.add(k);
+        }
+      }
+    }
+  }
+
+  // Build output lines
+  const lines = ["VISIBLE TERRAIN (cells observed by units during this turn):"];
+  const seen = new Set();
+  const fullLines = [];
+  const lightCells = [];
+
+  // Classify each visible cell as full or light detail
+  for (const key of allVisible) {
+    const [c, r] = key.split(",").map(Number);
+    if (c < 0 || c >= D.cols || r < 0 || r >= D.rows) continue;
+    seen.add(key);
+
+    if (fullDetailCells.has(key)) {
+      fullLines.push({ key, col: c, row: r });
+    } else {
+      lightCells.push({ key, col: c, row: r });
+    }
+  }
+
+  // Also add full-detail cells that might not be in visibleCells
+  // (e.g. target hexes from action text that LOS corridors pass through)
+  for (const key of fullDetailCells) {
+    if (seen.has(key)) continue;
+    const [c, r] = key.split(",").map(Number);
+    if (c < 0 || c >= D.cols || r < 0 || r >= D.rows) continue;
+    seen.add(key);
+    fullLines.push({ key, col: c, row: r });
+  }
+
+  // Soft cap on light cells: if total exceeds cap, keep nearest to any unit
+  if (fullLines.length + lightCells.length > VISIBLE_CELL_CAP) {
+    const lightBudget = Math.max(0, VISIBLE_CELL_CAP - fullLines.length);
+    if (lightCells.length > lightBudget) {
+      // Sort by minimum distance to any unit cell
+      const unitPositions = [...unitCellKeys].map(k => {
+        const [c, r] = k.split(",").map(Number);
+        return { col: c, row: r };
+      });
+      lightCells.sort((a, b) => {
+        const distA = Math.min(...unitPositions.map(u => Math.abs(a.col - u.col) + Math.abs(a.row - u.row)));
+        const distB = Math.min(...unitPositions.map(u => Math.abs(b.col - u.col) + Math.abs(b.row - u.row)));
+        return distA - distB;
+      });
+      lightCells.length = lightBudget;
+    }
+  }
+
+  // Emit full-detail cells grouped by unit
+  if (fullLines.length > 0) {
+    lines.push("  [FULL DETAIL]");
+    for (const { col, row } of fullLines) {
+      lines.push(`    ${formatCellDetail(col, row, D.cells[`${col},${row}`], scaleTier)}`);
+    }
+  }
+
+  // Emit light-detail cells as compact list
+  if (lightCells.length > 0) {
+    lines.push(`  [TERRAIN OVERVIEW — ${lightCells.length} additional visible cells]`);
+    // Group into batches of 8 per line for compactness
+    const batch = [];
+    for (const { col, row } of lightCells) {
+      batch.push(formatCellLight(col, row, D.cells[`${col},${row}`]));
+      if (batch.length >= 8) {
+        lines.push(`    ${batch.join("; ")}`);
+        batch.length = 0;
+      }
+    }
+    if (batch.length > 0) lines.push(`    ${batch.join("; ")}`);
   }
 
   return { lines, seen };
@@ -638,10 +802,12 @@ function buildTier3ActionContext(terrainData, actionTexts, tier2Cells, scaleTier
  * Now accepts scaleTier to filter features and collapse terrain types.
  *
  * Tier 1 (always): Aggregate stats, elevation bands, feature regions, named features.
- * Tier 2 (when units present): Pre-decoded cells at unit positions + neighbors.
+ * Tier 2 (when detection active): Full detail for unit cells, move paths, engagement
+ *         corridors. Light detail for remaining visible cells. Falls back to unit+6
+ *         neighbors when FOW is off.
  * Tier 3 (when actions present): Pre-decoded cells around action-referenced locations.
  */
-export function buildTerrainSummary(terrainData, { units = [], actionTexts = {}, scaleTier = null } = {}) {
+export function buildTerrainSummary(terrainData, { units = [], actionTexts = {}, scaleTier = null, detectionContext = null } = {}) {
   if (!terrainData) return "No terrain data loaded.";
 
   const D = terrainData;
@@ -652,7 +818,11 @@ export function buildTerrainSummary(terrainData, { units = [], actionTexts = {},
   if (D.center) lines.push(`Center: ${D.center.lat.toFixed(4)}, ${D.center.lng.toFixed(4)}`);
   if (D.bbox) lines.push(`Bounds: S${D.bbox.south.toFixed(4)} N${D.bbox.north.toFixed(4)} W${D.bbox.west.toFixed(4)} E${D.bbox.east.toFixed(4)}`);
   lines.push(`Map size: ${D.widthKm || (D.cols * D.cellSizeKm)}km x ${D.heightKm || Math.round(D.rows * D.cellSizeKm * (Math.sqrt(3) / 2))}km`);
-  lines.push("COORDINATES: Columns A-Z, AA-AZ, etc. (left=west). Rows 1-N (row 1=north). Cell H4 = column H, row 4.");
+  const lastColLabel = colLbl(D.cols - 1);
+  lines.push(`COORDINATES: Columns A-${lastColLabel}, Rows 1-${D.rows}.`);
+  lines.push(`  — Column A is the WESTERN edge. Increasing column letter = moving EAST. Column ${lastColLabel} is the EASTERN edge.`);
+  lines.push(`  — Row 1 is the NORTHERN edge. Increasing row number = moving SOUTH. Row ${D.rows} is the SOUTHERN edge.`);
+  lines.push("  — Example: A unit moving from H4 to H8 is moving SOUTH. A unit moving from C7 to K7 is moving EAST.");
 
   // Terrain distribution — collapse types at higher tiers
   const terrCt = {};
@@ -708,8 +878,12 @@ export function buildTerrainSummary(terrainData, { units = [], actionTexts = {},
     lines.push(...urbanLines);
   }
 
-  // ── Tier 2: Pre-decoded cells at unit positions + neighbors ──
-  const tier2 = buildTier2UnitContext(D, units, scaleTier);
+  // ── Tier 2: Pre-decoded cells visible to units ──
+  // When detection is active (FOW on), use visibleCells from detection engine
+  // with tiered detail. When FOW is off, fall back to unit position + neighbors.
+  const tier2 = detectionContext
+    ? buildTier2VisibilityContext(D, units, scaleTier, detectionContext, actionTexts)
+    : buildTier2UnitContext(D, units, scaleTier);
   if (tier2.lines?.length) {
     lines.push("");
     lines.push(...tier2.lines);
@@ -770,13 +944,14 @@ export function buildAdjudicationPrompt({ scenario, gameState, terrainData, acti
     sections.push(`Special Rules: ${scenario.specialRules}`);
   }
 
-  // Terrain summary (scale-filtered)
+  // Terrain summary (scale-filtered, visibility-aware when FOW active)
   sections.push("");
   sections.push("═══ TERRAIN ═══");
   sections.push(buildTerrainSummary(terrainData, {
     units: gameState.units,
     actionTexts: playerActions || {},
     scaleTier,
+    detectionContext,
   }));
 
   // Current game state
@@ -879,7 +1054,7 @@ export function buildAdjudicationPrompt({ scenario, gameState, terrainData, acti
     sections.push("");
     sections.push("Diplomatic State:");
     for (const [pair, rel] of Object.entries(gameState.diplomacy)) {
-      const [aId, bId] = pair.split("-");
+      const [aId, bId] = pair.split("||");
       const aName = scenario.actors.find(a => a.id === aId)?.name || aId;
       const bName = scenario.actors.find(a => a.id === bId)?.name || bId;
       let dipLine = `  ${aName} ↔ ${bName}: ${rel.status || "unknown"}`;
@@ -1107,6 +1282,20 @@ function buildDetectionContextSection(detectionContext, actors, allUnits) {
   lines.push("- Observable effects: explosions, gunfire, smoke visible from their positions");
   lines.push("- Uncertainty: if they can hear combat but can't see it, describe sounds not specifics");
   lines.push("");
+  lines.push("UNIT COVERAGE REQUIREMENT:");
+  lines.push("- Each actor's narrative MUST mention EVERY one of that actor's units that had orders this turn.");
+  lines.push("- Even if a unit's action was uneventful, include at least one sentence about what it did or observed.");
+  lines.push("- The player issued orders for each unit and expects to hear what happened to all of them.");
+  lines.push("");
+  lines.push("CROSS-CONSISTENCY REQUIREMENT:");
+  lines.push("- Every hostile event in an actor's perspective that causes material effects (casualties, damage, disruption,");
+  lines.push("  leadership loss) MUST be attributable to a specific enemy unit whose action is described in outcome_determination.");
+  lines.push("- Do NOT invent 'orphaned' events — if Blue takes a sniper round that wounds an officer, outcome_determination");
+  lines.push("  must describe which Red unit fired it, and Red's perspective must describe firing it.");
+  lines.push("- Ambient battlefield effects (hearing distant gunfire, seeing smoke) do not require attribution.");
+  lines.push("- TEST: For every casualty or material effect in an actor's perspective, you should be able to point to the");
+  lines.push("  specific enemy unit and action in outcome_determination that caused it. If you cannot, remove the event.");
+  lines.push("");
   lines.push("HARD PROHIBITIONS for actor_perspectives:");
   lines.push("- Do NOT reveal UNDETECTED enemy positions, orders, or intentions");
   lines.push("- Do NOT reveal details about CONTACT-tier enemies beyond \"activity detected\"");
@@ -1245,7 +1434,10 @@ function formatSingleBundle(b) {
     if (b.movementOrder && b.movement) {
       const m = b.movement;
       const mv = b.movementOrder;
-      lines.push(`  ${mv.type}: ${b.position} → ${positionToLabel(mv.targetHex)} | ${m.distanceHexes} hex (${m.distanceKm}km) | PATH: ${m.path.join("→")} | ${m.feasibility}`);
+      const destLabel = positionToLabel(mv.targetHex);
+      const dir = cardinalDirection(b.position, destLabel);
+      const dirTag = dir ? ` (${dir})` : "";
+      lines.push(`  ${mv.type}: ${b.position} → ${destLabel}${dirTag} | ${m.distanceHexes} hex (${m.distanceKm}km) | PATH: ${m.path.join("→")} | ${m.feasibility}`);
 
       if (m.roadOnPath) lines.push("    Road available on path");
       if (m.riverCrossings > 0) {
@@ -1264,6 +1456,12 @@ function formatSingleBundle(b) {
       const fromPos = b.movementOrder?.targetHex ? positionToLabel(b.movementOrder.targetHex) : b.position;
       lines.push(`  THEN ${b.actionOrder.type}: → ${c.targetHex} (from ${fromPos}) | ${c.rangeHexes} hex — ${c.rangeBand}`);
       lines.push(`    LOS: ${c.los}${c.losDetail ? " (" + c.losDetail + ")" : ""} | ELEVATION: ${c.elevationAdvantage}`);
+      if (c.los === "BLOCKED") {
+        lines.push(`    ⚠ BLOCKED LOS — direct fire IMPOSSIBLE. Terrain obstructs line of sight to target. Mark feasibility "impossible".`);
+      }
+      if (c.rangeBand === "OUT_OF_RANGE") {
+        lines.push(`    ⚠ OUT OF RANGE — target beyond maximum weapon range. Mark feasibility "infeasible".`);
+      }
       lines.push(`    TARGET TERRAIN: ${c.defenderTerrain}`);
 
       if (c.defenders.length > 0) {
@@ -1290,6 +1488,9 @@ function formatSingleBundle(b) {
     if (b.actionOrder?.type === "FIRE_MISSION" && b.combat) {
       const c = b.combat;
       lines.push(`  FIRE MISSION (${c.subtype || "HE"}): → ${c.targetHex} | RANGE: ${c.rangeHexes} hex (${c.rangeKm}km) — ${c.rangeBand}`);
+      if (c.rangeBand === "OUT_OF_RANGE") {
+        lines.push(`    ⚠ OUT OF RANGE — target beyond maximum weapon range. Mark feasibility "infeasible".`);
+      }
       lines.push(`    OBSERVER: ${c.observer}`);
       lines.push(`    TARGET TERRAIN: ${c.defenderTerrain}`);
       if (c.targetUnits?.length > 0) {

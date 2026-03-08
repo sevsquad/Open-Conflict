@@ -738,9 +738,9 @@ export function buildAllBundles(allOrders, gameState, terrainData, unitFortuneRo
           if (bundle.movement.enemiesOnPath.length === 0) delete bundle.movement.enemiesOnPath;
         }
 
-        // Filter defenders at attack target
-        if (bundle.action?.defenders) {
-          bundle.action.defenders = bundle.action.defenders.filter(d => {
+        // Filter defenders at attack target (H3: was bundle.action, correct path is bundle.combat)
+        if (bundle.combat?.defenders) {
+          bundle.combat.defenders = bundle.combat.defenders.filter(d => {
             // Look up the unit by name to get its ID
             const defUnit = gameState.units.find(u => u.name === d.name);
             return defUnit && knownEnemies.has(defUnit.id);

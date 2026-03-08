@@ -5,7 +5,7 @@
 // Uses horizon formula, "look over" LOS, random detection rolls.
 // ═══════════════════════════════════════════════════════════════
 
-import { hexDistance, hexRange, computeEnhancedLOS, offsetToAxial, axialToOffset, roundHex, hexDistanceAxial } from "../mapRenderer/HexMath.js";
+import { hexDistance, hexRange, computeEnhancedLOS, offsetToAxial, axialToOffset, roundHex, hexDistanceAxial, getNeighbors } from "../mapRenderer/HexMath.js";
 import { LOS_TERRAIN } from "./orderTypes.js";
 import { parsePosition, positionToLabel } from "./prompts.js";
 import {
@@ -195,11 +195,8 @@ function computeHorizon(observerElev, surroundingAvgElev, env) {
  * Uses the 6 immediate neighbors.
  */
 function getSurroundingAvgElev(pos, terrainData) {
-  const neighbors = [
-    [pos.col - 1, pos.row], [pos.col + 1, pos.row],
-    [pos.col, pos.row - 1], [pos.col, pos.row + 1],
-    [pos.col - 1, pos.row - 1], [pos.col + 1, pos.row + 1],
-  ];
+  // Use proper hex neighbors (offset coords with row parity) instead of rectangular grid
+  const neighbors = getNeighbors(pos.col, pos.row);
   let sum = 0, count = 0;
   for (const [c, r] of neighbors) {
     const cell = terrainData.cells?.[`${c},${r}`];
@@ -321,6 +318,7 @@ function evaluateDetection(observer, obsPos, target, tgtPos, terrainData, env, c
   probability = Math.min(1.0, Math.max(0, probability));
 
   // Roll the dice
+  // Math.random() is intentional — crypto RNG adds no value for game sim rolls
   const roll = Math.random();
   if (roll >= probability) return null;  // Failed detection roll
 
@@ -542,7 +540,7 @@ function mergeAlliedVisibility(actorVisibility, diplomacy) {
   for (const [pairKey, rel] of Object.entries(diplomacy)) {
     if (rel.status !== "allied") continue;
 
-    const [aId, bId] = pairKey.split("-");
+    const [aId, bId] = pairKey.split("||");
     const aVis = actorVisibility[aId];
     const bVis = actorVisibility[bId];
     if (!aVis || !bVis) continue;

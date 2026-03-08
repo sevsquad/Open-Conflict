@@ -414,8 +414,8 @@ function buildIdx(areas, bbox, bC = 25, bR = 25) {
   for (let ai = 0; ai < areas.length; ai++) {
     let mnLa = Infinity, mxLa = -Infinity, mnLo = Infinity, mxLo = -Infinity;
     for (const p of areas[ai].ring) { if (p.lat < mnLa) mnLa = p.lat; if (p.lat > mxLa) mxLa = p.lat; if (p.lon < mnLo) mnLo = p.lon; if (p.lon > mxLo) mxLo = p.lon; }
-    const c0 = Math.max(0, Math.floor((mnLo - bbox.west) / bW)), c1 = Math.min(bC - 1, Math.floor((mxLo - bbox.west) / bW));
-    const r0 = Math.max(0, Math.floor((mnLa - bbox.south) / bH)), r1 = Math.min(bR - 1, Math.floor((mxLa - bbox.south) / bH));
+    const c0 = Math.max(0, Math.floor((mnLo - bbox.west) / bW)), c1 = Math.min(bC - 1, Math.ceil((mxLo - bbox.west) / bW));
+    const r0 = Math.max(0, Math.floor((mnLa - bbox.south) / bH)), r1 = Math.min(bR - 1, Math.ceil((mxLa - bbox.south) / bH));
     for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) bk[r][c].push(ai);
   }
   return { bk, bC, bR, bW, bH };
@@ -430,9 +430,9 @@ function qIdx(idx, bbox, lat, lng) {
 // Query spatial index for all polygons whose bbox overlaps a geographic rectangle
 function qIdxRect(idx, bbox, south, north, west, east) {
   const c0 = Math.max(0, Math.floor((west - bbox.west) / idx.bW));
-  const c1 = Math.min(idx.bC - 1, Math.floor((east - bbox.west) / idx.bW));
+  const c1 = Math.min(idx.bC - 1, Math.ceil((east - bbox.west) / idx.bW));
   const r0 = Math.max(0, Math.floor((south - bbox.south) / idx.bH));
-  const r1 = Math.min(idx.bR - 1, Math.floor((north - bbox.south) / idx.bH));
+  const r1 = Math.min(idx.bR - 1, Math.ceil((north - bbox.south) / idx.bH));
   const seen = new Set();
   for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
     for (const ai of idx.bk[r][c]) seen.add(ai);
@@ -534,7 +534,7 @@ async function fetchWorldCover(bbox, cols, rows, onS, onProg, log, tier, onParti
     ? { ...bbox, west: expandedWest, east: expandedEast }
     : bbox;
   const tiles = getWCTilesForBbox(tileBboxExpanded);
-  const wcGrid = {}, wcMix = {}, wcHasData = new Set();
+  const wcGrid = {}, wcMix = {}, wcHasData = new Set(), wcGapFilled = new Set();
   const isSubTac = tier === "sub-tactical";
   const SAMPLES_PER_CELL = isSubTac ? 5 : 20; // 5×5=25 at sub-tactical, 20×20=400 at other tiers
 
@@ -757,6 +757,7 @@ async function fetchWorldCover(bbox, cols, rows, onS, onProg, log, tier, onParti
           if (wcHasData.has(nk)) {
             wcGrid[k] = wcGrid[nk];
             wcHasData.add(k);  // prevents ocean detection from treating as empty
+            wcGapFilled.add(k);  // track gap-filled cells for PIP threshold adjustment
             if (wcMix[nk]) wcMix[k] = { ...wcMix[nk] };
             break;
           }
@@ -775,7 +776,7 @@ async function fetchWorldCover(bbox, cols, rows, onS, onProg, log, tier, onParti
     });
   }
 
-  return { wcGrid, wcMix, wcHasData };
+  return { wcGrid, wcMix, wcHasData, wcGapFilled };
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -894,7 +895,7 @@ way["place"="square"]${b};
 way["barrier"~"^(wall|fence|hedge|city_wall|retaining_wall|ditch)$"]${b};
 way["waterway"~"^(river|canal|stream|ditch|drain|riverbank|dam|weir)$"]${b};
 way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|secondary|tertiary|residential|unclassified|service|track|footway|path|steps|pedestrian|cycleway)$"]${b};
-way["railway"~"^(rail|light_rail|tram)$"]${b};
+way["railway"~"^(rail|light_rail|tram|subway)$"]${b};
 way["aeroway"~"^(aerodrome|runway|helipad)$"]${b};
 way["leisure"~"^(park|garden|pitch|playground|marina)$"]${b};
 way["amenity"="parking"]${b};
@@ -906,7 +907,7 @@ node["power"="tower"]${b};
 relation["natural"~"^(water|wood)$"]${b};
 relation["landuse"~"^(forest|residential|commercial|industrial)$"]${b};
 relation["water"]${b};
-node["place"~"^(city|town|village)$"]["name"]${b};
+node["place"~"^(city|town|village|suburb|neighbourhood)$"]["name"]${b};
 );out geom;`;
   }
 
@@ -1956,9 +1957,10 @@ function parseFeatures(elements, tier, urbanDetail = false) {
       if (tags.man_made === "dam" || tags.waterway === "dam") damNodes.push({ lat: el.lat, lon: el.lon, onRiver: !!(tags.waterway) });
       if (tier === "sub-tactical" && (tags.man_made === "tower" || tags.man_made === "water_tower" || tags.man_made === "mast" || tags.power === "tower"))
         towerNodes.push({ lat: el.lat, lon: el.lon });
-      // Place nodes — named settlements
+      // Place nodes — named settlements and neighborhoods
       if (tags.place && tags.name) {
-        const rank = tags.place === "city" ? 3 : tags.place === "town" ? 2 : tags.place === "village" ? 1 : 0;
+        const rank = tags.place === "city" ? 3 : tags.place === "town" ? 2 : tags.place === "village" ? 1
+          : (tags.place === "suburb" || tags.place === "neighbourhood") ? 0.5 : 0;
         if (rank > 0) placeNodes.push({ lat: el.lat, lon: el.lon, name: tags.name, place: tags.place, rank, population: parseInt(tags.population) || 0 });
       }
     }
@@ -2028,13 +2030,13 @@ function parseFeatures(elements, tier, urbanDetail = false) {
           if (tags.leisure === "pitch" || tags.leisure === "playground") { tt = "open_ground"; tp = 5; }
           if (tags.amenity === "parking" && closed) infraAreas.push({ type: "parking", pri: 15, ring });
         }
-        if (tt) terrAreas.push({ type: tt, pri: tp, ring });
+        if (tt) terrAreas.push({ type: tt, pri: tp, ring, name: tags.name || null });
       }
 
       // Infra areas
-      if (tags.landuse === "military" && closed) infraAreas.push({ type: "military_base", pri: 25, ring, hasName: !!tags.name, isMilitary: !!tags.military, isAbandoned: tags.disused === "yes" || tags.abandoned === "yes" });
-      if (tags.aeroway && closed) infraAreas.push({ type: (tags.aeroway === "helipad" && tier === "sub-tactical") ? "helipad" : "airfield", pri: 26, ring, hasName: !!tags.name, isMilitary: !!tags.military, isAbandoned: tags.disused === "yes" || tags.abandoned === "yes" });
-      if ((tags.landuse === "port" || tags.industrial === "port" || tags.harbour === "yes") && closed) infraAreas.push({ type: "port", pri: 24, ring, hasName: !!tags.name, isMilitary: false, isAbandoned: tags.disused === "yes" || tags.abandoned === "yes" });
+      if (tags.landuse === "military" && closed) infraAreas.push({ type: "military_base", pri: 25, ring, hasName: !!tags.name, name: tags.name || null, isMilitary: !!tags.military, isAbandoned: tags.disused === "yes" || tags.abandoned === "yes" });
+      if (tags.aeroway && closed) infraAreas.push({ type: (tags.aeroway === "helipad" && tier === "sub-tactical") ? "helipad" : "airfield", pri: 26, ring, hasName: !!tags.name, name: tags.name || null, isMilitary: !!tags.military, isAbandoned: tags.disused === "yes" || tags.abandoned === "yes" });
+      if ((tags.landuse === "port" || tags.industrial === "port" || tags.harbour === "yes") && closed) infraAreas.push({ type: "port", pri: 24, ring, hasName: !!tags.name, name: tags.name || null, isMilitary: false, isAbandoned: tags.disused === "yes" || tags.abandoned === "yes" });
       if (tags.leisure === "marina" && closed && (tier === "sub-tactical" || tier === "tactical")) infraAreas.push({ type: "port", pri: 23, ring });
 
       // Beach areas
@@ -2109,8 +2111,20 @@ function parseFeatures(elements, tier, urbanDetail = false) {
       }
 
       // Railways — tier-filtered
-      if (tags.railway === "rail") infraLines.push({ type: "railway", isBridge: !!(tags.bridge && tags.bridge !== "no"), isTunnel: !!(tags.tunnel && tags.tunnel !== "no"), nodes: ring });
-      if (tier === "sub-tactical" && (tags.railway === "light_rail" || tags.railway === "tram")) infraLines.push({ type: "light_rail", isBridge: false, isTunnel: false, nodes: ring });
+      // Subway lines are always underground; surface rail/tram may enter tunnels.
+      // Underground rail keeps the feature (LLM knows rail exists) but skips
+      // terrain assignment (rail_track) since it's not visible on the surface.
+      if (tags.railway === "rail") {
+        const underground = !!(tags.tunnel && tags.tunnel !== "no") || parseInt(tags.layer) < 0;
+        infraLines.push({ type: "railway", isBridge: !!(tags.bridge && tags.bridge !== "no"), isTunnel: underground, isUnderground: underground, nodes: ring });
+      }
+      if (tags.railway === "subway") {
+        infraLines.push({ type: "railway", isBridge: false, isTunnel: true, isUnderground: true, nodes: ring });
+      }
+      if (tier === "sub-tactical" && (tags.railway === "light_rail" || tags.railway === "tram")) {
+        const underground = !!(tags.tunnel && tags.tunnel !== "no") || parseInt(tags.layer) < 0;
+        infraLines.push({ type: "light_rail", isBridge: false, isTunnel: underground, isUnderground: underground, nodes: ring });
+      }
 
       // Waterways — tier-filtered
       if (tags.waterway && !closed) {
@@ -2162,7 +2176,7 @@ function parseFeatures(elements, tier, urbanDetail = false) {
         const outerRings = assembleRings(el.members, "outer");
         const innerRings = assembleRings(el.members, "inner");
         for (const ring of outerRings) {
-          terrAreas.push({ type: tt, pri: tp, ring, innerRings: innerRings.length > 0 ? innerRings : null });
+          terrAreas.push({ type: tt, pri: tp, ring, innerRings: innerRings.length > 0 ? innerRings : null, name: tags.name || null });
         }
       }
 
@@ -2506,10 +2520,35 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
   const elevRange = elevData.elevRange; // per-cell elevation range, null at coarse scales
   const wcGrid = wcData ? wcData.wcGrid : null;
   const wcMix = wcData ? wcData.wcMix : null;
+  const wcGapFilled = wcData ? wcData.wcGapFilled : null;
+
+  // Filter out thin terrain polygons that create horizontal banding.
+  // These are linear features (boulevards, canal banks) mistagged as areas —
+  // very wide E-W but only ~10m tall N-S. They pass PIP for one row of hex
+  // cells but not the next, creating map-wide horizontal stripes.
+  if (tier === "sub-tactical") {
+    const minNS = cellKm * 3 / 111.32; // 3 cell heights in degrees
+    feat.terrAreas = feat.terrAreas.filter(a => {
+      let mnLa = Infinity, mxLa = -Infinity, mnLo = Infinity, mxLo = -Infinity;
+      for (const p of a.ring) {
+        if (p.lat < mnLa) mnLa = p.lat; if (p.lat > mxLa) mxLa = p.lat;
+        if (p.lon < mnLo) mnLo = p.lon; if (p.lon > mxLo) mxLo = p.lon;
+      }
+      const ns = mxLa - mnLa;
+      const ew = (mxLo - mnLo) * Math.cos(((mnLa + mxLa) / 2) * Math.PI / 180);
+      // Reject if N-S span < 3 cells AND aspect ratio > 10:1
+      if (ns < minNS && ew > ns * 10) return false;
+      return true;
+    });
+  }
 
   onS("Spatial indexing...");
-  const tIdx = buildIdx(feat.terrAreas, bbox);
-  const iaIdx = feat.infraAreas.length > 0 ? buildIdx(feat.infraAreas, bbox) : null;
+  // At sub-tactical (10m hexes), use fine bucket grid so bucket boundaries
+  // don't create visible row-aligned terrain oscillation. 25 buckets = ~80m
+  // per bucket = ~8 hex rows between boundaries. 100 buckets = ~20m = ~2 rows.
+  const idxBuckets = tier === "sub-tactical" ? 100 : 25;
+  const tIdx = buildIdx(feat.terrAreas, bbox, idxBuckets, idxBuckets);
+  const iaIdx = feat.infraAreas.length > 0 ? buildIdx(feat.infraAreas, bbox, idxBuckets, idxBuckets) : null;
 
   // ── Hex grid projection helpers ─────────────────────────────────
   // Convert lat/lon to hex grid cell (offset coords, odd-r pointy-top)
@@ -2560,7 +2599,7 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       // Best-of for backwards compat (urban clustering)
       const rk = { highway: 5, major_road: 4, road: 3, minor_road: 2.8, railway: 2.5, light_rail: 2.3, trail: 2, footpath: 1.5 };
       const ex = cellInfra[k], nr = rk[line.type] || 0, er = ex ? (rk[ex.type] || 0) : 0;
-      if (!ex || nr > er) cellInfra[k] = { type: line.type, isBridge: line.isBridge, isTunnel: line.isTunnel };
+      if (!ex || nr > er) cellInfra[k] = { type: line.type, isBridge: line.isBridge, isTunnel: line.isTunnel, isUnderground: !!line.isUnderground };
       else {
         if (line.isBridge && !ex.isBridge) cellInfra[k] = { ...ex, isBridge: true };
         if (line.isTunnel && !ex.isTunnel) cellInfra[k] = { ...ex, isTunnel: true };
@@ -2658,43 +2697,51 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       if (!bldg.ring || bldg.ring.length < 3) continue;
       const area = polyAreaKm2(bldg.ring);
 
-      // Bbox fill: assign building to ALL fine hexes whose centers fall
-      // inside the building's bounding box. No PIP — avoids all the
-      // implicit-closure and malformed-geometry issues that cause banding.
-      // Slight overcounting at corners of non-rectangular buildings is
-      // negligible at 10m resolution and far better than centroid-only.
-      let bS = Infinity, bN = -Infinity, bW = Infinity, bE = -Infinity;
-      for (const nd of bldg.ring) {
-        if (nd.lat < bS) bS = nd.lat;
-        if (nd.lat > bN) bN = nd.lat;
-        if (nd.lon < bW) bW = nd.lon;
-        if (nd.lon > bE) bE = nd.lon;
-      }
+      // Flood fill from centroid through connected urban hexes.
+      // Spreads building coverage outward from its center, stopping at
+      // non-urban WC terrain (water, parks, forest). Coverage area is
+      // limited to the building's actual footprint size in hex count.
+      let sumLat = 0, sumLon = 0;
+      for (const nd of bldg.ring) { sumLat += nd.lat; sumLon += nd.lon; }
+      const centroid = geoToCell(sumLon / bldg.ring.length, sumLat / bldg.ring.length);
+      if (!centroid) continue;
 
-      // Guard: malformed relations can span the whole map. Real buildings
-      // rarely exceed 200m on any axis — skip bbox scan for anything larger.
-      const bldgSpanM = Math.max((bN - bS) * 111320, (bE - bW) * 111320 * Math.cos(((bN + bS) / 2) * Math.PI / 180));
+      // How many hexes this building should cover based on its area
+      const targetCount = Math.max(1, Math.min(500, Math.ceil(area / hexArea)));
 
       const hits = [];
-      if (bldgSpanM < 200) {
-        const { r0, r1, c0, c1 } = proj.geoRangeToGridRange(bS, bN, bW, bE);
-        for (let rr = r0; rr <= r1; rr++) {
-          for (let cc = c0; cc <= c1; cc++) {
-            hits.push(`${cc},${rr}`);
-          }
+      const visited = new Set();
+      const startK = `${centroid[0]},${centroid[1]}`;
+      const queue = [startK];
+      visited.add(startK);
+
+      while (queue.length > 0 && hits.length < targetCount) {
+        const k = queue.shift();
+        // Stop expanding at non-urban terrain or road infrastructure.
+        // Roads are physical boundaries — a building doesn't span across a street.
+        const wc = wcGrid ? wcGrid[k] : null;
+        if (wc && wc !== "light_urban" && wc !== "dense_urban") continue;
+        if (k !== startK && cellRoadCount[k]) continue; // roads block flood fill
+        hits.push(k);
+
+        // Expand to hex neighbors (odd-r offset coords, pointy-top)
+        const [cc, rr] = k.split(",").map(Number);
+        const odd = rr & 1;
+        const nbrs = odd
+          ? [[cc,rr-1],[cc+1,rr-1],[cc-1,rr],[cc+1,rr],[cc,rr+1],[cc+1,rr+1]]
+          : [[cc-1,rr-1],[cc,rr-1],[cc-1,rr],[cc+1,rr],[cc-1,rr+1],[cc,rr+1]];
+        for (const [nc, nr] of nbrs) {
+          if (nc < 0 || nc >= cols || nr < 0 || nr >= rows) continue;
+          const nk = `${nc},${nr}`;
+          if (visited.has(nk)) continue;
+          visited.add(nk);
+          queue.push(nk);
         }
       }
-      // Fallback to centroid for oversized polygons or tiny buildings
-      // where bbox yielded nothing
-      if (hits.length === 0) {
-        let sumLat = 0, sumLon = 0;
-        for (const nd of bldg.ring) { sumLat += nd.lat; sumLon += nd.lon; }
-        const bc = geoToCell(sumLon / bldg.ring.length, sumLat / bldg.ring.length);
-        if (bc) hits.push(`${bc[0]},${bc[1]}`);
-      }
-      const areaPerHex = hits.length > 0 ? area / hits.length : area;
+
+      // Each hex gets the full building area — it genuinely has building on it
       for (const k of hits) {
-        assignBldgToCell(k, areaPerHex, bldg);
+        assignBldgToCell(k, area, bldg);
       }
     }
     for (const [k, area] of Object.entries(cellBuildingArea)) {
@@ -3044,7 +3091,8 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
   }
 
   // Airfield, port, military_base — centroid flagging with area filter at strategic
-  const cellAirfield = new Set(), cellPort = new Set(), cellMilitaryBase = new Set();
+  // Maps store cell key → name (or true if unnamed) for LLM place name passthrough
+  const cellAirfield = new Map(), cellPort = new Map(), cellMilitaryBase = new Map();
   if (feat.infraAreas) {
     // Importance-based filtering: composite score from area, type, name, military status
     // Preserves small but strategically important features (military airfields, FOBs)
@@ -3070,9 +3118,9 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       const gc = geoToCell(cLon, cLat);
       if (gc) {
         const gk = `${gc[0]},${gc[1]}`;
-        if (ia.type === "airfield") cellAirfield.add(gk);
-        else if (ia.type === "port") cellPort.add(gk);
-        else if (ia.type === "military_base") cellMilitaryBase.add(gk);
+        if (ia.type === "airfield") cellAirfield.set(gk, ia.name || null);
+        else if (ia.type === "port") cellPort.set(gk, ia.name || null);
+        else if (ia.type === "military_base") cellMilitaryBase.set(gk, ia.name || null);
       }
     }
   }
@@ -3114,6 +3162,7 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
   onS("Classifying cells...");
   const terrain = {}, infra = {}, attrs = {}, elevG = {}, features = {}, featureNames = {}, cellConfidence = {};
   const urbanScore = {}; // per-cell composite urbanization score (0..1), used in cluster phase
+  const cellTerrainName = {}; // per-cell: name of the OSM terrain area that won PIP (park, forest, etc.)
 
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
@@ -3131,7 +3180,7 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       const tCandidates = qIdxRect(tIdx, bbox, cellS, cellN, cellWest, cellEast);
 
       // Count OSM terrain type hits across sample points (hex-filtered)
-      const osmVotes = {};
+      const osmVotes = {}, osmNames = {};
       let osmTotal = 0;
       const cellDLat = cellN - cellS, cellDLon = cellEast - cellWest;
       const { x: hcx, y: hcy } = offsetToPixel(c, r, 1);
@@ -3143,7 +3192,7 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
           const { hx: shx, hy: shy } = proj.geoToHexPixel(tLng, tLat);
           const sdx = Math.abs(shx - hcx), sdy = Math.abs(shy - hcy);
           if (sdy > 0.98 - sdx / SQRT3) continue;
-          let best = null, bestPri = -1;
+          let best = null, bestPri = -1, bestName = null;
           for (const ai of tCandidates) {
             const a = feat.terrAreas[ai];
             if (a.pri > bestPri && pip(tLat, tLng, a.ring)) {
@@ -3154,10 +3203,13 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
                   if (pip(tLat, tLng, inner)) { excluded = true; break; }
                 }
               }
-              if (!excluded) { best = a.type; bestPri = a.pri; }
+              if (!excluded) { best = a.type; bestPri = a.pri; bestName = a.name || null; }
             }
           }
-          if (best) { osmVotes[best] = (osmVotes[best] || 0) + 1; osmTotal++; }
+          if (best) {
+            osmVotes[best] = (osmVotes[best] || 0) + 1; osmTotal++;
+            if (bestName) osmNames[best] = bestName; // last-wins, same name for same type
+          }
         }
       }
 
@@ -3176,8 +3228,20 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       // four signals. Terrain assignment is deferred to the cluster phase after
       // this loop — only spatially coherent groups of high-score cells become urban.
       let tt;
-      if (osmBestCnt >= PTS * PTS * 0.2) {
+      // When WC says urban but OSM wants non-urban, require stronger consensus.
+      // Broad OSM landuse polygons (parks, plazas, residential districts) span
+      // entire neighborhoods. At polygon boundaries, 2-3 of 9 PIP samples hit,
+      // which passes the 20% threshold but creates horizontal bands because all
+      // cells in a row share the same latitude. Requiring 50% for urban→non-urban
+      // overrides prevents this while still allowing real features (parks that
+      // fully contain a cell get 6+ of 9 hits). WC vegetation→OSM park is fine
+      // (both agree it's green), so standard threshold applies there.
+      const wcIsUrban = wcBase === "light_urban" || wcBase === "dense_urban";
+      const osmIsNonUrban = osmBest && !["light_urban", "dense_urban"].includes(osmBest);
+      const threshold = (wcIsUrban && osmIsNonUrban) ? 0.5 : 0.2;
+      if (osmBestCnt >= PTS * PTS * threshold) {
         tt = osmBest;
+        if (osmNames[tt]) cellTerrainName[k] = osmNames[tt];
       } else {
         tt = wcBase;
       }
@@ -3271,9 +3335,14 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       // A plateau at 4500m with prominence ~0 stays highland; a 2500m peak rising 500m above surroundings is a peak.
       const isW = ["lake", "river", "deep_water", "coastal_water"].includes(tt);
       const isU = ["light_urban", "dense_urban"].includes(tt);
+      // Urban green spaces (parks, plazas, cemeteries, gardens) shouldn't become
+      // highland/mountain just because the city is at elevation. A park at 650m in
+      // Madrid is still a park, not rolling highlands.
+      const isUrbanGreen = ["park", "plaza", "cemetery", "garden"].includes(tt)
+        && wcBase && (wcBase === "light_urban" || wcBase === "dense_urban" || wcBase === "forest");
       const isArid = tt === "desert" || tt === "open_ground";
       const prom = prominence[r * cols + c] || 0;
-      if (!isW && !isU) {
+      if (!isW && !isU && !isUrbanGreen) {
         if (isArid) {
           // Arid terrain: require both absolute height AND prominence for mountain/peak
           if (e > 2500 && prom > 500) tt = "peak";
@@ -3331,6 +3400,17 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       if (osmBest && osmBest !== tt && osmBestCnt >= PTS * PTS * 0.1) {
         conf *= 0.7;
       }
+      // WC-urban enforcement: if satellite says urban but OSM overrode to
+      // non-urban (park, plaza, etc.) and confidence is very low, trust the
+      // satellite. Real parks have WC=forest (green in preview), not
+      // WC=light_urban (red). So WC=urban + OSM=non-urban + low confidence
+      // means a broad OSM landuse polygon is falsely overriding satellite data.
+      if (conf <= 0.55 && wcIsUrban
+          && !["light_urban", "dense_urban", "deep_water", "coastal_water", "lake"].includes(tt)) {
+        tt = wcBase;
+        terrain[k] = tt;
+        conf = wcMixCell ? (wcMixCell[tt] || 0.5) : 1.0;
+      }
       cellConfidence[k] = conf;
 
       // Attributes (legacy — kept for backwards compat but mostly empty now)
@@ -3373,6 +3453,11 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       const li = cellInfra[k];
       if (li) {
         if (li.isBridge && isW) { it = "bridge"; }
+        // Underground rail: keep feature (LLM knows rail exists) but don't
+        // assign rail_track terrain — the surface is whatever WC/OSM says.
+        else if (li.isUnderground && (li.type === "railway" || li.type === "light_rail")) {
+          // no terrain override — rail is below ground
+        }
         // Tunnel: road type persists, tunnel captured as feature via cellInfraAll
         else {
           const lr = { highway: 50, major_road: 40, road: 30, minor_road: 28, railway: 25, light_rail: 23, trail: 15, footpath: 10 };
@@ -3464,12 +3549,66 @@ function classifyGrid(bbox, cols, rows, feat, elevData, onS, wcData, tier, cellK
       // Build feature_names: feature → name for named features
       const fn = {};
       if (cellNavName.has(k) && ft.has("river")) fn.river = cellNavName.get(k);
+      // Named terrain areas (parks, forests, cemeteries, etc.)
+      if (cellTerrainName[k]) fn[terrain[k]] = cellTerrainName[k];
+      // Named infrastructure areas (military bases, airfields, ports)
+      if (cellMilitaryBase.has(k) && cellMilitaryBase.get(k)) fn.military_base = cellMilitaryBase.get(k);
+      if (cellAirfield.has(k) && cellAirfield.get(k)) fn.airfield = cellAirfield.get(k);
+      if (cellPort.has(k) && cellPort.get(k)) fn.port = cellPort.get(k);
       const sett = cellSettlement.get(k);
       if (sett) {
         // Store as generic settlement; urban/town names are fixed up in cluster phase
         fn.settlement = sett.name;
       }
       if (Object.keys(fn).length > 0) featureNames[k] = fn;
+    }
+  }
+
+  // ── Row-anomaly smoother — fix horizontal banding from thin OSM polygons ──
+  // At sub-tactical, thin horizontal polygons (boulevards, canal banks, park
+  // boundaries) that span the full E-W extent but are only 1-2 cells tall can
+  // override WorldCover for an entire row, creating visible horizontal bands.
+  // Detection: if a non-water terrain type covers >25% of a row but <10% of
+  // BOTH adjacent rows, it's an artifact — revert those cells to WorldCover.
+  if (tier === "sub-tactical") {
+    // Build per-row terrain counts
+    const rowCounts = [];
+    for (let r = 0; r < rows; r++) {
+      const counts = {};
+      let total = 0;
+      for (let c = 0; c < cols; c++) {
+        const k = `${c},${r}`;
+        if (!terrain[k]) continue;
+        counts[terrain[k]] = (counts[terrain[k]] || 0) + 1;
+        total++;
+      }
+      rowCounts.push({ counts, total });
+    }
+
+    for (let r = 1; r < rows - 1; r++) {
+      const { counts, total } = rowCounts[r];
+      if (total === 0) continue;
+      const prev = rowCounts[r - 1];
+      const next = rowCounts[r + 1];
+
+      for (const [type, cnt] of Object.entries(counts)) {
+        // Skip types that legitimately span full rows (water, urban)
+        if (["deep_water", "coastal_water", "lake", "light_urban", "dense_urban"].includes(type)) continue;
+        const pct = cnt / total;
+        if (pct < 0.25) continue;
+        const prevPct = (prev.counts[type] || 0) / (prev.total || 1);
+        const nextPct = (next.counts[type] || 0) / (next.total || 1);
+
+        if (prevPct < 0.10 && nextPct < 0.10) {
+          // Band artifact — revert affected cells to WorldCover base
+          for (let c = 0; c < cols; c++) {
+            const k = `${c},${r}`;
+            if (terrain[k] === type) {
+              terrain[k] = wcGrid ? (wcGrid[k] || "open_ground") : "open_ground";
+            }
+          }
+        }
+      }
     }
   }
 
@@ -3866,6 +4005,26 @@ function postProc(terrain, infra, attrs, features, featureNames, cols, rows, ele
         if (tG[nk] && isOpen(tG[nk])) { if (!aG[k]) aG[k] = []; aG[k].push("treeline"); break; }
       }
     }
+  }
+
+  // ── ELEVATION SMOOTHING (sub-tactical only) ──
+  // SRTM is 30m resolution sampled at 10m cells. Adjacent cells may land on
+  // different SRTM pixels, creating ±2-5m jitter that registers as steep/extreme
+  // slope at 10m scale. Average each cell with its neighbors to dampen noise
+  // while preserving real terrain features (cliffs, river banks).
+  if (tier === "sub-tactical") {
+    const smoothed = {};
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const k = `${c},${r}`;
+      const e = elevG[k] || 0;
+      let sum = e, cnt = 1;
+      for (const [nc, nr] of getNeighbors(c, r)) {
+        const nk = `${nc},${nr}`;
+        if (elevG[nk] !== undefined) { sum += elevG[nk]; cnt++; }
+      }
+      smoothed[k] = Math.round(sum / cnt);
+    }
+    for (const k in smoothed) elevG[k] = smoothed[k];
   }
 
   // ── SLOPE (all tiers — angle stored for game use; feature flags at sub-tactical/tactical only) ──

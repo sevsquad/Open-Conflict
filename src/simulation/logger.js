@@ -36,8 +36,10 @@ export function createLogger() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ gameId, entries: [...entries] })
       });
+      clear(); // Free memory after successful flush
     } catch (e) {
       console.error("Failed to flush log:", e);
+      // Don't clear on failure — retry next time
     }
   }
 

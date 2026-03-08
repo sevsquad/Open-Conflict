@@ -73,6 +73,7 @@ export default function SimSetup({ onBack, onStart, initialTerrainData, preset }
       setTerrainData(data.map || data);
     } catch (e) {
       console.error("Failed to load terrain:", e);
+      setTerrainData(null); // Clear stale data on load failure
     }
     setLoadingMap(false);
   }, []);
@@ -106,7 +107,7 @@ export default function SimSetup({ onBack, onStart, initialTerrainData, preset }
       // Find the matching saved map file
       const match = maps.find(m => m.name.includes(requiredMap));
       if (!match) {
-        console.warn(`[preset] No saved map matching "${requiredMap}"`);
+        alert(`Preset requires map "${requiredMap}" which is not available. Save the map first.`);
         return;
       }
       setLoadingMap(true);

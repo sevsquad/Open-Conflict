@@ -83,10 +83,15 @@ function savePlugin() {
 }
 
 // Helper: read request body as text
-function readBody(req) {
+function readBody(req, maxSize = 10 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let body = '';
-    req.on('data', chunk => { body += chunk; });
+    let size = 0;
+    req.on('data', chunk => {
+      size += chunk.length;
+      if (size > maxSize) { reject(new Error('Request body too large')); req.destroy(); return; }
+      body += chunk;
+    });
     req.on('end', () => resolve(body));
     req.on('error', reject);
   });
@@ -94,6 +99,11 @@ function readBody(req) {
 
 // Plugin: LLM API proxy — routes adjudication calls to Anthropic or OpenAI
 function llmPlugin() {
+  // Simple in-memory rate limiter for LLM proxy
+  const llmRequestTimes = [];
+  const LLM_RATE_LIMIT = 10;       // max requests
+  const LLM_RATE_WINDOW = 60_000;  // per minute
+
   return {
     name: 'llm-proxy',
     configureServer(server) {
@@ -101,6 +111,17 @@ function llmPlugin() {
       // POST /api/llm/adjudicate — proxy LLM API calls
       server.middlewares.use('/api/llm/adjudicate', async (req, res) => {
         if (req.method !== 'POST') { res.statusCode = 405; res.end('POST only'); return; }
+
+        // Rate limit check
+        const now = Date.now();
+        while (llmRequestTimes.length > 0 && llmRequestTimes[0] < now - LLM_RATE_WINDOW) llmRequestTimes.shift();
+        llmRequestTimes.push(now);
+        if (llmRequestTimes.length > LLM_RATE_LIMIT) {
+          res.statusCode = 429;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ ok: false, error: 'Rate limited: too many LLM requests' }));
+          return;
+        }
         try {
           const body = JSON.parse(await readBody(req));
           const { provider, model, temperature, messages, max_tokens: clientMaxTokens } = body;
@@ -296,6 +317,53 @@ function llmPlugin() {
   };
 }
 
+// Plugin: narrative audit logging — rolling log of last 6 audit exchanges
+function auditlogPlugin() {
+  return {
+    name: 'auditlog',
+    configureServer(server) {
+      const logDir = () => {
+        const d = path.resolve(process.cwd(), 'auditlogs');
+        if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+        return d;
+      };
+
+      server.middlewares.use('/api/auditlog/save', async (req, res) => {
+        if (req.method !== 'POST') { res.statusCode = 405; res.end('POST only'); return; }
+        try {
+          const body = JSON.parse(await readBody(req));
+          const { filename, data } = body;
+          if (!filename || !data) {
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ ok: false, error: 'Missing filename or data' }));
+            return;
+          }
+          const dir = logDir();
+          const safeFilename = filename.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
+          fs.writeFileSync(path.join(dir, safeFilename), JSON.stringify(data, null, 2));
+
+          // Prune: keep only the 6 most recent log files
+          const files = fs.readdirSync(dir)
+            .filter(f => f.endsWith('.json'))
+            .map(f => ({ name: f, mtime: fs.statSync(path.join(dir, f)).mtimeMs }))
+            .sort((a, b) => b.mtime - a.mtime);
+          for (const old of files.slice(6)) {
+            fs.unlinkSync(path.join(dir, old.name));
+          }
+
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ ok: true }));
+        } catch (e) {
+          res.statusCode = 500;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ ok: false, error: e.message }));
+        }
+      });
+    }
+  };
+}
+
 // Plugin: network traffic logging for adjudication debugging
 function netlogPlugin() {
   return {
@@ -320,7 +388,8 @@ function netlogPlugin() {
             return;
           }
           const dir = logDir();
-          fs.writeFileSync(path.join(dir, filename), JSON.stringify(data, null, 2));
+          const safeFilename = filename.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
+          fs.writeFileSync(path.join(dir, safeFilename), JSON.stringify(data, null, 2));
 
           // Prune: keep only the 5 most recent log files
           const files = fs.readdirSync(dir)
@@ -471,6 +540,12 @@ function gamePlugin() {
         if (req.method !== 'POST') { res.statusCode = 405; res.end('POST only'); return; }
         try {
           const { gameId, entries } = JSON.parse(await readBody(req));
+          if (!gameId || !entries) {
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ ok: false, error: 'Missing gameId or entries' }));
+            return;
+          }
           const safe = gameId.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
           const logPath = path.join(gamesDir(), `${safe}_log.json`);
           let existing = [];
@@ -535,7 +610,7 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
-  plugins: [react(), serverTimeoutPlugin(), savePlugin(), llmPlugin(), netlogPlugin(), parserNetlogPlugin(), gamePlugin()],
+  plugins: [react(), serverTimeoutPlugin(), savePlugin(), llmPlugin(), netlogPlugin(), parserNetlogPlugin(), gamePlugin(), auditlogPlugin()],
   server: {
     watch: {
       ignored: ['**/saves/**'],

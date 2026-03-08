@@ -19,8 +19,13 @@ import { cellPixelsToHexSize, hexDistance, hexToScreen, SQRT3 } from "./HexMath.
 import { computeElevationRange } from "./gl/HexGPUData.js";
 import { buildContourLabelData, drawContourLabels } from "./overlays/ContourLabels.js";
 import { generateStrategicAtlas } from "./gl/StrategicAtlas.js";
+import { drawStrategicGridOverlay } from "./overlays/StrategicGridOverlay.js";
 
 const CLICK_THRESHOLD = 5;
+// Sub-tactical overlay threshold: if fine-to-strategic ratio is below this,
+// render fine grid as base visual + strategic hex outlines on Canvas 2D.
+// Above this ratio, use the atlas-based strategic renderer.
+const SUB_TACTICAL_RATIO_LIMIT = 20;
 const BG_COLOR = "#1A2535";
 
 const MapView = forwardRef(function MapView({
@@ -216,10 +221,15 @@ const MapView = forwardRef(function MapView({
     elevBandsRef.current = elevBands;
 
     // Dispatch: strategic mode or fine (tactical) mode
-    if (strategicMode && strategicReadyRef.current && strategicGrid) {
-      const fineSize = D.cellSizeKm || 1;
-      const stratSize = strategicGrid.cellSizeKm;
+    // Sub-tactical maps (low fine:strategic ratio) render the fine grid as
+    // base visual and draw strategic hex outlines on Canvas 2D instead of
+    // using the atlas approach which produces visual noise at small ratios.
+    const fineSize = D.cellSizeKm || 1;
+    const stratSize = strategicGrid?.cellSizeKm || fineSize;
+    const sizeRatio = stratSize / fineSize;
+    const useSubTacticalOverlay = strategicMode && strategicGrid && sizeRatio < SUB_TACTICAL_RATIO_LIMIT;
 
+    if (strategicMode && strategicReadyRef.current && strategicGrid && !useSubTacticalOverlay) {
       let stratViewport;
       if (Math.abs(fineSize - stratSize) < 0.001) {
         // Dual-resolution mode: D IS already the strategic/display grid.
@@ -241,6 +251,7 @@ const MapView = forwardRef(function MapView({
       }
       rendererRef.current.renderStrategic(stratViewport, w, h, activeFeatures, elevBands);
     } else {
+      // Fine grid rendering (normal or sub-tactical overlay base)
       const visRange = getVisibleRange(viewport, w, h, cols, rows);
       rendererRef.current.render(viewport, w, h, activeFeatures, elevBands, visRange);
       if (lineRendererRef.current) {
@@ -282,6 +293,14 @@ const MapView = forwardRef(function MapView({
     // FOW overlay (semi-transparent tint on non-visible hexes)
     if (unitOverlayOptions?.fowMode?.visibleCells) {
       drawFowOverlay(ctx, unitOverlayOptions.fowMode, viewport, w, h, cols, rows);
+    }
+    // Strategic grid overlay (sub-tactical: thick game hex outlines over fine grid)
+    if (strategicMode && strategicGrid) {
+      const fSize = D.cellSizeKm || 1;
+      const sSize = strategicGrid.cellSizeKm;
+      if (sSize / fSize < SUB_TACTICAL_RATIO_LIMIT) {
+        drawStrategicGridOverlay(ctx, strategicGrid, viewport, w, h, fSize);
+      }
     }
     // Units
     if (units || activeGhostUnit) {

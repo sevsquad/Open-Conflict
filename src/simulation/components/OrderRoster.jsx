@@ -1,5 +1,6 @@
 import { colors, typography, radius, animation, space } from "../../theme.js";
 import { Button, Badge, SectionHeader } from "../../components/ui.jsx";
+import { positionToLabel } from "../prompts.js";
 
 // ═══════════════════════════════════════════════════════════════
 // ORDER ROSTER — Sidebar showing all units grouped by actor
@@ -7,28 +8,16 @@ import { Button, Badge, SectionHeader } from "../../components/ui.jsx";
 // Each unit row is clickable to open the UnitOrderCard.
 // ═══════════════════════════════════════════════════════════════
 
-// Format "col,row" → letter-label like "E4"
-function posLabel(posStr) {
-  if (!posStr) return "—";
-  const comma = posStr.match(/^(\d+),(\d+)$/);
-  if (comma) {
-    const c = parseInt(comma[1]);
-    const r = parseInt(comma[2]);
-    return String.fromCharCode(65 + (c % 26)) + (r + 1);
-  }
-  return posStr;
-}
-
 // Build a short summary of a unit's orders like "MOVE E4 + ATTACK D5"
 function orderSummary(orders) {
   if (!orders) return "HOLD";
   const parts = [];
   if (orders.movementOrder) {
-    const target = orders.movementOrder.target ? ` ${posLabel(orders.movementOrder.target)}` : "";
+    const target = orders.movementOrder.target ? ` ${positionToLabel(orders.movementOrder.target)}` : "";
     parts.push(orders.movementOrder.id + target);
   }
   if (orders.actionOrder) {
-    const target = orders.actionOrder.target ? ` ${posLabel(orders.actionOrder.target)}` : "";
+    const target = orders.actionOrder.target ? ` ${positionToLabel(orders.actionOrder.target)}` : "";
     const subtype = orders.actionOrder.subtype ? ` (${orders.actionOrder.subtype})` : "";
     parts.push(orders.actionOrder.id + target + subtype);
   }
@@ -111,6 +100,7 @@ export default function OrderRoster({
               {actorUnits.map(unit => {
                 const orders = unitOrders[actor.id]?.[unit.id];
                 const hasOrders = hasExplicitOrders(orders);
+                const hasIntent = !!(orders?.intent);
                 const summary = orderSummary(orders);
                 const isDestroyed = unit.status === "destroyed" || unit.status === "eliminated";
 
@@ -139,6 +129,15 @@ export default function OrderRoster({
                     }}>
                       {hasOrders ? "\u2713" : "\u00B7"}
                     </span>
+                    {/* Intent indicator — small icon when unit has intent text */}
+                    {hasIntent && (
+                      <span title="Has commander's intent" style={{
+                        fontSize: 9, color: colors.accent.blue || colors.text.secondary,
+                        marginLeft: -4,
+                      }}>
+                        \u270E
+                      </span>
+                    )}
 
                     {/* Unit name + type */}
                     <div style={{ flex: "0 0 auto", minWidth: 120, overflow: "hidden" }}>
@@ -158,7 +157,7 @@ export default function OrderRoster({
                       fontSize: typography.body.xs, color: colors.text.secondary,
                       fontFamily: typography.monoFamily, minWidth: 28,
                     }}>
-                      {posLabel(unit.position)}
+                      {positionToLabel(unit.position)}
                     </span>
 
                     {/* Strength bar */}

@@ -8,19 +8,13 @@ import {
 import { OBSERVER_VISUAL_KM, DEFAULT_OBSERVER_VISUAL_KM } from "../detectionRanges.js";
 import { parseUnitPosition } from "../../mapRenderer/overlays/UnitOverlay.js";
 import { hexDistance } from "../../mapRenderer/HexMath.js";
+import { positionToLabel } from "../prompts.js";
 
 // ═══════════════════════════════════════════════════════════════
 // UNIT ORDER CARD — Modal for assigning per-unit orders
 // Shows unit stats, valid order buttons, and commander intent.
 // Buttons that need a target hex trigger targeting mode on the map.
 // ═══════════════════════════════════════════════════════════════
-
-// Format "col,row" → letter-label like "E4"
-function posLabel(posStr) {
-  const p = parseUnitPosition(posStr);
-  if (!p) return posStr;
-  return String.fromCharCode(65 + (p.c % 26)) + (p.r + 1);
-}
 
 export default function UnitOrderCard({
   unit,
@@ -53,10 +47,11 @@ export default function UnitOrderCard({
   // Actually handled via the targeting callback in SimGame — when map clicks, parent updates us
   useEffect(() => {
     // Sync if parent changes existingOrders (e.g., after target selected)
+    // Intent is NOT synced here — it's local-only state edited in the textarea.
+    // Syncing it would overwrite the user's in-progress edits on every target selection.
     if (existingOrders) {
       setMovementOrder(existingOrders.movementOrder || null);
       setActionOrder(existingOrders.actionOrder || null);
-      if (existingOrders.intent !== undefined) setIntent(existingOrders.intent);
     }
   }, [existingOrders]);
 
@@ -73,6 +68,14 @@ export default function UnitOrderCard({
   const handleOrderClick = useCallback((orderId) => {
     const orderDef = ORDER_TYPES[orderId];
     if (!orderDef) return;
+
+    // H1: Re-clicking an already-selected order that requires a target → re-enter targeting
+    // instead of toggling it off. Allows the user to change a destination in one click.
+    const alreadySelected = (movementOrder?.id === orderId) || (actionOrder?.id === orderId);
+    if (alreadySelected && orderDef.requiresTarget) {
+      onStartTargeting?.(orderId);
+      return;
+    }
 
     // Resolve conflicts with existing orders
     const result = resolveOrderConflict(
@@ -110,12 +113,18 @@ export default function UnitOrderCard({
   // This is handled by setting existingOrders from parent
 
   const handleConfirm = useCallback(() => {
+    // M1: Strip orders that require a target but don't have one
+    const finalMovement = (movementOrder && ORDER_TYPES[movementOrder.id]?.requiresTarget && !movementOrder.target)
+      ? null : movementOrder;
+    const finalAction = (actionOrder && ORDER_TYPES[actionOrder.id]?.requiresTarget && !actionOrder.target)
+      ? null : actionOrder;
+
     onConfirm({
-      movementOrder: movementOrder,
-      actionOrder: actionOrder ? {
-        ...actionOrder,
-        subtype: actionOrder.id === "FIRE_MISSION" ? fireMissionType
-          : actionOrder.id === "ENGINEER" ? engineerType
+      movementOrder: finalMovement,
+      actionOrder: finalAction ? {
+        ...finalAction,
+        subtype: finalAction.id === "FIRE_MISSION" ? fireMissionType
+          : finalAction.id === "ENGINEER" ? engineerType
           : null,
       } : null,
       intent,
@@ -163,7 +172,7 @@ export default function UnitOrderCard({
     const currentOrder = isMovement ? movementOrder : actionOrder;
     const isSelected = currentOrder?.id === orderId;
     const isFlashed = flashedButton === orderId;
-    const targetLabel = currentOrder?.target ? posLabel(currentOrder.target) : null;
+    const targetLabel = currentOrder?.target ? positionToLabel(currentOrder.target) : null;
 
     return (
       <button
@@ -215,6 +224,21 @@ export default function UnitOrderCard({
     }}
     onClick={(e) => { if (e.target === e.currentTarget && !isTargeting) onClose(); }}
     >
+      {/* L7: Targeting mode instruction overlay */}
+      {isTargeting && (
+        <div style={{
+          position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
+          background: colors.bg.raised, border: `1px solid ${colors.accent.amber}`,
+          padding: `${space[3]}px ${space[4]}px`, borderRadius: radius.lg,
+          textAlign: "center", pointerEvents: "auto", zIndex: 1001,
+          boxShadow: shadows.lg,
+        }}>
+          <div style={{ fontSize: typography.body.md, color: colors.accent.amber, marginBottom: space[2], fontWeight: typography.weight.semibold }}>
+            Click a hex on the map
+          </div>
+          <Button variant="secondary" size="sm" onClick={onCancelTargeting}>Cancel</Button>
+        </div>
+      )}
       <div style={{
         background: colors.bg.raised,
         border: `1px solid ${colors.border.default}`,
@@ -237,7 +261,7 @@ export default function UnitOrderCard({
               {unit.name}
             </div>
             <div style={{ fontSize: typography.body.sm, color: colors.text.secondary }}>
-              {posLabel(unit.position)} &middot; {cellData ? (cellData.terrain || "unknown") : "—"}
+              {positionToLabel(unit.position)} &middot; {cellData ? (cellData.terrain || "unknown") : "—"}
               {cellData?.elevation !== undefined ? `, ${cellData.elevation}m` : ""}
               {cellData?.features?.length > 0 ? ` (${cellData.features.join(", ")})` : ""}
             </div>
@@ -303,7 +327,7 @@ export default function UnitOrderCard({
             </div>
             {nearbyEnemies.map(e => (
               <div key={e.id} style={{ fontSize: typography.body.sm, color: colors.accent.red, marginBottom: 2 }}>
-                {e.name} @ {posLabel(e.position)} ({e.distance} hex, {(e.distance * (terrainData?.cellSizeKm || 1)).toFixed(0)}km)
+                {e.name} @ {positionToLabel(e.position)} ({e.distance} hex, {(e.distance * (terrainData?.cellSizeKm || 1)).toFixed(0)}km)
                 {e.strength !== undefined && <span style={{ color: colors.text.muted }}> &middot; {e.strength}% str</span>}
               </div>
             ))}

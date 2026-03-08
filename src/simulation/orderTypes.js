@@ -210,33 +210,32 @@ export function isCompatible(movementOrderId, actionOrderId) {
  * `replaced` is the order ID that was auto-deselected, or null.
  */
 export function resolveOrderConflict(currentMovement, currentAction, newOrderId) {
+  // All params are string order IDs (e.g. "MOVE", "ATTACK") or null.
   const newOrder = ORDER_TYPES[newOrderId];
   if (!newOrder) return { movementOrder: currentMovement, actionOrder: currentAction, replaced: null };
 
   // Toggling off: if clicking the same order that's already selected, deselect it
-  if (currentMovement?.id === newOrderId) {
+  if (currentMovement === newOrderId) {
     return { movementOrder: null, actionOrder: currentAction, replaced: null };
   }
-  if (currentAction?.id === newOrderId) {
+  if (currentAction === newOrderId) {
     return { movementOrder: currentMovement, actionOrder: null, replaced: null };
   }
 
   if (newOrder.slot === ORDER_SLOT.MOVEMENT) {
     // New movement order — check compatibility with existing action
-    if (currentAction && !isCompatible(newOrderId, currentAction.id)) {
-      // Incompatible: replace the action
-      return { movementOrder: newOrderId, actionOrder: null, replaced: currentAction.id };
+    if (currentAction && !isCompatible(newOrderId, currentAction)) {
+      return { movementOrder: newOrderId, actionOrder: null, replaced: currentAction };
     }
-    return { movementOrder: newOrderId, actionOrder: currentAction?.id || null, replaced: null };
+    return { movementOrder: newOrderId, actionOrder: currentAction || null, replaced: null };
   }
 
   if (newOrder.slot === ORDER_SLOT.ACTION) {
     // New action order — check compatibility with existing movement
-    if (currentMovement && !isCompatible(currentMovement.id, newOrderId)) {
-      // Incompatible: replace the movement
-      return { movementOrder: null, actionOrder: newOrderId, replaced: currentMovement.id };
+    if (currentMovement && !isCompatible(currentMovement, newOrderId)) {
+      return { movementOrder: null, actionOrder: newOrderId, replaced: currentMovement };
     }
-    return { movementOrder: currentMovement?.id || null, actionOrder: newOrderId, replaced: null };
+    return { movementOrder: currentMovement || null, actionOrder: newOrderId, replaced: null };
   }
 
   return { movementOrder: currentMovement, actionOrder: currentAction, replaced: null };

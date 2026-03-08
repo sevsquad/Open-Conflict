@@ -98,6 +98,10 @@ export function filterAdjudicationForActor(masterAdjudication, actorId, visibili
       outcome_determination: {
         ...adj.outcome_determination,
         narrative: actorNarrative,
+        // Use auditor-cleaned probability_assessment if available (strips enemy unit names)
+        ...(perspective?._clean_probability_assessment
+          ? { probability_assessment: perspective._clean_probability_assessment }
+          : {}),
       },
       state_updates: filteredUpdates,
 
