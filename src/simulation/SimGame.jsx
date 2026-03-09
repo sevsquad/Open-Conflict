@@ -3,15 +3,15 @@ import SimMap from "./SimMap.jsx";
 import { adjudicate, adjudicateRebuttal, applyStateUpdates, advanceTurn, pauseGame, resumeGame, endGame, saveGameState, autosave, getProviders } from "./orchestrator.js";
 import { createLogger } from "./logger.js";
 import { colors, typography, radius, animation, space } from "../theme.js";
-import { Button, Badge, Card, SectionHeader } from "../components/ui.jsx";
+import { Button, Badge, Card, SectionHeader, Panel } from "../components/ui.jsx";
 import { SCALE_TIERS, DIPLOMATIC_STATUSES } from "./schemas.js";
 import { buildActorBriefing, buildFullBriefing, downloadFile, downloadDataURL } from "./briefingExport.js";
 import UnitOrderCard from "./components/UnitOrderCard.jsx";
 import OrderRoster from "./components/OrderRoster.jsx";
-import { ORDER_TYPES } from "./orderTypes.js";
+import { ORDER_TYPES, canEmbark, isAirUnit } from "./orderTypes.js";
 import { parseUnitPosition } from "../mapRenderer/overlays/UnitOverlay.js";
 import { positionToLabel } from "./prompts.js";
-import { hexLine } from "../mapRenderer/HexMath.js";
+import { hexLine, hexLineThrough } from "../mapRenderer/HexMath.js";
 import { computeMovePath, computeRange } from "./orderComputer.js";
 import { PHASES, getNextPhase, isBusyPhase, actorNeedsInput } from "./turnPhases.js";
 import { computeDetection, serializeVisibility, deserializeVisibility } from "./detectionEngine.js";
@@ -20,13 +20,17 @@ import { filterAdjudicationForActor, extractProposedMoves } from "./adjudication
 import { auditAllNarratives } from "./narrativeAuditor.js";
 import HandoffScreen from "./components/HandoffScreen.jsx";
 import ReinforcementPanel from "./components/ReinforcementPanel.jsx";
-import { ACTOR_COLORS } from "../terrainColors.js";
+import { ACTOR_COLORS, FC, FL, FG, DEFAULT_FEATURES } from "../terrainColors.js";
+import { computeElevationRange } from "../mapRenderer/gl/HexGPUData.js";
 
 // ═══════════════════════════════════════════════════════════════
 // SIM GAME — Active simulation UI
 // Turn cycle: per-actor Planning → Detection → Adjudication → per-actor Review
 // Supports hotseat privacy (sealed orders, handoff screens, FOW)
 // ═══════════════════════════════════════════════════════════════
+
+// Set to true to skip handoff screens for automated testing
+const SKIP_HANDOFF = false;
 
 const ESCALATION_COLORS = {
   "de-escalating": colors.accent.green,
@@ -58,7 +62,10 @@ function buildPlayerActions(actors, sealedOrders, units) {
       const parts = [];
       if (orders.movementOrder) {
         const tgt = orders.movementOrder.target ? positionToLabel(orders.movementOrder.target) : "";
-        parts.push(`${orders.movementOrder.id}${tgt ? " to " + tgt : ""}`);
+        const wps = orders.movementOrder.waypoints?.length > 0
+          ? " via " + orders.movementOrder.waypoints.map(w => positionToLabel(w)).join("→")
+          : "";
+        parts.push(`${orders.movementOrder.id}${tgt ? " to " + tgt : ""}${wps}`);
       }
       if (orders.actionOrder) {
         const tgt = orders.actionOrder.target ? positionToLabel(orders.actionOrder.target) : "";
@@ -156,6 +163,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
   const selectedUnit = selectedUnitId ? gs.units.find(u => u.id === selectedUnitId) || null : null;
   const [targetingMode, setTargetingMode] = useState(null);   // { orderType, unitId } or null
   const [hoveredCell, setHoveredCell] = useState(null);        // cell under cursor during targeting
+  const [waypointBuffer, setWaypointBuffer] = useState([]);    // accumulated waypoints during MOVE targeting
 
   // Reinforcement placement state
   const [placingReinforcement, setPlacingReinforcement] = useState(false); // map-click mode for reinforcement position
@@ -165,6 +173,49 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
   const [showPrompt, setShowPrompt] = useState(false);
   const [activeTab, setActiveTab] = useState("narrative");
   const [fogOfWar, setFogOfWar] = useState(true);
+
+  // ── Map view toggles (feature filter + elevation) ──
+  const [showElevBands, setShowElevBands] = useState(false);
+  const [showFeaturePanel, setShowFeaturePanel] = useState(false);
+  const featureCounts = useMemo(() => {
+    const counts = {};
+    if (terrainData?.cells) {
+      for (const k in terrainData.cells) {
+        const cell = terrainData.cells[k];
+        const feats = cell.features?.length > 0 ? cell.features : cell.attributes?.length > 0 ? cell.attributes : [];
+        feats.forEach(f => { counts[f] = (counts[f] || 0) + 1; });
+      }
+    }
+    return counts;
+  }, [terrainData]);
+  const [activeFeatures, setActiveFeatures] = useState(() => {
+    const counts = {};
+    if (terrainData?.cells) {
+      for (const k in terrainData.cells) {
+        const cell = terrainData.cells[k];
+        const feats = cell.features?.length > 0 ? cell.features : cell.attributes?.length > 0 ? cell.attributes : [];
+        feats.forEach(f => { counts[f] = (counts[f] || 0) + 1; });
+      }
+    }
+    return new Set(DEFAULT_FEATURES.filter(f => counts[f]));
+  });
+
+  const toggleFeat = useCallback((f) => {
+    setActiveFeatures(prev => { const n = new Set(prev); if (n.has(f)) n.delete(f); else n.add(f); return n; });
+  }, []);
+  const toggleAllFeatures = useCallback((on) => {
+    if (!on) setActiveFeatures(new Set());
+    else setActiveFeatures(new Set(Object.keys(featureCounts)));
+  }, [featureCounts]);
+  const toggleFeatureGroup = useCallback((group) => {
+    const items = (FG[group] || []).filter(f => featureCounts[f]);
+    setActiveFeatures(prev => {
+      const allOn = items.every(f => prev.has(f));
+      const n = new Set(prev);
+      items.forEach(f => allOn ? n.delete(f) : n.add(f));
+      return n;
+    });
+  }, [featureCounts]);
 
   // ── Derived values ──
   const actors = gs.scenario.actors;
@@ -224,7 +275,8 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
 
   // ── Map units: filtered by FOW during planning/review ──
   const mapUnits = useMemo(() => {
-    let units = gs.units;
+    // Hide embarked units from map — they're inside a transport
+    let units = gs.units.filter(u => !u.embarkedIn);
 
     // FOW filtering
     if (fogOfWar && fowMode) {
@@ -247,19 +299,101 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
     return units;
   }, [gs.units, fogOfWar, fowMode, activeActor.id, turnPhase, activeActorAdj]);
 
-  // Compute movement path for visualization during targeting mode
+  // Compute movement path for visualization during targeting mode.
+  // Chains through accumulated waypoints so the user sees the full route.
   const movePath = useMemo(() => {
     if (!targetingMode || !selectedUnit || !hoveredCell) return null;
     const orderDef = ORDER_TYPES[targetingMode.orderType];
     if (!orderDef || orderDef.slot !== "movement") return null;
     const unitPos = parseUnitPosition(selectedUnit.position);
     if (!unitPos) return null;
-    return hexLine(unitPos.c, unitPos.r, hoveredCell.c, hoveredCell.r);
-  }, [targetingMode, selectedUnit, hoveredCell]);
+    // Build chain: unitPos → waypoints → hoveredCell
+    const chain = [
+      { col: unitPos.c, row: unitPos.r },
+      ...waypointBuffer.map(wp => ({ col: wp.c, row: wp.r })),
+      { col: hoveredCell.c, row: hoveredCell.r },
+    ];
+    return hexLineThrough(chain);
+  }, [targetingMode, selectedUnit, hoveredCell, waypointBuffer]);
+
+  // Air overlay data — AD coverage zones, flight paths, CAS sector highlights
+  const airOverlayData = useMemo(() => {
+    if (scaleTier < 3) return null;
+
+    // Collect AD units for coverage overlay
+    const adUnits = gs.units.filter(u => {
+      if (u.status === "destroyed" || u.status === "eliminated") return false;
+      const caps = u.specialCapabilities || [];
+      return caps.includes("gun_ad") || caps.includes("ir_missile_ad") || caps.includes("radar_missile_ad");
+    });
+
+    // Collect flight paths from current air unit orders
+    const flightPaths = [];
+    const casSectors = [];
+
+    for (const [actorId, actorOrders] of Object.entries(unitOrders)) {
+      for (const [unitId, orders] of Object.entries(actorOrders || {})) {
+        if (!orders?.actionOrder?.id) continue;
+        const unit = gs.units.find(u => u.id === unitId);
+        if (!unit || !isAirUnit(unit)) continue;
+
+        const basePosStr = unit.baseHex || unit.position;
+        if (!basePosStr) continue;
+        const basePos = parseUnitPosition(basePosStr);
+        const targetPos = orders.actionOrder.target
+          ? parseUnitPosition(orders.actionOrder.target) : null;
+
+        if (basePos && targetPos) {
+          // Determine actor color for this flight path
+          const actorIdx = actors.findIndex(a => a.id === actorId);
+          const actorColor = ACTOR_COLORS[actorIdx % ACTOR_COLORS.length] || "#06B6D4";
+
+          flightPaths.push({
+            from: basePos,
+            to: targetPos,
+            color: `${actorColor}99`,  // semi-transparent actor color
+            altitude: orders.actionOrder.altitude || null,
+            unitName: unit.name,
+          });
+
+          // CAS sector highlight
+          if (orders.actionOrder.id === "CAS") {
+            casSectors.push({
+              center: targetPos,
+              color: "rgba(34, 197, 94, 0.10)",
+              border: "rgba(34, 197, 94, 0.30)",
+            });
+          }
+        }
+      }
+    }
+
+    // Only return if we have something to draw
+    if (adUnits.length === 0 && flightPaths.length === 0 && casSectors.length === 0) return null;
+
+    return {
+      adUnits: adUnits.length > 0 ? adUnits : null,
+      flightPaths: flightPaths.length > 0 ? flightPaths : null,
+      casSectors: casSectors.length > 0 ? casSectors : null,
+    };
+  }, [gs.units, unitOrders, scaleTier, actors]);
 
   // Fetch available LLM providers on mount (for mid-game model switching)
   useEffect(() => {
     getProviders().then(data => setProviders(data.providers || [])).catch(() => {});
+  }, []);
+
+  // Keyboard shortcuts for map view toggles
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
+      if (e.key === "e" || e.key === "E") {
+        e.preventDefault();
+        setShowElevBands(v => !v);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
   }, []);
 
   // Sync parent
@@ -397,7 +531,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
       // Transition to REVIEW with first actor
       setActiveActorIndex(0);
       // Show handoff screen before first actor reviews
-      if (actors.length > 1 && fogOfWar) {
+      if (actors.length > 1 && fogOfWar && !SKIP_HANDOFF) {
         setHandoffResumePhase(PHASES.REVIEW);
         setTurnPhase(PHASES.HANDOFF);
       } else {
@@ -434,13 +568,55 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
     setTargetingMode(null);
   }, [selectedUnit]);
 
+  // Persist the card's full order pair to parent on every click so applyTarget
+  // always has both slots when it merges a target into currentOrders.
+  // Without this, selecting MOVE then ATTACK loses MOVE when ATTACK's target
+  // is applied — because applyTarget only knew about what was already saved.
+  const handleOrderPreview = useCallback((orders) => {
+    if (!selectedUnit) return;
+    setUnitOrders(prev => ({
+      ...prev,
+      [selectedUnit.actor]: {
+        ...(prev[selectedUnit.actor] || {}),
+        [selectedUnit.id]: orders,
+      },
+    }));
+  }, [selectedUnit]);
+
+  // ── Embark: instant planning-phase action (not adjudicated) ──
+  const handleEmbark = useCallback((unitId, transportId) => {
+    const unit = gs.units.find(u => u.id === unitId);
+    const transport = gs.units.find(u => u.id === transportId);
+    if (!unit || !transport) return;
+    const check = canEmbark(unit, transport);
+    if (!check.allowed) return;
+
+    setGs(prev => ({
+      ...prev,
+      units: prev.units.map(u => {
+        if (u.id === unitId) return { ...u, embarkedIn: transportId };
+        if (u.id === transportId) return { ...u, cargo: [...(u.cargo || []), unitId] };
+        return u;
+      }),
+    }));
+    // Clear any orders the embarking unit had — they're now cargo
+    setUnitOrders(prev => {
+      const actorOrders = { ...(prev[unit.actor] || {}) };
+      delete actorOrders[unitId];
+      return { ...prev, [unit.actor]: actorOrders };
+    });
+    setSelectedUnitId(null);
+  }, [gs.units]);
+
   const handleStartTargeting = useCallback((orderType) => {
     if (!selectedUnit) return;
+    setWaypointBuffer([]);
     setTargetingMode({ orderType, unitId: selectedUnit.id });
   }, [selectedUnit]);
 
   const handleCancelTargeting = useCallback(() => {
     setTargetingMode(null);
+    setWaypointBuffer([]);
   }, []);
 
   // Click a hex on the map outside targeting mode — open unit card if a unit is there
@@ -462,7 +638,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
   }, [gs.units, turnPhase, fogOfWar, activeActor.id, placingReinforcement]);
 
   // Helper: actually store the target in unit orders
-  const applyTarget = useCallback((unit, orderType, targetStr, outOfRange = false) => {
+  const applyTarget = useCallback((unit, orderType, targetStr, outOfRange = false, waypoints = null) => {
     const orderDef = ORDER_TYPES[orderType];
     if (!orderDef) return;
 
@@ -474,6 +650,10 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
 
       if (isMovement) {
         updated.movementOrder = { id: orderType, target: targetStr };
+        // Attach waypoints if any were accumulated during multi-click targeting
+        if (waypoints?.length > 0) {
+          updated.movementOrder.waypoints = waypoints;
+        }
       } else {
         updated.actionOrder = {
           id: orderType, target: targetStr, subtype: currentOrders.actionOrder?.subtype,
@@ -490,11 +670,28 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
 
   // Map click during targeting mode — set the target on the current order
 
-  const handleTargetSelect = useCallback((cell) => {
+  const handleTargetSelect = useCallback((cell, mouseEvent) => {
     if (!targetingMode || !selectedUnit) return;
     const targetStr = `${cell.c},${cell.r}`;
     const orderDef = ORDER_TYPES[targetingMode.orderType];
     if (!orderDef) return;
+
+    // ── Movement orders: Shift+click = add waypoint, plain click = set destination ──
+    if (orderDef.slot === "movement") {
+      if (mouseEvent?.shiftKey) {
+        // Shift+click: add waypoint, stay in targeting mode
+        setWaypointBuffer(prev => [...prev, { c: cell.c, r: cell.r }]);
+        return;
+      }
+      // Plain click: finalize destination
+      const wpStrings = waypointBuffer.map(wp => `${wp.c},${wp.r}`);
+      applyTarget(selectedUnit, targetingMode.orderType, targetStr, false, wpStrings);
+      setTargetingMode(null);
+      setWaypointBuffer([]);
+      return;
+    }
+
+    // ── Non-movement (action) orders: single-click = done ──
 
     // M11: Range check for combat orders
     if (orderDef.slot === "action" && COMBAT_ORDER_IDS.has(targetingMode.orderType)) {
@@ -518,7 +715,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
 
     applyTarget(selectedUnit, targetingMode.orderType, targetStr);
     setTargetingMode(null);
-  }, [targetingMode, selectedUnit, unitOrders, terrainData, applyTarget]);
+  }, [targetingMode, selectedUnit, unitOrders, terrainData, applyTarget, waypointBuffer]);
 
   const handleActorIntentChange = useCallback((actorId, text) => {
     setActorIntents(prev => ({ ...prev, [actorId]: text }));
@@ -539,7 +736,8 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
         unit.position,
         orders.movementOrder.target,
         terrainData,
-        unit.movementType || "foot"
+        unit.movementType || "foot",
+        orders.movementOrder.waypoints
       );
       if (!result || result.feasibility === "FEASIBLE" || result.feasibility === "MARGINAL") continue;
 
@@ -645,7 +843,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
         const firstChallenger = findNextInputActor(PHASES.CHALLENGE_COLLECT, 0, actors, newDecisions);
         if (firstChallenger >= 0) {
           setActiveActorIndex(firstChallenger);
-          if (actors.length > 1 && fogOfWar) {
+          if (actors.length > 1 && fogOfWar && !SKIP_HANDOFF) {
             setHandoffResumePhase(PHASES.CHALLENGE_COLLECT);
             setTurnPhase(PHASES.HANDOFF);
           } else {
@@ -662,7 +860,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
     } else {
       // More actors to review
       setActiveActorIndex(nextIdx);
-      if (actors.length > 1 && fogOfWar) {
+      if (actors.length > 1 && fogOfWar && !SKIP_HANDOFF) {
         setHandoffResumePhase(PHASES.REVIEW);
         setTurnPhase(PHASES.HANDOFF);
       } else {
@@ -684,7 +882,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
       const firstChallenger = findNextInputActor(PHASES.CHALLENGE_COLLECT, 0, actors, newDecisions);
       if (firstChallenger >= 0) {
         setActiveActorIndex(firstChallenger);
-        if (actors.length > 1 && fogOfWar) {
+        if (actors.length > 1 && fogOfWar && !SKIP_HANDOFF) {
           setHandoffResumePhase(PHASES.CHALLENGE_COLLECT);
           setTurnPhase(PHASES.HANDOFF);
         } else {
@@ -696,7 +894,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
       }
     } else {
       setActiveActorIndex(nextIdx);
-      if (actors.length > 1 && fogOfWar) {
+      if (actors.length > 1 && fogOfWar && !SKIP_HANDOFF) {
         setHandoffResumePhase(PHASES.REVIEW);
         setTurnPhase(PHASES.HANDOFF);
       }
@@ -896,7 +1094,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
     const nextChallenger = findNextInputActor(PHASES.CHALLENGE_COLLECT, activeActorIndex + 1, actors, actorDecisions);
     if (nextChallenger >= 0) {
       setActiveActorIndex(nextChallenger);
-      if (actors.length > 1 && fogOfWar) {
+      if (actors.length > 1 && fogOfWar && !SKIP_HANDOFF) {
         setHandoffResumePhase(PHASES.CHALLENGE_COLLECT);
         setTurnPhase(PHASES.HANDOFF);
       }
@@ -905,7 +1103,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
       const firstRebutter = findNextInputActor(PHASES.REBUTTAL_COLLECT, 0, actors, actorDecisions);
       if (firstRebutter >= 0) {
         setActiveActorIndex(firstRebutter);
-        if (actors.length > 1 && fogOfWar) {
+        if (actors.length > 1 && fogOfWar && !SKIP_HANDOFF) {
           setHandoffResumePhase(PHASES.REBUTTAL_COLLECT);
           setTurnPhase(PHASES.HANDOFF);
         } else {
@@ -925,7 +1123,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
     const nextRebutter = findNextInputActor(PHASES.REBUTTAL_COLLECT, activeActorIndex + 1, actors, actorDecisions);
     if (nextRebutter >= 0) {
       setActiveActorIndex(nextRebutter);
-      if (actors.length > 1 && fogOfWar) {
+      if (actors.length > 1 && fogOfWar && !SKIP_HANDOFF) {
         setHandoffResumePhase(PHASES.REBUTTAL_COLLECT);
         setTurnPhase(PHASES.HANDOFF);
       }
@@ -1220,11 +1418,158 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
             interactionMode={targetingMode ? "target_hex" : "navigate"}
             targetingMode={targetingMode}
             selectedUnitId={selectedUnitId}
-            onCellClick={(cell) => targetingMode ? handleTargetSelect(cell) : handleMapCellClick(cell)}
+            onCellClick={(cell, e) => targetingMode ? handleTargetSelect(cell, e) : handleMapCellClick(cell)}
             onCellHover={targetingMode ? setHoveredCell : undefined}
             movePath={movePath}
             proposedMoves={proposedMoves}
+            airOverlayData={airOverlayData}
+            activeFeatures={activeFeatures}
+            showElevBands={showElevBands}
           />
+
+          {/* ── Map view controls — bottom-right (avoids cell tooltip at bottom-left) ── */}
+          <div style={{
+            position: "absolute", bottom: 8, right: 8,
+            display: "flex", gap: 4, zIndex: 10,
+          }}>
+            <button
+              onClick={() => setShowElevBands(v => !v)}
+              title="Toggle elevation view (E)"
+              style={{
+                fontSize: 10, color: showElevBands ? "#F59E0B" : "#9CA3AF",
+                fontFamily: "monospace",
+                background: showElevBands ? "rgba(245,158,11,0.15)" : "rgba(0,0,0,0.5)",
+                padding: "2px 8px", borderRadius: 3, cursor: "pointer",
+                border: showElevBands ? "1px solid rgba(245,158,11,0.4)" : "1px solid transparent",
+              }}
+            >
+              Elev
+            </button>
+            <button
+              onClick={() => setShowFeaturePanel(v => !v)}
+              title="Toggle feature layers"
+              style={{
+                fontSize: 10, color: showFeaturePanel ? "#3B82F6" : "#9CA3AF",
+                fontFamily: "monospace",
+                background: showFeaturePanel ? "rgba(59,130,246,0.15)" : "rgba(0,0,0,0.5)",
+                padding: "2px 8px", borderRadius: 3, cursor: "pointer",
+                border: showFeaturePanel ? "1px solid rgba(59,130,246,0.4)" : "1px solid transparent",
+              }}
+            >
+              Layers
+            </button>
+          </div>
+
+          {/* ── Feature filter panel ── */}
+          {showFeaturePanel && (
+            <Panel style={{
+              position: "absolute", bottom: 38, right: 8, width: 200,
+              maxHeight: "60vh", overflowY: "auto", padding: "8px 10px",
+              zIndex: 20, fontSize: 11,
+            }}>
+              <div style={{
+                fontSize: 9, fontWeight: 700, color: colors.text.muted,
+                marginBottom: 4, letterSpacing: 1, textTransform: "uppercase",
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+              }}>
+                Layers
+                <span onClick={() => setShowFeaturePanel(false)} style={{ cursor: "pointer", opacity: 0.6, fontSize: 12 }}>✕</span>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginBottom: 6 }}>
+                {[["All", () => toggleAllFeatures(true)], ["None", () => toggleAllFeatures(false)]].map(([label, fn]) => (
+                  <span key={label} onClick={fn} style={{
+                    padding: "1px 5px", borderRadius: 2, fontSize: 9, cursor: "pointer",
+                    background: colors.bg.surface, border: `1px solid ${colors.border.subtle}`,
+                    color: colors.text.secondary,
+                  }}>{label}</span>
+                ))}
+                {Object.keys(FG).map(g => (
+                  <span key={g} onClick={() => toggleFeatureGroup(g)} style={{
+                    padding: "1px 5px", borderRadius: 2, fontSize: 9, cursor: "pointer",
+                    background: colors.bg.surface, border: `1px solid ${colors.border.subtle}`,
+                    color: colors.text.secondary,
+                  }}>{g}</span>
+                ))}
+              </div>
+              {Object.entries(FG).map(([group, items]) => {
+                const present = items.filter(f => featureCounts[f]);
+                if (present.length === 0) return null;
+                return (
+                  <div key={group} style={{ marginBottom: 4 }}>
+                    <div onClick={() => toggleFeatureGroup(group)} style={{
+                      fontSize: 9, fontWeight: 700, color: colors.text.muted,
+                      cursor: "pointer", marginBottom: 2, display: "flex", alignItems: "center", gap: 4,
+                    }}>
+                      <div style={{ width: 2, height: 8, borderRadius: 1, background: colors.accent.blue }} />
+                      {group}
+                    </div>
+                    {present.map(f => {
+                      const on = activeFeatures.has(f);
+                      return (
+                        <div key={f} onClick={() => toggleFeat(f)} style={{
+                          display: "flex", alignItems: "center", gap: 4,
+                          padding: "1px 0", cursor: "pointer", opacity: on ? 1 : 0.25,
+                        }}>
+                          <div style={{
+                            width: 8, height: 8, borderRadius: 2,
+                            background: FC[f] || "#666", flexShrink: 0,
+                          }} />
+                          <span style={{ flex: 1, fontSize: 10 }}>{FL[f] || f}</span>
+                          <span style={{ fontSize: 9, color: colors.text.muted, fontFamily: "monospace" }}>{featureCounts[f]}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </Panel>
+          )}
+
+          {/* ── Elevation legend ── */}
+          {showElevBands && terrainData && (() => {
+            const { min, max } = computeElevationRange(terrainData);
+            const range = max - min;
+            if (range <= 0) return null;
+            const rawInterval = range / 10;
+            const contourInterval = rawInterval > 200 ? Math.round(rawInterval / 100) * 100
+              : rawInterval > 50 ? Math.round(rawInterval / 50) * 50
+              : rawInterval > 10 ? Math.round(rawInterval / 10) * 10
+              : Math.max(5, Math.round(rawInterval));
+            const stops = [
+              "rgb(51,115,71)", "rgb(89,140,77)", "rgb(140,158,82)", "rgb(179,166,87)",
+              "rgb(184,143,97)", "rgb(158,122,102)", "rgb(148,143,138)", "rgb(224,219,209)",
+            ];
+            const gradient = stops.map((c, i) => `${c} ${(i / 7 * 100).toFixed(1)}%`).join(", ");
+            const ticks = [];
+            const firstTick = Math.ceil(min / contourInterval) * contourInterval;
+            for (let e = firstTick; e <= max; e += contourInterval) {
+              const pct = (e - min) / range;
+              if (pct > 0.05 && pct < 0.95) ticks.push({ elev: e, pct });
+            }
+            const stride = Math.max(1, Math.ceil(ticks.length / 4));
+            const shownTicks = ticks.filter((_, i) => i % stride === 0);
+            const barH = 120;
+            return (
+              <Panel style={{
+                position: "absolute", bottom: 38, right: showFeaturePanel ? 220 : 8,
+                padding: "6px 8px", width: 70, zIndex: 15,
+              }}>
+                <div style={{ fontSize: 8, color: colors.text.muted, fontWeight: 700, textTransform: "uppercase", marginBottom: 4, textAlign: "center" }}>
+                  Elevation
+                </div>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <div style={{ width: 10, height: barH, borderRadius: 2, background: `linear-gradient(to top, ${gradient})`, border: `1px solid ${colors.border.subtle}`, flexShrink: 0 }} />
+                  <div style={{ position: "relative", height: barH, flex: 1 }}>
+                    <span style={{ position: "absolute", top: -3, fontSize: 9, fontWeight: 600, color: colors.text.secondary, fontFamily: "monospace", whiteSpace: "nowrap" }}>{max}m</span>
+                    {shownTicks.map(t => (
+                      <span key={t.elev} style={{ position: "absolute", bottom: `${t.pct * 100}%`, transform: "translateY(50%)", fontSize: 8, color: colors.text.muted, fontFamily: "monospace", whiteSpace: "nowrap" }}>{t.elev}</span>
+                    ))}
+                    <span style={{ position: "absolute", bottom: -3, fontSize: 9, fontWeight: 600, color: colors.text.secondary, fontFamily: "monospace", whiteSpace: "nowrap" }}>{min}m</span>
+                  </div>
+                </div>
+              </Panel>
+            );
+          })()}
         </div>
 
         {/* Right: Turn panel */}
@@ -1893,7 +2238,12 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
           onStartTargeting={handleStartTargeting}
           onCancelTargeting={handleCancelTargeting}
           onConfirm={handleOrderConfirm}
+          onOrderPreview={handleOrderPreview}
           onClose={() => { setSelectedUnitId(null); setTargetingMode(null); }}
+          onEmbark={handleEmbark}
+          scaleTier={scaleTier}
+          waypointCount={waypointBuffer.length}
+          onClearWaypoints={() => setWaypointBuffer([])}
         />
       )}
 

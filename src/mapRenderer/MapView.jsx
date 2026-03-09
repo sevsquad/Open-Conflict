@@ -19,7 +19,9 @@ import { cellPixelsToHexSize, hexDistance, hexToScreen, SQRT3 } from "./HexMath.
 import { computeElevationRange } from "./gl/HexGPUData.js";
 import { buildContourLabelData, drawContourLabels } from "./overlays/ContourLabels.js";
 import { generateStrategicAtlas } from "./gl/StrategicAtlas.js";
+import { generateTileAtlas } from "./gl/tileAtlas/index.js";
 import { drawStrategicGridOverlay } from "./overlays/StrategicGridOverlay.js";
+import { drawADCoverage, drawFlightPaths, drawCASSectors } from "./overlays/AirOverlay.js";
 
 const CLICK_THRESHOLD = 5;
 // Sub-tactical overlay threshold: if fine-to-strategic ratio is below this,
@@ -47,6 +49,8 @@ const MapView = forwardRef(function MapView({
   fineMapData = null,            // fine-resolution hex data for atlas painting (dual-res mode)
   strategicGrid = null,          // from buildStrategicGrid() — enables strategic mode
   strategicMode = false,         // true = render strategic hexes, false = render fine hexes
+  // Air overlays — optional, only passed from SimMap when air units are present
+  airOverlayData = null,         // { adUnits, flightPaths, casSectors } for air viz
   style = {},
 }, ref) {
   const glCanvasRef = useRef(null);
@@ -120,7 +124,12 @@ const MapView = forwardRef(function MapView({
   useEffect(() => {
     if (!D || !D.cells || !rendererRef.current) return;
 
-    const uploadResult = rendererRef.current.uploadMapData(D);
+    // Generate illustrated tile atlas and upload map data with tile indices
+    const atlasResult = generateTileAtlas(D);
+    if (atlasResult) {
+      rendererRef.current.uploadTileAtlas(atlasResult);
+    }
+    const uploadResult = rendererRef.current.uploadMapData(D, atlasResult?.tileIndexMap);
 
     // Compute elevation range for topo visualization
     elevRangeRef.current = computeElevationRange(D);
@@ -302,6 +311,19 @@ const MapView = forwardRef(function MapView({
         drawStrategicGridOverlay(ctx, strategicGrid, viewport, w, h, fSize);
       }
     }
+    // Air overlays (AD coverage, flight paths, CAS sectors) — drawn under units
+    if (airOverlayData) {
+      if (airOverlayData.adUnits) {
+        drawADCoverage(ctx, airOverlayData.adUnits, actorColorMap, viewport, w, h, cols, rows);
+      }
+      if (airOverlayData.casSectors) {
+        drawCASSectors(ctx, airOverlayData.casSectors, viewport, w, h, cols, rows);
+      }
+      if (airOverlayData.flightPaths) {
+        drawFlightPaths(ctx, airOverlayData.flightPaths, viewport, w, h);
+      }
+    }
+
     // Units
     if (units || activeGhostUnit) {
       const drawOpts = isSetupMode
@@ -348,7 +370,7 @@ const MapView = forwardRef(function MapView({
         drawHoverDistance(ctx, viewport, w, h, selCell, hovCell, `${dist} hex · ${km} km`);
       }
     }
-  }, [D, units, hovCell, selCell, activeGhostUnit, redrawTick, cols, rows, actorColorMap, isSetupMode, activeFeatures, showElevBands, cellSizeKm, measureStart, measureEnd, interactionMode, unitOverlayOptions, movePath, proposedMoves]);
+  }, [D, units, hovCell, selCell, activeGhostUnit, redrawTick, cols, rows, actorColorMap, isSetupMode, activeFeatures, showElevBands, cellSizeKm, measureStart, measureEnd, interactionMode, unitOverlayOptions, movePath, proposedMoves, airOverlayData]);
 
   // ── Mouse handlers ──
   const getCellFromEvent = useCallback((e) => {
@@ -413,7 +435,7 @@ const MapView = forwardRef(function MapView({
         }
         return;
       }
-      onCellClick?.(down.cell);
+      onCellClick?.(down.cell, e);
     }
   }, [onCellClick, interactionMode, measureStart, measureEnd]);
 

@@ -221,6 +221,44 @@ export function getTestFixture() {
     bbox: { south: 49.435, north: 49.565, west: 5.92, east: 6.08 },
     cells,
     labels: {},
-    linearPaths: [],
+    linearPaths: [
+      // Highway E-W across row 4 (straight-through, bridge over river at col 3)
+      { type: "highway", cells: [
+        [0,4],[1,4],[2,4],[3,4],[4,4],[5,4],[6,4],[7,4],[8,4],[9,4],[10,4],[11,4],
+      ]},
+      // River N-S through col 3 (crosses highway at (3,4) creating bridge)
+      { type: "river", cells: [
+        [3,2],[3,3],[3,4],[3,5],[3,6],[3,7],[3,8],[3,9],[3,10],[4,10],
+      ]},
+      // Major road from (4,5) north through (6,3) with 120° bend
+      { type: "major_road", cells: [
+        [4,5],[5,5],[6,5],[6,4],[6,3],
+      ]},
+      // Road branch S from (5,4) — creates T-junction with highway
+      { type: "road", cells: [
+        [5,4],[5,5],[5,6],[5,7],
+      ]},
+      // Road through urban area (6,3) to (6,7)
+      { type: "road", cells: [
+        [6,3],[6,4],[6,5],[6,6],[6,7],
+      ]},
+      // Railway diagonal from (5,4) SE across countryside
+      // Routes through (7,6) to bridge gap between (6,6) and (7,5)
+      { type: "railway", cells: [
+        [5,4],[5,5],[6,5],[6,6],[7,6],[7,5],[8,5],[9,5],[10,5],[11,5],
+      ]},
+      // Minor road short branch in forest
+      { type: "minor_road", cells: [
+        [6,7],[7,7],[7,6],
+      ]},
+      // Footpath through forest
+      { type: "footpath", cells: [
+        [5,8],[5,9],[5,10],
+      ]},
+      // Trail from highlands down to lowlands
+      { type: "trail", cells: [
+        [3,9],[3,10],[4,10],[4,11],[4,12],[4,13],[4,14],
+      ]},
+    ],
   };
 }

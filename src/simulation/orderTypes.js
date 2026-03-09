@@ -4,6 +4,20 @@
 // can use each, and which movement+action pairs are compatible.
 // ═══════════════════════════════════════════════════════════════
 
+// ── Air-capable unit type check ──────────────────────────────
+// All unit types that fly — fixed-wing, rotary, transport, UAS.
+// Use this everywhere instead of `unit.type === "air"` to ensure
+// helicopters and transports get air logistics, flight plans, etc.
+const AIR_UNIT_TYPES = new Set(["air", "attack_helicopter", "transport"]);
+export function isAirUnit(unit) {
+  return AIR_UNIT_TYPES.has(unit?.type);
+}
+// Subset: only helicopter types (for movement speed, altitude lock, fuel)
+const HELICOPTER_TYPES = new Set(["attack_helicopter", "transport"]);
+export function isHelicopter(unit) {
+  return HELICOPTER_TYPES.has(unit?.type) || unit?.movementType === "helicopter";
+}
+
 // ── Order Definitions ──────────────────────────────────────────
 // Each order is either a "movement" or "action" slot order.
 // A unit gets up to one of each per turn.
@@ -106,6 +120,85 @@ export const ORDER_TYPES = {
     description: "Deny enemy naval movement and supply through nearby sea lanes",
   },
 
+  // === Air-specific orders ===
+  CAS: {
+    id: "CAS",
+    label: "CAS",
+    slot: ORDER_SLOT.ACTION,
+    requiresTarget: "hex",         // click sector center hex (3-5 hex area)
+    description: "Close air support — attack enemy units in a sector",
+    subtypes: ["DIRECT", "BOMBING", "STANDOFF"],
+    requiresAltitude: true,
+  },
+  AIR_SUPERIORITY: {
+    id: "AIR_SUPERIORITY",
+    label: "Air Superiority",
+    slot: ORDER_SLOT.ACTION,
+    requiresTarget: "hex",         // sector center
+    description: "Establish air superiority over a sector",
+  },
+  INTERDICTION: {
+    id: "INTERDICTION",
+    label: "Interdiction",
+    slot: ORDER_SLOT.ACTION,
+    requiresTarget: "hex",         // road junction, bridge, supply route
+    description: "Interdict enemy supply lines and movement routes",
+    requiresAltitude: true,
+  },
+  SEAD: {
+    id: "SEAD",
+    label: "SEAD",
+    slot: ORDER_SLOT.ACTION,
+    requiresTarget: "unit",        // click specific AD unit
+    description: "Suppress/destroy enemy air defenses",
+    requiresAltitude: true,
+  },
+  STRATEGIC_STRIKE: {
+    id: "STRATEGIC_STRIKE",
+    label: "Strategic Strike",
+    slot: ORDER_SLOT.ACTION,
+    requiresTarget: "hex",         // strategic target location
+    description: "Strategic bombardment of rear-area targets",
+  },
+  AIRLIFT: {
+    id: "AIRLIFT",
+    label: "Airlift",
+    slot: ORDER_SLOT.ACTION,
+    requiresTarget: "unit",        // cargo unit to transport
+    description: "Airlift cargo or troops to a destination",
+  },
+  AIR_RECON: {
+    id: "AIR_RECON",
+    label: "Air Recon",
+    slot: ORDER_SLOT.ACTION,
+    requiresTarget: "hex",         // area to reconnoiter
+    description: "Aerial reconnaissance of an area",
+    requiresAltitude: true,
+  },
+  CAP: {
+    id: "CAP",
+    label: "CAP",
+    slot: ORDER_SLOT.ACTION,
+    requiresTarget: null,          // patrol current sector
+    description: "Combat air patrol — loiter to intercept enemy air",
+  },
+  ESCORT: {
+    id: "ESCORT",
+    label: "Escort",
+    slot: ORDER_SLOT.ACTION,
+    requiresTarget: "unit",        // friendly air unit to escort
+    description: "Escort a friendly air unit on all its sorties this turn",
+  },
+
+  // === Transport orders ===
+  DISEMBARK: {
+    id: "DISEMBARK",
+    label: "Disembark",
+    slot: ORDER_SLOT.MOVEMENT,
+    requiresTarget: null,          // exits at transport's current/final position
+    description: "Exit transport at its current or destination hex",
+  },
+
   // === Default (no explicit order given) ===
   HOLD: {
     id: "HOLD",
@@ -120,22 +213,33 @@ export const ORDER_TYPES = {
 // Which order buttons show up for each unit type.
 // true = primary capability, "reduced" = can do it but less effectively.
 
-const ALL_COMBAT = ["infantry", "mechanized", "armor", "recon", "special_forces", "parachute_infantry", "glider_infantry", "tank_destroyer", "armored_infantry"];
-const ALL_TYPES = ["infantry", "mechanized", "armor", "recon", "artillery", "headquarters", "engineer", "air_defense", "logistics", "special_forces", "air", "naval", "parachute_infantry", "glider_infantry", "tank_destroyer", "armored_infantry"];
+const ALL_COMBAT = ["infantry", "mechanized", "armor", "recon", "special_forces", "parachute_infantry", "glider_infantry", "tank_destroyer", "armored_infantry", "mechanized_infantry", "airborne", "anti_tank"];
+const ALL_TYPES = ["infantry", "mechanized", "armor", "recon", "artillery", "headquarters", "engineer", "air_defense", "logistics", "special_forces", "air", "naval", "parachute_infantry", "glider_infantry", "tank_destroyer", "armored_infantry", "mechanized_infantry", "attack_helicopter", "airborne", "anti_tank", "transport"];
 
 export const ORDER_VALIDITY = {
   MOVE:         fromList(ALL_TYPES),
   WITHDRAW:     fromList(ALL_TYPES),
-  ATTACK:       fromList(["infantry", "mechanized", "armor", "special_forces", "parachute_infantry", "glider_infantry", "armored_infantry"], ["recon", "engineer", "tank_destroyer"]),
+  ATTACK:       fromList(["infantry", "mechanized", "armor", "special_forces", "parachute_infantry", "glider_infantry", "armored_infantry", "mechanized_infantry", "airborne"], ["recon", "engineer", "tank_destroyer", "anti_tank"]),
   DEFEND:       fromList(ALL_TYPES),
-  SUPPORT_FIRE: fromList(["infantry", "mechanized", "armor", "tank_destroyer", "armored_infantry"], ["recon", "parachute_infantry", "glider_infantry"]),
+  SUPPORT_FIRE: fromList(["infantry", "mechanized", "armor", "tank_destroyer", "armored_infantry", "mechanized_infantry", "anti_tank"], ["recon", "parachute_infantry", "glider_infantry", "airborne"]),
   FIRE_MISSION: fromList(["artillery"]),
-  DIG_IN:       fromList(["infantry", "mechanized", "artillery", "engineer", "headquarters", "air_defense", "parachute_infantry", "glider_infantry", "armored_infantry"]),
+  DIG_IN:       fromList(["infantry", "mechanized", "artillery", "engineer", "headquarters", "air_defense", "parachute_infantry", "glider_infantry", "armored_infantry", "mechanized_infantry", "airborne", "anti_tank"]),
   RECON:        fromList(["recon"], ALL_COMBAT),   // recon primary, combat units reduced
   RESUPPLY:     fromList(["headquarters", "logistics"]),
   ENGINEER:     fromList(["engineer"]),
   SHORE_BOMBARDMENT: fromList(["naval"]),             // naval-only: fire support to land
   BLOCKADE:          fromList(["naval"]),             // naval-only: deny sea lanes
+  // Air-specific order validity
+  CAS:              fromList(["air", "attack_helicopter"]),  // air with close_air_support capability (checked at runtime)
+  AIR_SUPERIORITY:  fromList(["air"]),                       // air with air_superiority capability
+  INTERDICTION:     fromList(["air", "attack_helicopter"]),  // air with close_air_support or precision_strike
+  SEAD:             fromList(["air"]),                       // air with precision_strike or sead_capable
+  STRATEGIC_STRIKE: fromList(["air"]),                       // air with strategic_bombing or precision_strike
+  AIRLIFT:          fromList(["air", "transport"]),          // air with airlift or air_transport
+  AIR_RECON:        fromList(["air", "attack_helicopter", "transport"]),  // air (any)
+  CAP:              fromList(["air"]),                       // air with air_superiority capability
+  ESCORT:           fromList(["air"]),                       // air with air_superiority capability
+  DISEMBARK:    fromList(ALL_TYPES),                   // exit transport — movement slot, frees action slot
   HOLD:         fromList(ALL_TYPES),
 };
 
@@ -176,17 +280,27 @@ export function isOrderValid(orderId, unitType) {
 // When player clicks an incompatible combo, the conflicting order is replaced.
 
 export const COMPATIBILITY = {
-  //                    + MOVE    + WITHDRAW   No Movement
-  ATTACK:       { MOVE: true,  WITHDRAW: false, NONE: true  },
-  DEFEND:       { MOVE: true,  WITHDRAW: true,  NONE: true  },
-  SUPPORT_FIRE: { MOVE: true,  WITHDRAW: false, NONE: true  },
-  FIRE_MISSION: { MOVE: false, WITHDRAW: false, NONE: true  },
-  DIG_IN:       { MOVE: false, WITHDRAW: false, NONE: true  },
-  RECON:        { MOVE: true,  WITHDRAW: false, NONE: true  },
-  ENGINEER:     { MOVE: false, WITHDRAW: false, NONE: true  },
-  RESUPPLY:     { MOVE: false, WITHDRAW: false, NONE: true  },
-  SHORE_BOMBARDMENT: { MOVE: true,  WITHDRAW: false, NONE: true  },  // can fire while repositioning
-  BLOCKADE:          { MOVE: true,  WITHDRAW: false, NONE: true  },  // patrol area while blockading
+  //                    + MOVE    + WITHDRAW   + DISEMBARK   No Movement
+  ATTACK:       { MOVE: true,  WITHDRAW: false, DISEMBARK: true,  NONE: true  },
+  DEFEND:       { MOVE: true,  WITHDRAW: true,  DISEMBARK: true,  NONE: true  },
+  SUPPORT_FIRE: { MOVE: true,  WITHDRAW: false, DISEMBARK: true,  NONE: true  },
+  FIRE_MISSION: { MOVE: false, WITHDRAW: false, DISEMBARK: false, NONE: true  },  // can't call fire from a helicopter
+  DIG_IN:       { MOVE: false, WITHDRAW: false, DISEMBARK: true,  NONE: true  },
+  RECON:        { MOVE: true,  WITHDRAW: false, DISEMBARK: true,  NONE: true  },
+  ENGINEER:     { MOVE: false, WITHDRAW: false, DISEMBARK: false, NONE: true  },
+  RESUPPLY:     { MOVE: false, WITHDRAW: false, DISEMBARK: false, NONE: true  },
+  SHORE_BOMBARDMENT: { MOVE: true,  WITHDRAW: false, DISEMBARK: false, NONE: true  },  // can fire while repositioning
+  BLOCKADE:          { MOVE: true,  WITHDRAW: false, DISEMBARK: false, NONE: true  },  // patrol area while blockading
+  // Air orders — MOVE = transit to mission area; WITHDRAW = RTB after abort
+  CAS:              { MOVE: true,  WITHDRAW: false, DISEMBARK: false, NONE: true  },
+  AIR_SUPERIORITY:  { MOVE: true,  WITHDRAW: false, DISEMBARK: false, NONE: true  },
+  INTERDICTION:     { MOVE: true,  WITHDRAW: false, DISEMBARK: false, NONE: true  },
+  SEAD:             { MOVE: true,  WITHDRAW: false, DISEMBARK: false, NONE: true  },
+  STRATEGIC_STRIKE: { MOVE: false, WITHDRAW: false, DISEMBARK: false, NONE: true  },  // flies from base, no separate movement
+  AIRLIFT:          { MOVE: true,  WITHDRAW: false, DISEMBARK: false, NONE: true  },
+  AIR_RECON:        { MOVE: true,  WITHDRAW: false, DISEMBARK: false, NONE: true  },
+  CAP:              { MOVE: true,  WITHDRAW: false, DISEMBARK: false, NONE: true  },
+  ESCORT:           { MOVE: true,  WITHDRAW: false, DISEMBARK: false, NONE: true  },
 };
 
 /**
@@ -265,6 +379,11 @@ export const WEAPON_RANGE_KM = {
   glider_infantry:    { pointBlank: 0.1, effective: 0.3,  max: 0.8  },
   tank_destroyer:     { pointBlank: 0.3, effective: 1.5,  max: 2.5  },
   armored_infantry:   { pointBlank: 0.1, effective: 0.4,  max: 1.0  },
+  mechanized_infantry:{ pointBlank: 0.2, effective: 0.5,  max: 1.0  }, // same as mechanized
+  attack_helicopter:  { pointBlank: 0,   effective: 5.0,  max: 10.0 }, // rotary CAS platform
+  airborne:           { pointBlank: 0.1, effective: 0.3,  max: 0.8  }, // same as parachute_infantry
+  anti_tank:          { pointBlank: 0.1, effective: 3.0,  max: 4.0  }, // ATGM platform
+  transport:          { pointBlank: 0,   effective: 0.1,  max: 0.3  }, // door guns only
 };
 
 // ── Movement Budgets Per Movement Type ─────────────────────────
@@ -275,8 +394,10 @@ export const MOVEMENT_BUDGETS = {
   wheeled:    5,    // 5-6 hex on road, 3-4 cross-country
   tracked:    4,    // 4-5 hex (12-16km cross-country)
   air:        8,    // largely terrain-independent
+  helicopter: 10,   // rotary wing — ~10km combat radius per turn
   naval:      6,    // water only
   amphibious: 4,    // can cross water at reduced speed
+  static:     0,    // tethered/fixed — observation balloons, etc.
 };
 
 // ── Terrain Movement Cost Multipliers ──────────────────────────
@@ -456,3 +577,56 @@ export const ECHELON_WEIGHTS = {
   national_forces:   2187,
   coalition_command:  2187,
 };
+
+// ── Transport Compatibility ──────────────────────────────────
+// Which movement types a transport capability can carry.
+// air_transport (helicopters): foot-mobile units only
+// amphibious_assault (ships): broader range including vehicles
+
+const AIR_TRANSPORTABLE = new Set(["foot"]);
+const NAVAL_TRANSPORTABLE = new Set(["foot", "wheeled", "tracked", "amphibious"]);
+
+/**
+ * Check if a unit can be loaded into a transport.
+ * @param {Object} cargoUnit - the unit to embark
+ * @param {Object} transportUnit - the transport to load into
+ * @returns {{ allowed: boolean, reason?: string }}
+ */
+export function canEmbark(cargoUnit, transportUnit) {
+  const caps = transportUnit.specialCapabilities || [];
+  const cargoMovType = cargoUnit.movementType || "foot";
+
+  // Must have a transport capability
+  const isAirTransport = caps.includes("air_transport");
+  const isNavalTransport = caps.includes("amphibious_assault");
+  if (!isAirTransport && !isNavalTransport) {
+    return { allowed: false, reason: "Unit has no transport capability" };
+  }
+
+  // Can't transport other air units or transports
+  if (cargoUnit.movementType === "air" || cargoUnit.movementType === "helicopter" || cargoUnit.movementType === "naval") {
+    return { allowed: false, reason: "Cannot transport air or naval units" };
+  }
+
+  // Check movement type compatibility
+  if (isAirTransport && !AIR_TRANSPORTABLE.has(cargoMovType)) {
+    return { allowed: false, reason: "Air transport can only carry foot-mobile units" };
+  }
+  if (isNavalTransport && !NAVAL_TRANSPORTABLE.has(cargoMovType)) {
+    return { allowed: false, reason: "Cannot transport this movement type by sea" };
+  }
+
+  // Check capacity
+  const cargo = transportUnit.cargo || [];
+  const capacity = transportUnit.transportCapacity || 0;
+  if (cargo.length >= capacity) {
+    return { allowed: false, reason: "Transport is at full capacity" };
+  }
+
+  // Can't embark if already embarked
+  if (cargoUnit.embarkedIn) {
+    return { allowed: false, reason: "Unit is already embarked" };
+  }
+
+  return { allowed: true };
+}

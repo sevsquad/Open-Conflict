@@ -71,6 +71,9 @@ Adjust for: surprise, prepared defenses, fire support quality, weather, morale, 
 - Reserve commitment at the decisive point can be battle-winning; too early wastes it
 - Ammo: sustained combat consumes ~20-30% ammo per turn
 - Movement: road march 15-25km/turn, cross-country 8-12km/turn, mountain 3-6km/turn
+- CAS from a 4-ship flight provides ~1.2-1.3x combat modifier to supported ground units
+- Attack helicopter pair can destroy 4-8 armored targets per sortie under favorable conditions
+- Air defense engagement zone: gun AD effective to ~3km altitude, IR missiles to ~5km, radar SAMs to 15km+
 Adjust for: surprise, air superiority, prepared defenses, weather, fatigue, combined-arms quality, task organization.`,
 
   operational: `COMBAT RESOLUTION ANCHORS (guidelines, adjust for specific circumstances):
@@ -85,6 +88,10 @@ Adjust for: surprise, air superiority, prepared defenses, weather, fatigue, comb
 - River crossing without bridging assets: attack at 0.5x strength, 1 turn delay for engineer bridging
 - High-ground defense: +1.5x effective strength; denying high ground to the enemy is an operational priority
 - Supply through mountain terrain: throughput reduced to 40-60% of plains capacity
+- Squadron interdiction reduces supply throughput ~20-40% along targeted routes
+- Air superiority campaign vs peer AD network takes 2-4 turns to achieve
+- Full squadron CAS provides ~1.3-1.5x combat modifier to supported division
+- SEAD mission suppresses radar AD for 1-2 turns in target area
 Adjust for: supply state, air situation, terrain, weather, force quality, C2 disruption.`,
 
   strategic: `COMBAT RESOLUTION ANCHORS (guidelines, adjust for specific circumstances):
@@ -98,6 +105,9 @@ Adjust for: supply state, air situation, terrain, weather, force quality, C2 dis
 - Mountain ranges block operational axes — forces funnel through passes and valleys (identify from terrain)
 - Supply throughput through mountain terrain: 30-50% of plains capacity, critical constraint on offensive tempo
 - Geographic barriers (mountains, major rivers) define theater boundaries and army group sectors
+- Strategic air campaign degrades enemy industrial output ~1-3% per week per committed wing
+- Theater air superiority vs peer opponent: 1-3 turns of sustained campaign
+- Strategic airlift capacity: ~1 brigade equivalent per week per major air transport wing
 Adjust for: industrial base, political will, alliance dynamics, geography, nuclear threshold proximity.`,
 
   theater: `COMBAT RESOLUTION ANCHORS (guidelines, adjust for specific circumstances):
@@ -464,6 +474,123 @@ Naval and amphibious units follow specific rules in addition to standard ground 
 - Aircraft detect surface vessels easily from altitude but struggle to detect submarines without specialized ASW equipment.`);
   }
 
+  // ── Air Operations Doctrine (tier 3+ — grand tactical and above) ──
+  if (scaleTier >= 3) {
+    sections.push(`\n## AIR OPERATIONS DOCTRINE
+
+Air units follow specific rules based on altitude, mission type, era, and the two-layer air superiority model.
+
+### Altitude System
+Every air mission operates at one of three altitude bands, chosen per waypoint:
+- **LOW (<500m)**: Nap-of-earth / terrain following. Best CAS target ID (unguided weapons), maximum exposure to gun AD and MANPADS. Gun AD effectiveness varies by aircraft SPEED — slow/hovering targets (helicopters, gun runs) are highly vulnerable; fast jets at treetop level give gun AD only 3-5 seconds of engagement window (low hit probability).
+- **MEDIUM (500-5,000m)**: Standard tactical altitude. Balanced risk. Above most gun AD ceilings. Vulnerable to IR and radar SAMs. Good for guided weapons delivery.
+- **HIGH (>5,000m)**: Above most short-range AD. Exposed to radar-guided SAMs and interceptors. Poor CAS accuracy with unguided weapons. Good for strategic strike with precision weapons, ISR, and air superiority.
+
+Helicopters default to LOW, can fly MEDIUM (losing terrain-masking, becoming easy targets for fighters and medium SAMs, but above gun AD), and are LOCKED OUT of HIGH. Fixed-wing aircraft can use all three bands.
+
+### Air Superiority — Two-Layer Model
+Air superiority is a PREREQUISITE that enables air operations. It is NOT a direct ground combat multiplier.
+
+**Layer 1: Air Superiority Level (ASL)** — computed mechanically, determines what air operations are possible:
+- Air Supremacy (>3:1): Friendly air operates freely. Enemy air impossible.
+- Air Superiority (1.5-3:1): Friendly air operates with low attrition. Enemy heavily constrained.
+- Contested (0.67-1.5:1): Both sides operate but take attrition. CAS effectiveness reduced.
+- Air Denial (0.33-0.67:1): Friendly air heavily constrained. Enemy operates with freedom.
+- Enemy Supremacy (<0.33:1): Friendly air near-impossible.
+
+**Layer 2: Air-Ground Effect** — the actual ground combat modifier comes from CAS/strike aircraft actively attacking specific targets.
+- Without CAS aircraft actively bombing, air superiority alone provides only ~1.05-1.1x passive benefit (freedom from enemy strafing, ISR integration).
+- With full CAS commitment in a sector: ~1.3-2.0x modifier depending on era, weapon type, target type, and AD threat.
+- The CAS modifier applies ONLY in the specific sector where CAS aircraft are operating, NOT as a blanket bonus.
+
+A lone fighter achieving air supremacy with no CAS aircraft present does NOT make ground troops 3x as effective. The fighter enables air ops — CAS aircraft must exploit that superiority.
+
+### Close Air Support (CAS Sector Model)
+CAS targets a 3-5 hex sector. Aircraft attack 2-3 enemy units in the sector per sortie:
+- **First priority**: Enemy units with ATTACK orders (blunting offensives)
+- **Second priority**: Enemy units defending against friendly attacks (softening defenders)
+- **Third priority**: Other enemy units (targets of opportunity)
+CAS effectiveness depends on: altitude, weapon type (unguided vs precision), AD threat in sector, weather, and target type (armor in open = ideal; infantry in forest/urban = difficult).
+
+### Air Defense Interaction
+Three AD categories determine survivability:
+- **Gun AD** (ZSU-23-4, Gepard, Bofors): Effective vs slow/low targets, NOT suppressible by anti-radiation missiles, requires visual tracking
+- **IR Missile AD** (Stinger, Igla, Strela): Effective at low-medium altitude, resistant to radar SEAD, limited range
+- **Radar Missile AD** (Hawk, Buk, S-400): Effective at medium-high altitude, VULNERABLE to SEAD/anti-radiation missiles, longest range
+
+SEAD missions suppress/destroy radar-guided AD but are ineffective against gun and IR missile AD.
+
+### Helicopter Doctrine
+Helicopters are vulnerable to MANPADS and gun AD. Attack helicopters use terrain masking (LOW altitude) for ATGM engagements — pop up, fire, duck behind terrain. Transport helicopters are extremely vulnerable during approach and landing. At MEDIUM altitude, helicopters lose terrain masking and become easy targets but are above gun AD. Fuel is tracked for persistent helicopters — forced RTB when fuel reaches bingo.
+
+### Interception Results
+When enemy fighters intercept CAS/strike missions, the orderComputer resolves it mechanically in two phases:
+1. **Catch/No-catch**: Binary — did the interceptor detect and reach the incoming mission? Based on detection capability, speed differential, distance, fuel, and fortune.
+2. **Interdiction score (1-100)**: If caught, how effective was the interception? Score bands determine CAS disruption level.
+You receive the computed result. Narrate it — do NOT recompute or override it.
+
+### Sortie Sustainability
+- Readiness (0-100) degrades with missions and combat damage, recovers during rest at functional airfields.
+- Below 50% readiness: reduced effectiveness. Below 25%: effectively grounded.
+- Unused sorties count as rest periods.
+- Airfield damage reduces sortie generation and recovery rate.
+
+### Weather Effects on Air Operations
+- **Clear/overcast**: Full air operations
+- **Rain**: Reduced CAS accuracy (unguided weapons), no effect on precision weapons
+- **Storm**: Air operations severely degraded — all missions at reduced effectiveness, increased accident risk
+- **Fog**: LOW altitude CAS impossible (no target identification), MEDIUM/HIGH operations with precision weapons only
+- **Snow**: Similar to rain but with additional icing risk at altitude`);
+  }
+
+  // WW1 air doctrine — observation dominance, not ground attack
+  if (scaleTier >= 3) {
+    // This section is only relevant when WW1 era is in play, but including it
+    // costs minimal tokens and ensures the LLM handles WW1 air correctly if present
+    sections.push(`\n### WW1 Air Doctrine (when applicable)
+WW1 air power is fundamentally about INTELLIGENCE, not firepower. Air superiority determines WHO CAN OBSERVE, which determines whose artillery is accurate.
+- Observation aircraft and balloons provide massive detection bonuses — the side with air superiority observes freely, enabling accurate artillery.
+- Fighters exist to deny enemy observation, not to strafe ground troops.
+- Observation balloons are tethered (static, cannot move), extremely vulnerable to fighter attack (fabric + hydrogen), but provide ~15-20km observation range.
+- All WW1 aircraft are slow, fragile, visual-detection-only. Pilot quality is THE dominant factor.
+- Weather almost totally grounds WW1 air operations (open cockpits, no instruments).`);
+  }
+
+  // ── Transport & Air Assault Doctrine (tier 2+ — tactical and above) ──
+  if (scaleTier >= 2) {
+    sections.push(`\n## TRANSPORT & AIR ASSAULT DOCTRINE
+
+Transport units (helicopters, amphibious ships) can carry embarked units as cargo. Embarked units move with the transport and share its fate.
+
+### Embarkation
+- Units board transports during the planning phase. Embarked units appear in the transport's Cargo field.
+- Air transports (specialCapability: "air_transport") can only carry foot-mobile units — infantry, special forces, recon on foot.
+- Naval transports (specialCapability: "amphibious_assault") can carry infantry, mechanized, and armored units.
+
+### Movement
+- Embarked units move automatically with their transport. They have no independent movement.
+- Embarked units CANNOT fight, detect, or be detected independently — they are invisible inside the transport.
+- The transport's movement feasibility governs the entire group.
+
+### Disembarkation (DISEMBARK Order)
+- DISEMBARK is a movement-slot order. The unit exits at the transport's current or destination hex.
+- DISEMBARK frees the action slot — units can DISEMBARK + ATTACK (air assault), DISEMBARK + DEFEND (secure LZ), etc.
+- If enemies are within 2 hexes of the landing zone, treat it as a CONTESTED LANDING:
+  - Apply -15% to -30% cohesion penalty during the landing
+  - If enemy AD units are present, the transport itself may take damage or be destroyed
+  - Fortune rolls affect landing success — low rolls can scatter troops or abort the insertion
+
+### Transport Destruction
+- If a transport is destroyed while carrying embarked units, ALL cargo units suffer catastrophic damage.
+- Cargo units in a destroyed air transport: strength reduced to 20%, morale halved, status → "damaged".
+- This represents the total loss of the aircraft and most personnel/equipment aboard.
+
+### Air Assault Operations
+- A typical air assault: transport MOVE to LZ hex + embarked infantry DISEMBARK + ATTACK
+- The LLM should narrate the helicopter approach, any AD fire, the landing, and the ground action as a continuous operation.
+- Helicopter transports are extremely vulnerable to AD fire during approach and landing — SHORAD and MANPADS are the primary threat.`);
+  }
+
   // ── Behavioral Constraints (always) ──
   sections.push(`\n## BEHAVIORAL CONSTRAINTS
 
@@ -501,6 +628,7 @@ export function reformatActionAsIntelReport(actor, actionText, gameState) {
       if (u.morale !== undefined && u.morale !== 100) line += `, morale: ${u.morale}%`;
       if (u.ammo !== undefined && u.ammo !== 100) line += `, ammo: ${u.ammo}%`;
       if (u.fuel !== undefined && u.fuel !== 100) line += `, fuel: ${u.fuel}%`;
+      if (u.forcedRTB) line += `, BINGO FUEL — MUST RTB`;
       if (u.entrenchment !== undefined && u.entrenchment > 0) line += `, entrenched: ${u.entrenchment}%`;
       if (u.cohesion !== undefined && u.cohesion !== 100) line += `, cohesion: ${u.cohesion}%`;
       if (u.movementType && u.movementType !== "foot") line += `, ${u.movementType}`;
@@ -1020,10 +1148,21 @@ export function buildAdjudicationPrompt({ scenario, gameState, terrainData, acti
       if (u.morale !== undefined && u.morale !== 100) unitLine += ` | Morale: ${u.morale}%`;
       if (u.ammo !== undefined && u.ammo !== 100) unitLine += ` | Ammo: ${u.ammo}%`;
       if (u.fuel !== undefined && u.fuel !== 100) unitLine += ` | Fuel: ${u.fuel}%`;
+      if (u.forcedRTB) unitLine += ` | ⚠️ BINGO FUEL — MUST RTB`;
       if (u.fatigue !== undefined && u.fatigue > 0) unitLine += ` | Fatigue: ${u.fatigue}%`;
       if (u.entrenchment !== undefined && u.entrenchment > 0) unitLine += ` | Entrenchment: ${u.entrenchment}%`;
       if (u.cohesion !== undefined && u.cohesion !== 100) unitLine += ` | Cohesion: ${u.cohesion}%`;
       if (u.movementType && u.movementType !== "foot") unitLine += ` | Movement: ${u.movementType}`;
+      if (u.specialCapabilities?.length > 0) unitLine += ` | Special: ${u.specialCapabilities.join(", ")}`;
+      // Transport cargo/embarked status
+      if (u.cargo?.length > 0) {
+        const cargoNames = u.cargo.map(id => gameState.units.find(cu => cu.id === id)?.name || id);
+        unitLine += ` | Cargo: [${cargoNames.join(", ")}] (${u.cargo.length}/${u.transportCapacity || "?"})`;
+      }
+      if (u.embarkedIn) {
+        const transport = gameState.units.find(tu => tu.id === u.embarkedIn);
+        unitLine += ` | Embarked in: ${transport?.name || u.embarkedIn}`;
+      }
       if (u.parentHQ) unitLine += ` | HQ: ${u.parentHQ}`;
       if (u.taskOrg) unitLine += ` | TaskOrg: ${u.taskOrg}`;
       if (u.notes) unitLine += ` | Notes: ${u.notes}`;
@@ -1446,6 +1585,7 @@ function formatSingleBundle(b) {
   if (b.ammo !== undefined) stats.push(`Ammo:${b.ammo}%`);
   if (b.morale !== undefined && b.morale !== 100) stats.push(`Morale:${b.morale}%`);
   if (b.fuel !== undefined && b.fuel !== 100) stats.push(`Fuel:${b.fuel}%`);
+  if (b.forcedRTB) stats.push(`BINGO-RTB`);
   if (b.entrenchment !== undefined && b.entrenchment > 0) stats.push(`Ent:${b.entrenchment}%`);
   if (b.cohesion !== undefined && b.cohesion !== 100) stats.push(`Coh:${b.cohesion}%`);
   lines.push(`  Position: ${b.position} | ${stats.join(" ")} | Status: ${b.status} | Posture: ${b.posture}`);
@@ -1458,6 +1598,11 @@ function formatSingleBundle(b) {
     if (b.movementOrder && b.movement) {
       const m = b.movement;
       const mv = b.movementOrder;
+
+      // DISEMBARK — special formatting for transport exit
+      if (m.isDisembark) {
+        lines.push(`  DISEMBARK: exits ${m.transportName} at ${m.transportDestination} | FEASIBLE`);
+      } else {
       const destLabel = positionToLabel(mv.targetHex);
       const dir = cardinalDirection(b.position, destLabel);
       const dirTag = dir ? ` (${dir})` : "";
@@ -1472,6 +1617,15 @@ function formatSingleBundle(b) {
           lines.push(`    ⚠ ON PATH: ${e.unit} at ${e.hex} — will encounter during move`);
         }
       }
+      } // end else (non-DISEMBARK movement)
+    }
+
+    // Cargo manifest for transport units
+    if (b.cargoManifest?.length > 0) {
+      lines.push(`  CARGO: [${b.cargoManifest.map(c => c.name).join(", ")}] (${b.cargoManifest.length}/${b.transportCapacity})`);
+    }
+    if (b.embarkedIn) {
+      lines.push(`  EMBARKED IN: ${b.embarkedIn}`);
     }
 
     // Action order (non-artillery)

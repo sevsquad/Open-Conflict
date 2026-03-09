@@ -11,6 +11,11 @@ const PIPE_TYPES = ["pipeline"];
 
 const LINEAR_TYPES = [...ROAD_TYPES, ...RAIL_TYPES, ...WATER_TYPES, ...PIPE_TYPES];
 
+// LEGACY: Set to true to draw the old WebGL overlay lines for these 5 feature
+// types. Kept for testing — new tile-atlas sprites replace them.
+const SHOW_LEGACY_OVERLAY = false;
+const LEGACY_OVERLAY_TYPES = new Set(["highway", "major_road", "minor_road", "railway", "river"]);
+
 // Drawing config per type and tier
 export const LINE_CONFIG = {
   highway:      { color: "#E6A817", width: [1.5, 2, 3, 4],   minTier: 0, dash: null },
@@ -40,6 +45,7 @@ function buildFromPaths(linearPaths) {
   for (const path of linearPaths) {
     const { type, cells } = path;
     if (!LINE_CONFIG[type]) continue;
+    if (!SHOW_LEGACY_OVERLAY && LEGACY_OVERLAY_TYPES.has(type)) continue;
     if (!networks[type]) networks[type] = [];
     const segs = networks[type];
     for (let i = 0; i < cells.length - 1; i++) {
@@ -57,6 +63,7 @@ function buildFromPaths(linearPaths) {
 function buildFromBFS(cells, cols, rows) {
   const networks = {};
   for (const type of LINEAR_TYPES) {
+    if (!SHOW_LEGACY_OVERLAY && LEGACY_OVERLAY_TYPES.has(type)) continue;
     const segments = [];
     const visited = new Set();
 

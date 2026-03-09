@@ -153,7 +153,7 @@ export const TILE_SIZE = 16;
 
 // Pack instance data for a single hex into the Float32Array at the given offset.
 // Reads neighbor data from the full grid (neighbors can be outside the tile).
-function packHexInstance(data, offset, c, r, cells, cols, rows, smoothedElev) {
+function packHexInstance(data, offset, c, r, cells, cols, rows, smoothedElev, tileIndexMap) {
   const key = `${c},${r}`;
   const cell = cells[key];
 
@@ -176,8 +176,12 @@ function packHexInstance(data, offset, c, r, cells, cols, rows, smoothedElev) {
   }
   data[offset + 4] = mask;
 
-  // infraIndex
-  data[offset + 5] = cell ? (INFRA_INDEX[cell.infrastructure] || 0) : 0;
+  // infraIndex — repurposed as tile atlas index when tileIndexMap is provided
+  if (tileIndexMap) {
+    data[offset + 5] = tileIndexMap.get(key) ?? 0;
+  } else {
+    data[offset + 5] = cell ? (INFRA_INDEX[cell.infrastructure] || 0) : 0;
+  }
 
   // neighborTerrains[6] at offsets 6-11
   const neighbors = getNeighbors(c, r);
@@ -205,7 +209,7 @@ function packHexInstance(data, offset, c, r, cells, cols, rows, smoothedElev) {
 // Build instance data for a rectangular tile of hexes.
 // colMin/rowMin inclusive, colMax/rowMax exclusive.
 // Neighbor lookups reference the full grid (cells, cols, rows).
-export function buildTileInstanceData(cells, cols, rows, smoothedElev, colMin, colMax, rowMin, rowMax) {
+export function buildTileInstanceData(cells, cols, rows, smoothedElev, colMin, colMax, rowMin, rowMax, tileIndexMap) {
   const tileCols = colMax - colMin;
   const tileRows = rowMax - rowMin;
   const cellCount = tileCols * tileRows;
@@ -214,7 +218,7 @@ export function buildTileInstanceData(cells, cols, rows, smoothedElev, colMin, c
   let offset = 0;
   for (let r = rowMin; r < rowMax; r++) {
     for (let c = colMin; c < colMax; c++) {
-      packHexInstance(data, offset, c, r, cells, cols, rows, smoothedElev);
+      packHexInstance(data, offset, c, r, cells, cols, rows, smoothedElev, tileIndexMap);
       offset += INSTANCE_FLOATS;
     }
   }
@@ -235,7 +239,7 @@ export function buildInstanceData(mapData) {
 
 // Build all tiles for the grid. Returns { tiles, smoothedElevMap }.
 // Each tile: { instanceData, cellCount, colMin, colMax, rowMin, rowMax }
-export function buildAllTiles(mapData) {
+export function buildAllTiles(mapData, tileIndexMap) {
   const { cols, rows, cells } = mapData;
   const smoothedElev = smoothElevations(cells, cols, rows);
   const tiles = [];
@@ -248,7 +252,7 @@ export function buildAllTiles(mapData) {
       const rowMax = Math.min(rowMin + TILE_SIZE, rows);
 
       const { instanceData, cellCount } = buildTileInstanceData(
-        cells, cols, rows, smoothedElev, colMin, colMax, rowMin, rowMax
+        cells, cols, rows, smoothedElev, colMin, colMax, rowMin, rowMax, tileIndexMap
       );
 
       tiles.push({ instanceData, cellCount, colMin, colMax, rowMin, rowMax });

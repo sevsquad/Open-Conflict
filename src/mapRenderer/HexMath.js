@@ -125,6 +125,20 @@ export function hexLine(col1, row1, col2, row2) {
   return hexLineAxial(a.q, a.r, b.q, b.r).map(h => axialToOffset(h.q, h.r));
 }
 
+// ── Multi-segment line (waypoint chains) ────────────────────
+// Concatenate hex line segments through a list of {col, row} points.
+// Deduplicates shared endpoints so there are no doubled hexes at waypoints.
+
+export function hexLineThrough(points) {
+  if (points.length < 2) return [...points];
+  let result = [];
+  for (let i = 0; i < points.length - 1; i++) {
+    const seg = hexLine(points[i].col, points[i].row, points[i + 1].col, points[i + 1].row);
+    result = i === 0 ? seg : result.concat(seg.slice(1));
+  }
+  return result;
+}
+
 // ── Range queries ────────────────────────────────────────────
 
 export function hexRangeAxial(cq, cr, radius) {

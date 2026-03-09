@@ -1,6 +1,7 @@
 import { colors, typography, radius, animation, space } from "../../theme.js";
 import { Button, Badge, SectionHeader } from "../../components/ui.jsx";
 import { positionToLabel } from "../prompts.js";
+import { isAirUnit } from "../orderTypes.js";
 
 // ═══════════════════════════════════════════════════════════════
 // ORDER ROSTER — Sidebar showing all units grouped by actor
@@ -14,12 +15,15 @@ function orderSummary(orders) {
   const parts = [];
   if (orders.movementOrder) {
     const target = orders.movementOrder.target ? ` ${positionToLabel(orders.movementOrder.target)}` : "";
-    parts.push(orders.movementOrder.id + target);
+    const wpCount = orders.movementOrder.waypoints?.length || 0;
+    const wpTag = wpCount > 0 ? ` (${wpCount}wp)` : "";
+    parts.push(orders.movementOrder.id + target + wpTag);
   }
   if (orders.actionOrder) {
     const target = orders.actionOrder.target ? ` ${positionToLabel(orders.actionOrder.target)}` : "";
     const subtype = orders.actionOrder.subtype ? ` (${orders.actionOrder.subtype})` : "";
-    parts.push(orders.actionOrder.id + target + subtype);
+    const alt = orders.actionOrder.altitude ? ` @${orders.actionOrder.altitude}` : "";
+    parts.push(orders.actionOrder.id + target + subtype + alt);
   }
   return parts.length > 0 ? parts.join(" + ") : "HOLD";
 }
@@ -167,6 +171,26 @@ export default function OrderRoster({
                         background: unit.strength > 50 ? colors.accent.green : unit.strength > 25 ? colors.accent.amber : colors.accent.red,
                       }} />
                     </div>
+
+                    {/* Air unit indicators: readiness + sorties */}
+                    {isAirUnit(unit) && unit.readiness !== undefined && (
+                      <span style={{
+                        fontSize: 9, fontFamily: typography.monoFamily,
+                        color: unit.readiness > 60 ? colors.accent.green : unit.readiness > 30 ? colors.accent.amber : colors.accent.red,
+                        flexShrink: 0,
+                      }} title={`Readiness ${unit.readiness}%`}>
+                        R{unit.readiness}
+                      </span>
+                    )}
+                    {isAirUnit(unit) && unit.sorties !== undefined && (
+                      <span style={{
+                        fontSize: 9, fontFamily: typography.monoFamily,
+                        color: unit.sorties > 0 ? colors.accent.cyan : colors.accent.red,
+                        flexShrink: 0,
+                      }} title={`${unit.sorties} sorties available`}>
+                        S{unit.sorties}
+                      </span>
+                    )}
 
                     {/* Order summary */}
                     <span style={{

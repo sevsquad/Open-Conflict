@@ -242,7 +242,8 @@ void main() {
     vec3 color = baseColor;
 
     // ── Edge blending with neighbors ──
-    // The apothem (inner radius) of unit hex = sqrt(3)/2 ≈ 0.866
+    // Skip when tile atlas is active — the illustrated tiles handle their own edges
+    if (!u_useAtlas) {
     float apothem = SQRT3 / 2.0;
 
     for (int i = 0; i < 6; i++) {
@@ -262,6 +263,7 @@ void main() {
         vec3 nColor = terrainColor(nTerrain);
         color = mix(color, nColor, blend);
     }
+    } // end !u_useAtlas
 
     // ── Elevation visualization ──
     if (u_showElevBands) {
@@ -325,12 +327,12 @@ void main() {
         }
 
         // Grid line width in hex-local units (thinner = more subtle)
-        // Scale inversely with cellPixels so lines are ~1px on screen
-        float lineWidth = 2.0 / u_cellPixels;
+        // Scale inversely with cellPixels so lines are ~0.5px on screen
+        float lineWidth = 1.2 / u_cellPixels;
         float lineAlpha = (1.0 - sStep(0.0, lineWidth, minEdgeDist)) * u_gridOpacity;
 
-        // Darken at grid lines
-        color = mix(color, color * 0.65, lineAlpha);
+        // Subtle darkening at grid lines (was 0.65, too prominent)
+        color = mix(color, color * 0.78, lineAlpha * 0.6);
     }
 
     fragColor = vec4(color, 1.0);

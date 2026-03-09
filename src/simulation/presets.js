@@ -2,8 +2,31 @@
 // PRESETS — Pre-built scenarios for quick simulation testing
 // ════════════════════════════════════════════════════════════════
 
+import { isAirUnit } from "./orderTypes.js";
+
 let presetCounter = 0;
 function uid() { return `unit_preset_${++presetCounter}`; }
+
+// Air-capable units get additional fields for readiness, fuel, munitions, baseHex, airProfile.
+// Called by factory functions to enrich air units automatically.
+function addAirFields(unit, overrides) {
+  if (!isAirUnit(unit)) return unit;
+  return {
+    ...unit,
+    readiness: overrides.readiness ?? 85,
+    munitions: overrides.munitions ?? 100,
+    fuel: overrides.fuel ?? 100,
+    baseHex: overrides.baseHex || unit.position, // Default: based at starting position
+    airProfile: overrides.airProfile || {
+      speed: unit.movementType === "helicopter" ? "slow" : "medium",
+      maneuverability: 6,
+      weaponsPackage: "precision_guided",
+      defensiveArmament: false,
+      ecm: false,
+      radarEquipped: false,
+    },
+  };
+}
 
 // ── Preset Registry ──────────────────────────────────────────────
 // Each entry maps a preset to the map it requires.
@@ -14,14 +37,14 @@ function uid() { return `unit_preset_${++presetCounter}`; }
 
 const PRESET_REGISTRY = [
   {
-    id: "river_crossing",
+    id: "river_crossing_v2",
     name: "Contested River Crossing",
-    description: "Blue Force attacks to secure the Stonebrook bridge. Red Force defends the crossing.",
-    era: "modern",
+    description: "Cold War 1985. US 3rd MID attacks north to secure the Stonebrook Bridge and coastal port. Soviet 47th MRD (understrength) + 11th Air Assault Brigade defends.",
+    era: "cold_war",
     scale: "grand_tactical",
-    mapType: "test-fixture",
-    requiredMap: "test-fixture",
-    getPreset: () => getQuickstartPreset(),
+    mapType: "built-in",
+    requiredMap: "river_crossing_v2",
+    getPreset: () => getRiverCrossingV2Preset(),
   },
   {
     id: "bastogne_1944",
@@ -93,6 +116,39 @@ const PRESET_REGISTRY = [
     mapType: "built-in",
     requiredMap: "volturno_crossing",
     getPreset: () => getVolturnoPreset(),
+  },
+  // Air operations reference scenario — tests all air system features
+  {
+    id: "air_reference",
+    name: "Air Strike: Ashbury (Modern)",
+    description: "Modern combined-arms with air power. Blue Force has CAS and air superiority assets. Red Force has SHORAD and medium AD. Tests air orders, AD coverage, altitude, readiness, and interception.",
+    era: "modern",
+    scale: "grand_tactical",
+    mapType: "test-fixture",
+    requiredMap: "test-fixture",
+    getPreset: () => getAirReferencePreset(),
+  },
+  // AD stress test — dense overlapping AD corridor, aircraft fly straight through it
+  {
+    id: "ad_valley",
+    name: "AD Valley (Kill Zone Test)",
+    description: "2 fighter flights fly low through a corridor packed with 8 overlapping AD systems (gun, IR, radar). Should be a near-certain death sentence. Tests whether the adjudicator correctly destroys or cripples aircraft under overwhelming AD.",
+    era: "modern",
+    scale: "grand_tactical",
+    mapType: "test-fixture",
+    requiredMap: "test-fixture",
+    getPreset: () => getAdValleyPreset(),
+  },
+  // LEGACY — original test-fixture preset, kept for backward compatibility
+  {
+    id: "river_crossing",
+    name: "Contested River Crossing LEGACY",
+    description: "(Original 12x18 test fixture) Blue Force attacks to secure the Stonebrook bridge. Red Force defends the crossing.",
+    era: "modern",
+    scale: "grand_tactical",
+    mapType: "test-fixture",
+    requiredMap: "test-fixture",
+    getPreset: () => getQuickstartPreset(),
   },
 ];
 
@@ -197,6 +253,373 @@ export function getQuickstartPreset() {
       { id: uid(), actor: "actor_2", name: "Iron Fist Troop", type: "armor", echelon: "battalion", posture: "reserve", position: "1,5", strength: 100, supply: 100, status: "ready", notes: "Counterattack reserve", morale: 100, ammo: 100, entrenchment: 0, detected: true, parentHQ: "unit_preset_12", movementType: "tracked", specialCapabilities: [] },
       { id: uid(), actor: "actor_2", name: "Hammer Battery", type: "artillery", echelon: "artillery_battery", posture: "ready", position: "1,8", strength: 100, supply: 100, status: "ready", notes: "Indirect fire from jungle hills", morale: 100, ammo: 100, entrenchment: 0, detected: true, parentHQ: "unit_preset_12", movementType: "wheeled", specialCapabilities: [] },
       { id: uid(), actor: "actor_2", name: "Red HQ (Bastion)", type: "headquarters", echelon: "brigade", posture: "ready", position: "0,6", strength: 100, supply: 100, status: "ready", notes: "Command post", morale: 100, ammo: 100, entrenchment: 0, detected: true, parentHQ: "", movementType: "wheeled", specialCapabilities: [] },
+    ],
+  };
+}
+
+// ════════════════════════════════════════════════════════════════
+// CONTESTED RIVER CROSSING (v2) — Cold War division-scale confrontation
+// Blue: US mechanized infantry division + attached armor battalion (south)
+// Red: Soviet understrength motor rifle division + air assault brigade (north)
+// 20x30 hex grid, 1km cells
+// ════════════════════════════════════════════════════════════════
+
+function getRiverCrossingV2Preset() {
+  presetCounter = 0;
+
+  // Shorthand builders
+  function blue(name, type, echelon, pos, overrides = {}) {
+    return addAirFields({
+      id: uid(), actor: "actor_1", name, type, echelon,
+      posture: overrides.posture || "moving",
+      position: pos,
+      strength: overrides.strength || 100,
+      supply: overrides.supply || 100,
+      status: overrides.status || "ready",
+      notes: overrides.notes || "",
+      morale: overrides.morale || 90,
+      ammo: overrides.ammo || 100,
+      entrenchment: overrides.entrenchment || 0,
+      detected: overrides.detected !== undefined ? overrides.detected : true,
+      parentHQ: overrides.parentHQ || "",
+      movementType: overrides.movementType || "tracked",
+      specialCapabilities: overrides.specialCapabilities || [],
+    }, overrides);
+  }
+
+  function red(name, type, echelon, pos, overrides = {}) {
+    return addAirFields({
+      id: uid(), actor: "actor_2", name, type, echelon,
+      posture: overrides.posture || "defending",
+      position: pos,
+      strength: overrides.strength || 100,
+      supply: overrides.supply || 90,
+      status: overrides.status || "ready",
+      notes: overrides.notes || "",
+      morale: overrides.morale || 85,
+      ammo: overrides.ammo || 100,
+      entrenchment: overrides.entrenchment || 30,
+      detected: overrides.detected !== undefined ? overrides.detected : true,
+      parentHQ: overrides.parentHQ || "",
+      movementType: overrides.movementType || "tracked",
+      specialCapabilities: overrides.specialCapabilities || [],
+    }, overrides);
+  }
+
+  const northernTowns = "Northfield, Ridgemont, and Clearwater";
+
+  return {
+    scale: "grand_tactical",
+    title: "Contested River Crossing",
+    description: `Blue Force (US 3rd Mechanized Infantry Division) attacks south-to-north to secure the Stonebrook Bridge, the coastal port at Ashbury, and capture all towns north of the river (${northernTowns}). Red Force (Soviet 47th Motor Rifle Division, understrength, with 11th Air Assault Brigade) defends the crossing and northern approaches. A ford exists in the eastern forest but only supports light vehicles and infantry.`,
+    initialConditions: "Dawn, early summer 1985. Visibility moderate due to morning fog in river valley. Blue Force is advancing from the south along the main highway corridor. Red Force has had 48 hours to prepare defensive positions north of the Stonebrook. The 11th Air Assault Brigade is in reserve with transport helicopters at Northern Air Base. The highland valley east of the ridge offers a concealed N-S movement corridor invisible from the plain.",
+    specialRules: "The Stonebrook Bridge at Ashbury is the only heavy vehicle crossing. A ford in the eastern forest (wetland tiles) allows infantry and light vehicles at reduced speed. The coastal port at Ashbury is a strategic logistics objective. Urban areas provide +30% defensive bonus. Red air assault brigade can conduct helicopter insertion behind Blue lines. Both sides have limited attack helicopter sorties (fuel/maintenance). SAM umbrella restricts helicopter operations within 3km of AD units. The highland valley is dead ground from the plain — units in the valley cannot be observed from west of the ridge except through the river gap.",
+    turnDuration: "4 hours",
+    startDate: "1985-06-12",
+
+    environment: {
+      weather: "overcast",
+      visibility: "moderate",
+      groundCondition: "dry",
+      timeOfDay: "dawn",
+      climate: "temperate",
+      stability: "medium",
+      severity: "moderate",
+    },
+
+    actors: [
+      {
+        id: "actor_1",
+        name: "Blue Force — US 3rd Mechanized Infantry Division",
+        controller: "player",
+        objectives: [
+          "Secure the Stonebrook Bridge at Ashbury intact",
+          "Capture the coastal port at Ashbury",
+          `Capture all towns north of the river: ${northernTowns}`,
+          "Establish defensive positions on the northern bank",
+          "Neutralize Red Force artillery and air defense",
+        ],
+        constraints: [
+          "Minimize collateral damage in Ashbury and Hexville",
+          "Bridge capture preferred — destruction is mission failure",
+          "Do not advance beyond row 0 (northern map edge)",
+          "Maintain supply lines along the highway corridor",
+        ],
+      },
+      {
+        id: "actor_2",
+        name: "Red Force — Soviet 47th Motor Rifle Division",
+        controller: "player",
+        objectives: [
+          "Deny Blue Force access to the northern bank",
+          "Hold all towns north of the Stonebrook",
+          "Deny Blue Force use of the coastal port",
+          "Preserve combat strength — cannot afford attrition",
+          "Use air assault brigade to disrupt Blue rear areas",
+        ],
+        constraints: [
+          "Bridge destruction only as last resort (requires Division HQ authorization)",
+          "Do not withdraw past row 3 without authorization",
+          "Air assault brigade limited to 2 major helicopter lifts (fuel constraints)",
+          "Understrength — no replacements available",
+        ],
+      },
+    ],
+
+    units: [
+      // ══════════════════════════════════════════════════
+      // BLUE FORCE — US 3rd Mechanized Infantry Division
+      // Attacking south to north along highway corridor
+      // Starting positions: rows 18-28 (southern half)
+      // ══════════════════════════════════════════════════
+
+      // ── Division HQ ──
+      blue("3rd MID HQ (Warhorse)", "headquarters", "division", "7,26", {
+        posture: "ready", movementType: "wheeled",
+        notes: "Division command post, rear area near Southern Air Base",
+      }),
+
+      // ── 1st Brigade "Ironclad" — Main Effort (highway axis) ──
+      blue("1st Bde HQ (Ironclad)", "headquarters", "brigade", "7,22", {
+        posture: "ready", movementType: "tracked",
+        notes: "Main effort brigade — attacks along highway axis toward the bridge",
+        parentHQ: "unit_preset_1",
+      }),
+      blue("1-12 Mech Infantry (Wolfpack)", "mechanized_infantry", "battalion", "7,20", {
+        posture: "attacking", notes: "Lead assault battalion, M2 Bradleys",
+        parentHQ: "unit_preset_2",
+      }),
+      blue("2-12 Mech Infantry (Spearhead)", "mechanized_infantry", "battalion", "6,21", {
+        posture: "attacking", notes: "Supporting assault, M2 Bradleys",
+        parentHQ: "unit_preset_2",
+      }),
+      blue("1-64 Armor (Razorback)", "armor", "battalion", "8,21", {
+        posture: "reserve", notes: "Brigade organic armor, M1 Abrams — exploitation force",
+        parentHQ: "unit_preset_2",
+      }),
+      blue("1-9 Field Artillery (Thunderstrike)", "artillery", "battalion", "7,23", {
+        posture: "ready", movementType: "tracked",
+        notes: "M109 155mm SP — direct support to 1st Brigade",
+        parentHQ: "unit_preset_2",
+      }),
+
+      // ── 2nd Brigade "Pegasus" — Supporting Effort (east flank) ──
+      blue("2nd Bde HQ (Pegasus)", "headquarters", "brigade", "10,23", {
+        posture: "ready", movementType: "tracked",
+        notes: "Eastern flank — advance through farmland, potential ford crossing",
+        parentHQ: "unit_preset_1",
+      }),
+      blue("1-14 Mech Infantry (Warhammer)", "mechanized_infantry", "battalion", "10,20", {
+        posture: "attacking", notes: "Eastern approach, M2 Bradleys",
+        parentHQ: "unit_preset_8",
+      }),
+      blue("2-14 Mech Infantry (Stormcrow)", "mechanized_infantry", "battalion", "11,21", {
+        posture: "moving", notes: "Eastern flank security, M2 Bradleys",
+        parentHQ: "unit_preset_8",
+      }),
+      blue("2-64 Armor (Hellcat)", "armor", "battalion", "9,22", {
+        posture: "reserve", notes: "M1 Abrams — eastern exploitation",
+        parentHQ: "unit_preset_8",
+      }),
+      blue("2-9 Field Artillery (Rolling Thunder)", "artillery", "battalion", "10,24", {
+        posture: "ready", movementType: "tracked",
+        notes: "M109 155mm SP — direct support to 2nd Brigade",
+        parentHQ: "unit_preset_8",
+      }),
+
+      // ── 3rd Brigade "Vanguard" — Reserve / Western Flank ──
+      blue("3rd Bde HQ (Vanguard)", "headquarters", "brigade", "5,24", {
+        posture: "ready", movementType: "tracked",
+        notes: "Reserve brigade — western flank along coast, ready to reinforce",
+        parentHQ: "unit_preset_1",
+      }),
+      blue("1-8 Mech Infantry (Nightstalker)", "mechanized_infantry", "battalion", "5,22", {
+        posture: "moving", notes: "Western approach along coast, M2 Bradleys",
+        parentHQ: "unit_preset_14",
+      }),
+      blue("2-8 Mech Infantry (Ironside)", "mechanized_infantry", "battalion", "4,23", {
+        posture: "reserve", notes: "Reserve infantry, M2 Bradleys",
+        parentHQ: "unit_preset_14",
+      }),
+      blue("3-64 Armor (Sabre)", "armor", "battalion", "6,24", {
+        posture: "reserve", notes: "M1 Abrams — division reserve armor",
+        parentHQ: "unit_preset_14",
+      }),
+      blue("3-9 Field Artillery (Firestorm)", "artillery", "battalion", "5,25", {
+        posture: "ready", movementType: "tracked",
+        notes: "M109 155mm SP — direct support to 3rd Brigade",
+        parentHQ: "unit_preset_14",
+      }),
+
+      // ── Division Troops ──
+      blue("4-17 Field Artillery (Earthquake)", "artillery", "battalion", "7,27", {
+        posture: "ready", movementType: "tracked",
+        notes: "M110 203mm SP — general support, counterbattery",
+        parentHQ: "unit_preset_1",
+      }),
+      blue("3rd Cav Squadron (Ghostrider)", "recon", "battalion", "8,18", {
+        posture: "moving", movementType: "tracked",
+        notes: "M3 Bradley CFVs — forward screen, eyes of the division",
+        parentHQ: "unit_preset_1",
+      }),
+      blue("5-3 ADA Battalion (Skyshield)", "air_defense", "battalion", "6,25", {
+        posture: "ready", movementType: "tracked",
+        notes: "M48 Chaparral, M163 Vulcan, Stinger teams",
+        parentHQ: "unit_preset_1",
+      }),
+      blue("3rd Aviation Bde (Raptor)", "attack_helicopter", "battalion", "7,28", {
+        posture: "ready", movementType: "helicopter",
+        notes: "AH-1 Cobra attack helicopters — 18 airframes",
+        parentHQ: "unit_preset_1",
+        specialCapabilities: ["attack_helicopter"],
+      }),
+      blue("3rd Engineer Bn (Bridgebuilder)", "engineer", "battalion", "7,21", {
+        posture: "ready", movementType: "tracked",
+        notes: "Combat engineers — bridging, breaching, mine clearing",
+        parentHQ: "unit_preset_1",
+      }),
+
+      // ══════════════════════════════════════════════════
+      // RED FORCE — Soviet 47th Motor Rifle Division (understrength)
+      // + 11th Air Assault Brigade
+      // Defending north of Stonebrook, rows 0-10
+      // 3rd MRR destroyed in earlier fighting — 2 of 3 regiments present
+      // ══════════════════════════════════════════════════
+
+      // ── Division HQ ──
+      red("47th MRD HQ (Ural)", "headquarters", "division", "7,3", {
+        posture: "ready", movementType: "wheeled",
+        notes: "Division command post, northern sector near Camp Sentinel",
+      }),
+
+      // ── 93rd Motor Rifle Regiment — Ashbury/bridge defense (main line) ──
+      red("93rd MRR HQ (Molot)", "headquarters", "regiment", "5,7", {
+        posture: "defending", movementType: "tracked",
+        notes: "Defending Ashbury, port, and bridge approaches",
+        parentHQ: "unit_preset_23",
+      }),
+      red("1/93 Motor Rifle Bn (Volk)", "mechanized_infantry", "battalion", "4,9", {
+        posture: "dug_in", entrenchment: 60,
+        notes: "BMP-2s, dug in at Ashbury — primary bridge defense",
+        parentHQ: "unit_preset_24",
+      }),
+      red("2/93 Motor Rifle Bn (Berkut)", "mechanized_infantry", "battalion", "6,8", {
+        posture: "dug_in", entrenchment: 50,
+        notes: "BMP-2s, defending northern approaches east of city",
+        parentHQ: "unit_preset_24",
+      }),
+      red("3/93 Motor Rifle Bn (Sokol)", "mechanized_infantry", "battalion", "3,8", {
+        posture: "defending", entrenchment: 40,
+        notes: "BMP-2s, covering port and western coastal approaches",
+        parentHQ: "unit_preset_24",
+      }),
+      red("93rd Tank Bn (Taifun)", "armor", "battalion", "5,6", {
+        posture: "reserve", entrenchment: 0,
+        notes: "31x T-72 — regimental armor reserve for counterattack",
+        parentHQ: "unit_preset_24",
+      }),
+      red("93rd Arty Bn (Grad)", "artillery", "battalion", "6,5", {
+        posture: "ready", movementType: "tracked",
+        notes: "18x 2S1 Gvozdika 122mm SP — regimental fire support",
+        parentHQ: "unit_preset_24",
+      }),
+
+      // ── 141st Motor Rifle Regiment — Northern defense / reserve ──
+      red("141st MRR HQ (Shchit)", "headquarters", "regiment", "8,4", {
+        posture: "defending", movementType: "tracked",
+        notes: "Second-line defense, eastern sector and town garrisons",
+        parentHQ: "unit_preset_23",
+      }),
+      red("1/141 Motor Rifle Bn (Medved)", "mechanized_infantry", "battalion", "5,3", {
+        posture: "defending", entrenchment: 30,
+        notes: "BMP-1s, garrison at Northfield",
+        parentHQ: "unit_preset_31",
+      }),
+      red("2/141 Motor Rifle Bn (Kobra)", "mechanized_infantry", "battalion", "10,5", {
+        posture: "defending", entrenchment: 30,
+        notes: "BMP-1s, garrison at Ridgemont",
+        parentHQ: "unit_preset_31",
+      }),
+      red("3/141 Motor Rifle Bn (Bars)", "mechanized_infantry", "battalion", "8,5", {
+        posture: "reserve", entrenchment: 0,
+        notes: "BMP-1s, regimental reserve",
+        parentHQ: "unit_preset_31",
+      }),
+      red("141st Tank Bn (Buran)", "armor", "battalion", "9,4", {
+        posture: "reserve", entrenchment: 0,
+        notes: "31x T-72 — regimental counterattack force",
+        parentHQ: "unit_preset_31",
+      }),
+      red("141st Arty Bn (Smerch)", "artillery", "battalion", "9,3", {
+        posture: "ready", movementType: "tracked",
+        notes: "18x 2S1 Gvozdika 122mm SP",
+        parentHQ: "unit_preset_31",
+      }),
+
+      // NOTE: 3rd Motor Rifle Regiment destroyed in earlier fighting — not present
+
+      // ── Division Troops ──
+      red("47th DAG (Vulkan)", "artillery", "regiment", "8,2", {
+        posture: "ready", movementType: "tracked",
+        notes: "2S3 Akatsiya 152mm + BM-21 Grad MRL — general support",
+        parentHQ: "unit_preset_23",
+      }),
+      red("47th ADA Regt (Kupol)", "air_defense", "regiment", "7,2", {
+        posture: "ready", movementType: "tracked",
+        notes: "ZSU-23-4 Shilka, SA-6 Gainful, SA-9 Gaskin",
+        parentHQ: "unit_preset_23",
+      }),
+      red("47th Recon Bn (Ten)", "recon", "battalion", "5,9", {
+        posture: "defending", movementType: "wheeled", entrenchment: 20,
+        notes: "BRDM-2s — forward observation on Stonebrook line",
+        parentHQ: "unit_preset_23",
+      }),
+      red("47th AT Bn (Kornet)", "anti_tank", "battalion", "4,7", {
+        posture: "dug_in", entrenchment: 50, movementType: "wheeled",
+        notes: "BRDM-2 with AT-5 Spandrel — covering bridge approaches",
+        parentHQ: "unit_preset_23",
+      }),
+      red("47th Engineer Bn (Sapyor)", "engineer", "battalion", "6,4", {
+        posture: "ready", movementType: "tracked",
+        notes: "Combat engineers — minefields, obstacles, bridge demolition prep",
+        parentHQ: "unit_preset_23",
+      }),
+
+      // ── 11th Air Assault Brigade (Front-level attachment) ──
+      red("11th AAB HQ (Kondor)", "headquarters", "brigade", "7,1", {
+        posture: "ready", movementType: "helicopter",
+        notes: "Air assault brigade — reserve for deep insertion behind Blue lines",
+        parentHQ: "unit_preset_23",
+      }),
+      red("1/11 Air Assault Bn (Orlyonok)", "airborne", "battalion", "7,1", {
+        posture: "reserve", movementType: "helicopter", entrenchment: 0,
+        notes: "Light infantry — helicopter insertable, RPGs, AGS-17",
+        parentHQ: "unit_preset_44",
+      }),
+      red("2/11 Air Assault Bn (Yastreb)", "airborne", "battalion", "7,1", {
+        posture: "reserve", movementType: "helicopter", entrenchment: 0,
+        notes: "Light infantry — helicopter insertable",
+        parentHQ: "unit_preset_44",
+      }),
+      red("3/11 Air Assault Bn (Krechet)", "airborne", "battalion", "7,1", {
+        posture: "reserve", movementType: "helicopter", entrenchment: 0,
+        notes: "Light infantry — helicopter insertable",
+        parentHQ: "unit_preset_44",
+      }),
+      red("11th Transport Aviation (Shtorm)", "transport", "battalion", "7,1", {
+        posture: "ready", movementType: "helicopter",
+        notes: "24x Mi-8 Hip transport helicopters — insertion capability for air assault brigade",
+        parentHQ: "unit_preset_44",
+        specialCapabilities: ["air_transport"],
+      }),
+
+      // ── Divisional Attack Helicopter Squadron ──
+      red("47th Attack Helo Sqn (Kobra)", "attack_helicopter", "company", "7,1", {
+        posture: "ready", movementType: "helicopter", strength: 80,
+        notes: "6x Mi-24 Hind attack helicopters — divisional fire support, small squadron",
+        parentHQ: "unit_preset_23",
+        specialCapabilities: ["attack_helicopter"],
+      }),
     ],
   };
 }
@@ -533,7 +956,7 @@ function getEscarpmentPreset() {
 
   // Blue attacker: well-supplied combined arms force, lower morale (attacking uphill into the unknown)
   function blue(name, type, echelon, pos, overrides = {}) {
-    return {
+    return addAirFields({
       id: uid(), actor: "actor_1", name, type, echelon,
       posture: overrides.posture || "ready",
       position: pos,
@@ -549,12 +972,12 @@ function getEscarpmentPreset() {
       parentHQ: overrides.parentHQ || "",
       movementType: overrides.movementType || "foot",
       specialCapabilities: overrides.specialCapabilities || [],
-    };
+    }, overrides);
   }
 
   // Red defender: fewer units, prepared positions, higher morale on home ground
   function red(name, type, echelon, pos, overrides = {}) {
-    return {
+    return addAirFields({
       id: uid(), actor: "actor_2", name, type, echelon,
       posture: overrides.posture || "defending",
       position: pos,
@@ -570,7 +993,7 @@ function getEscarpmentPreset() {
       parentHQ: overrides.parentHQ || "",
       movementType: overrides.movementType || "foot",
       specialCapabilities: overrides.specialCapabilities || [],
-    };
+    }, overrides);
   }
 
   // HQ IDs (deterministic from uid counter)
@@ -1980,6 +2403,192 @@ function getVolturnoPreset() {
         strength: 90, morale: 75, cohesion: 85, ammo: 50, entrenchment: 35, parentHQ: DE_HQ,
         specialCapabilities: ["precision_fire"],
       }),
+    ],
+  };
+}
+
+// ════════════════════════════════════════════════════════════════
+// AIR REFERENCE — Combined arms with air power on the 12x18 test fixture
+// Tests: air orders, altitude, AD coverage, readiness, fuel, interception,
+//        CAS targeting, escort assignment, bingo warnings, flight paths
+// ════════════════════════════════════════════════════════════════
+
+function getAirReferencePreset() {
+  presetCounter = 0;
+
+  return {
+    scale: "grand_tactical",
+    title: "Air Strike: Ashbury",
+    description: "Blue Force launches a combined arms assault on Ashbury supported by CAS and air superiority sorties from Ashbury Strip (K5). Red Force defends with SHORAD and medium AD coverage.",
+    initialConditions: "Morning. Clear skies. Blue Force controls the airfield at Ashbury Strip (K5). Red Force has established a defensive line west of the river with integrated air defense.",
+    specialRules: "Air units can operate from Ashbury Strip airfield. AD coverage affects flight path planning. Altitude selection impacts AD vulnerability and CAS effectiveness.",
+    turnDuration: "4 hours",
+    startDate: "2024-09-15",
+
+    environment: {
+      weather: "clear",
+      visibility: "good",
+      groundCondition: "dry",
+      timeOfDay: "morning",
+      climate: "temperate",
+      stability: "medium",
+      severity: "low",
+    },
+
+    actors: [
+      {
+        id: "actor_1",
+        name: "Blue Force",
+        controller: "player",
+        objectives: ["Secure Ashbury and the bridge at D5", "Achieve air superiority over the AO", "Neutralize Red AD to enable CAS"],
+        constraints: ["Minimize collateral damage to Ashbury", "Maintain air readiness above 40%"],
+      },
+      {
+        id: "actor_2",
+        name: "Red Force",
+        controller: "player",
+        objectives: ["Deny Blue Force the river crossing", "Shoot down Blue air assets", "Hold defensive line west of river"],
+        constraints: ["Do not withdraw past column B", "Preserve AD assets for sustained defense"],
+      },
+    ],
+
+    eraSelections: { actor_1: "modern", actor_2: "modern" },
+
+    units: [
+      // ── Blue Force — Ground ──
+      { id: uid(), actor: "actor_1", name: "Alpha Company", type: "infantry", echelon: "battalion", posture: "attacking", position: "8,4", strength: 100, supply: 100, status: "ready", morale: 100, ammo: 100, entrenchment: 0, detected: true, movementType: "foot", specialCapabilities: [] },
+      { id: uid(), actor: "actor_1", name: "1st Armor (Steel)", type: "armor", echelon: "battalion", posture: "reserve", position: "9,3", strength: 100, supply: 100, status: "ready", morale: 100, ammo: 100, entrenchment: 0, detected: true, movementType: "tracked", specialCapabilities: [] },
+      { id: uid(), actor: "actor_1", name: "Thunder Battery", type: "artillery", echelon: "artillery_battery", posture: "ready", position: "11,6", strength: 100, supply: 100, status: "ready", morale: 100, ammo: 100, entrenchment: 0, detected: true, movementType: "wheeled", specialCapabilities: [] },
+      { id: uid(), actor: "actor_1", name: "Blue HQ", type: "headquarters", echelon: "brigade", posture: "ready", position: "10,7", strength: 100, supply: 100, status: "ready", morale: 100, ammo: 100, entrenchment: 0, detected: true, movementType: "wheeled", specialCapabilities: [] },
+
+      // ── Blue Force — Air ──
+      // CAS flight at the airfield (airfield is at 10,4 "Ashbury Strip")
+      { id: uid(), actor: "actor_1", name: "Viper Flight (F-16CG)", type: "air", echelon: "company", posture: "ready", position: "10,4", strength: 100, supply: 100, status: "ready", morale: 100, ammo: 100, readiness: 85, munitions: 100, baseHex: "10,4", detected: true, movementType: "air",
+        airProfile: { speed: "fast", maneuverability: 7, weaponsPackage: "precision_guided", defensiveArmament: true, ecm: false, radarEquipped: true },
+        specialCapabilities: ["close_air_support", "precision_strike", "all_weather"] },
+      // Air superiority fighter
+      { id: uid(), actor: "actor_1", name: "Eagle Flight (F-15C)", type: "air", echelon: "company", posture: "ready", position: "10,4", strength: 100, supply: 100, status: "ready", morale: 100, ammo: 100, readiness: 90, munitions: 100, baseHex: "10,4", detected: true, movementType: "air",
+        airProfile: { speed: "fast", maneuverability: 8, weaponsPackage: "air_to_air", defensiveArmament: true, ecm: false, radarEquipped: true },
+        specialCapabilities: ["air_superiority", "bvr_capable"] },
+      // Attack helicopter (persistent — has fuel)
+      { id: uid(), actor: "actor_1", name: "Apache Pair", type: "attack_helicopter", echelon: "company", posture: "ready", position: "10,4", strength: 100, supply: 100, status: "ready", morale: 100, ammo: 100, readiness: 80, munitions: 100, fuel: 100, baseHex: "10,4", detected: true, movementType: "helicopter",
+        airProfile: { speed: "slow", maneuverability: 6, weaponsPackage: "precision_guided", defensiveArmament: false, ecm: false, radarEquipped: false },
+        specialCapabilities: ["close_air_support", "anti_armor"] },
+
+      // ── Red Force — Ground ──
+      { id: uid(), actor: "actor_2", name: "Red Guard Platoon", type: "infantry", echelon: "battalion", posture: "defending", position: "2,4", strength: 100, supply: 100, status: "ready", morale: 100, ammo: 100, entrenchment: 40, detected: true, movementType: "foot", specialCapabilities: [] },
+      { id: uid(), actor: "actor_2", name: "Sentinel Platoon", type: "infantry", echelon: "battalion", posture: "dug_in", position: "2,6", strength: 100, supply: 100, status: "ready", morale: 100, ammo: 100, entrenchment: 60, detected: true, movementType: "foot", specialCapabilities: [] },
+      { id: uid(), actor: "actor_2", name: "Iron Fist Troop", type: "armor", echelon: "battalion", posture: "reserve", position: "1,5", strength: 100, supply: 100, status: "ready", morale: 100, ammo: 100, entrenchment: 0, detected: true, movementType: "tracked", specialCapabilities: [] },
+      { id: uid(), actor: "actor_2", name: "Red HQ", type: "headquarters", echelon: "brigade", posture: "ready", position: "0,6", strength: 100, supply: 100, status: "ready", morale: 100, ammo: 100, entrenchment: 0, detected: true, movementType: "wheeled", specialCapabilities: [] },
+
+      // ── Red Force — Air Defense ──
+      // SHORAD unit near the front (gun + IR missile)
+      { id: uid(), actor: "actor_2", name: "Tunguska Battery", type: "air_defense", echelon: "company", posture: "defending", position: "3,5", strength: 100, supply: 100, status: "ready", morale: 100, ammo: 100, entrenchment: 20, detected: true, movementType: "tracked",
+        specialCapabilities: ["gun_ad", "ir_missile_ad"] },
+      // Medium AD unit further back (radar missile)
+      { id: uid(), actor: "actor_2", name: "SA-11 Battery", type: "air_defense", echelon: "artillery_battery", posture: "defending", position: "1,7", strength: 100, supply: 100, status: "ready", morale: 100, ammo: 100, entrenchment: 30, detected: true, movementType: "tracked",
+        specialCapabilities: ["radar_missile_ad"] },
+
+      // ── Red Force — Air ──
+      // Interceptor (no airfield on Red side — off-map based, lower readiness)
+      { id: uid(), actor: "actor_2", name: "Flanker Pair (Su-27)", type: "air", echelon: "company", posture: "ready", position: "0,3", strength: 100, supply: 100, status: "ready", morale: 100, ammo: 100, readiness: 70, munitions: 100, baseHex: "", detected: true, movementType: "air",
+        airProfile: { speed: "fast", maneuverability: 9, weaponsPackage: "air_to_air", defensiveArmament: true, ecm: false, radarEquipped: true },
+        specialCapabilities: ["air_superiority", "bvr_capable"] },
+    ],
+  };
+}
+
+// ── AD Valley: Dense overlapping AD corridor stress test ──
+// 2 fighter flights fly LOW through 8 AD systems spanning 7 columns.
+// Every hex on the flight path is inside at least 2-3 AD engagement envelopes.
+// Realistic outcome: both flights destroyed or combat-ineffective before reaching target.
+function getAdValleyPreset() {
+  presetCounter = 0;
+
+  return {
+    scale: "grand_tactical",
+    title: "AD Valley Kill Zone",
+    description: "Two F-16 flights attempt a low-altitude CAS run through a valley saturated with overlapping air defenses. 8 AD systems — guns, IR missiles, and radar SAMs — create interlocking kill zones with no safe corridor. This is a suicide mission.",
+    initialConditions: "Clear morning. Blue Force has launched two CAS flights from Ashbury Strip (K5) targeting Red infantry at B4. The flight path crosses directly through Red Force's integrated air defense network spanning columns C through I. Red AD is fully alert, radar active, weapons free.",
+    specialRules: "All AD units are at full readiness with weapons free ROE. Aircraft are flying LOW altitude through the entire corridor. No SEAD or EW support. No escort. This is a worst-case scenario for the attacking aircraft.",
+    turnDuration: "2 hours",
+    startDate: "2024-09-15",
+
+    environment: {
+      weather: "clear",
+      visibility: "unlimited",
+      groundCondition: "dry",
+      timeOfDay: "morning",
+      climate: "temperate",
+      stability: "high",
+      severity: "mild",
+    },
+
+    actors: [
+      {
+        id: "actor_1",
+        name: "Blue Force",
+        controller: "player",
+        objectives: ["Provide CAS to friendly ground forces at B4"],
+        constraints: ["No SEAD assets available", "Must fly through AD corridor"],
+      },
+      {
+        id: "actor_2",
+        name: "Red Force",
+        controller: "player",
+        objectives: ["Destroy all Blue air assets", "Maintain AD umbrella over the valley"],
+        constraints: ["Hold positions", "Weapons free on all air contacts"],
+      },
+    ],
+
+    eraSelections: { actor_1: "modern", actor_2: "modern" },
+
+    units: [
+      // ── Blue Force — Air (the guinea pigs) ──
+      // Two F-16 flights flying CAS — based at Ashbury Strip (10,4)
+      { id: uid(), actor: "actor_1", name: "Falcon 1 (F-16C)", type: "air", echelon: "company", posture: "ready", position: "10,4", strength: 100, supply: 100, status: "ready", morale: 100, ammo: 100, readiness: 90, munitions: 100, baseHex: "10,4", detected: true, movementType: "air",
+        airProfile: { speed: "fast", maneuverability: 7, weaponsPackage: "precision_guided", defensiveArmament: true, ecm: false, radarEquipped: true },
+        specialCapabilities: ["close_air_support", "precision_strike"] },
+      { id: uid(), actor: "actor_1", name: "Falcon 2 (F-16C)", type: "air", echelon: "company", posture: "ready", position: "10,4", strength: 100, supply: 100, status: "ready", morale: 100, ammo: 100, readiness: 85, munitions: 100, baseHex: "10,4", detected: true, movementType: "air",
+        airProfile: { speed: "fast", maneuverability: 7, weaponsPackage: "precision_guided", defensiveArmament: true, ecm: false, radarEquipped: true },
+        specialCapabilities: ["close_air_support", "precision_strike"] },
+
+      // ── Blue Force — Ground (the CAS target, something for them to aim at) ──
+      { id: uid(), actor: "actor_1", name: "Bravo Company", type: "infantry", echelon: "battalion", posture: "attacking", position: "2,3", strength: 75, supply: 80, status: "ready", morale: 85, ammo: 80, entrenchment: 0, detected: true, movementType: "foot", specialCapabilities: [] },
+
+      // ── Red Force — Ground (what Blue is trying to CAS) ──
+      { id: uid(), actor: "actor_2", name: "Red Guard Battalion", type: "infantry", echelon: "battalion", posture: "dug_in", position: "1,3", strength: 100, supply: 100, status: "ready", morale: 95, ammo: 100, entrenchment: 60, detected: true, movementType: "foot", specialCapabilities: [] },
+
+      // ── Red Force — AD Corridor (the gauntlet) ──
+      // Spaced across columns 3-9, rows 3-5, creating overlapping engagement zones.
+      // Each radar_missile_ad covers 4 hex, ir_missile_ad 2 hex, gun_ad 1 hex.
+      // At LOW altitude, all types are highly effective.
+
+      // Col 3: SHORAD pair — first thing the planes hit
+      { id: uid(), actor: "actor_2", name: "ZSU-23 Shilka", type: "air_defense", echelon: "company", posture: "defending", position: "8,3", strength: 100, supply: 100, status: "ready", morale: 100, ammo: 100, entrenchment: 30, detected: true, movementType: "tracked",
+        specialCapabilities: ["gun_ad"] },
+      { id: uid(), actor: "actor_2", name: "Strela-10 Battery", type: "air_defense", echelon: "company", posture: "defending", position: "8,5", strength: 100, supply: 100, status: "ready", morale: 100, ammo: 100, entrenchment: 20, detected: true, movementType: "tracked",
+        specialCapabilities: ["ir_missile_ad"] },
+
+      // Col 5-6: SA-11 radar SAM — medium range, covers the mid-corridor
+      { id: uid(), actor: "actor_2", name: "SA-11 Buk Battery A", type: "air_defense", echelon: "artillery_battery", posture: "defending", position: "6,4", strength: 100, supply: 100, status: "ready", morale: 100, ammo: 100, entrenchment: 40, detected: true, movementType: "tracked",
+        specialCapabilities: ["radar_missile_ad"] },
+      { id: uid(), actor: "actor_2", name: "SA-11 Buk Battery B", type: "air_defense", echelon: "artillery_battery", posture: "defending", position: "5,5", strength: 100, supply: 100, status: "ready", morale: 100, ammo: 100, entrenchment: 40, detected: true, movementType: "tracked",
+        specialCapabilities: ["radar_missile_ad"] },
+
+      // Col 4: Tunguska — dual gun+IR, deadly at low alt
+      { id: uid(), actor: "actor_2", name: "Tunguska Battery", type: "air_defense", echelon: "company", posture: "defending", position: "7,4", strength: 100, supply: 100, status: "ready", morale: 100, ammo: 100, entrenchment: 30, detected: true, movementType: "tracked",
+        specialCapabilities: ["gun_ad", "ir_missile_ad"] },
+
+      // Col 7: Another SA-11 — long range umbrella covering deep corridor
+      { id: uid(), actor: "actor_2", name: "SA-11 Buk Battery C", type: "air_defense", echelon: "artillery_battery", posture: "defending", position: "4,3", strength: 100, supply: 100, status: "ready", morale: 100, ammo: 100, entrenchment: 40, detected: true, movementType: "tracked",
+        specialCapabilities: ["radar_missile_ad"] },
+
+      // Col 8-9: Terminal defense — last chance to kill before target
+      { id: uid(), actor: "actor_2", name: "Pantsir Battery", type: "air_defense", echelon: "company", posture: "defending", position: "3,4", strength: 100, supply: 100, status: "ready", morale: 100, ammo: 100, entrenchment: 30, detected: true, movementType: "tracked",
+        specialCapabilities: ["gun_ad", "ir_missile_ad", "radar_missile_ad"] },
+      { id: uid(), actor: "actor_2", name: "SA-15 Tor Battery", type: "air_defense", echelon: "company", posture: "defending", position: "3,5", strength: 100, supply: 100, status: "ready", morale: 100, ammo: 100, entrenchment: 25, detected: true, movementType: "tracked",
+        specialCapabilities: ["ir_missile_ad", "radar_missile_ad"] },
     ],
   };
 }

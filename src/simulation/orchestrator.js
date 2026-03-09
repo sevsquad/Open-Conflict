@@ -11,6 +11,7 @@ import { generateFrictionEvents, applyDetectionReveals } from "./frictionEvents.
 import { buildAllBundles } from "./orderComputer.js";
 import { findTemplateAcrossEras } from "./eraTemplates.js";
 import { WEAPON_RANGE_KM } from "./orderTypes.js";
+import { applyAirTurnUpdates } from "./airLogistics.js";
 
 // ── Game Creation ───────────────────────────────────────────
 
@@ -45,6 +46,7 @@ function normalizeOrdersForComputer(unitOrders) {
         norm.movementOrder = {
           type: orders.movementOrder.id,
           targetHex: orders.movementOrder.target,
+          waypoints: orders.movementOrder.waypoints || null,
         };
       }
       if (orders.actionOrder) {
@@ -52,6 +54,8 @@ function normalizeOrdersForComputer(unitOrders) {
           type: orders.actionOrder.id,
           targetHex: orders.actionOrder.target,
           subtype: orders.actionOrder.subtype || null,
+          altitude: orders.actionOrder.altitude || null,       // Air altitude profile (LOW/MEDIUM/HIGH)
+          targetUnit: orders.actionOrder.targetUnit || null,   // For ESCORT/SEAD — target unit ID
         };
       }
       normalized[actorId][unitId] = norm;
@@ -724,7 +728,8 @@ function normalizeNumericValue(newValue, currentValue, min = 0, max = 100) {
 // Numeric fields that need normalization (strip "%", clamp 0-100)
 const NUMERIC_FIELDS = new Set([
   "supply", "strength", "morale", "ammo", "fuel",
-  "fatigue", "entrenchment", "cohesion"
+  "fatigue", "entrenchment", "cohesion",
+  "readiness", "munitions", "sorties",
 ]);
 
 // Fields managed by the engine — LLM proposals are silently dropped
@@ -736,6 +741,8 @@ const MECHANICAL_FIELDS = new Set(["supply"]);
 const ALLOWED_UPDATE_ATTRIBUTES = new Set([
   "position", "posture", "status", "strength", "morale", "ammo", "fuel",
   "fatigue", "entrenchment", "cohesion", "supply",
+  // Air-specific fields (LLM can adjust readiness/munitions via combat results)
+  "readiness", "munitions", "sorties", "baseHex",
   // Combat results
   "casualties", "kills",
   // Special states
@@ -802,12 +809,72 @@ export function applyStateUpdates(gameState, adjudication, playerActions = {}) {
         normalizedValue = (converted && converted.includes(",")) ? converted : newUnits[unitIdx].position;
       }
 
+      // Normalize baseHex: same validation as position — must be a valid "col,row" string
+      if (attribute === "baseHex" && typeof new_value === "string") {
+        if (new_value === "") {
+          normalizedValue = "";  // Empty string = no base (valid)
+        } else {
+          const converted = labelToCommaPosition(new_value);
+          normalizedValue = (converted && converted.includes(",")) ? converted : newUnits[unitIdx].baseHex;
+        }
+      }
+
       // Normalize numeric fields: strip "%", parse to number, clamp 0-100
       if (NUMERIC_FIELDS.has(attribute)) {
         normalizedValue = normalizeNumericValue(new_value, newUnits[unitIdx][attribute]);
       }
 
       newUnits[unitIdx] = { ...newUnits[unitIdx], [attribute]: normalizedValue };
+    }
+  }
+
+  // ── Transport mechanics (cargo sync, disembark, transport destruction) ──
+
+  // 1. Sync cargo positions: embarked units track their transport's final position
+  for (const unit of newUnits) {
+    if (unit.cargo?.length > 0) {
+      for (const cargoId of unit.cargo) {
+        const cargoUnit = newUnits.find(u => u.id === cargoId);
+        if (cargoUnit) cargoUnit.position = unit.position;
+      }
+    }
+  }
+
+  // 2. Transport destruction: if a transport with cargo is destroyed, damage all cargo
+  for (const unit of newUnits) {
+    if ((unit.status === "destroyed" || unit.status === "eliminated") && unit.cargo?.length > 0) {
+      for (const cargoId of unit.cargo) {
+        const cargoUnit = newUnits.find(u => u.id === cargoId);
+        if (cargoUnit && cargoUnit.status !== "destroyed") {
+          cargoUnit.strength = Math.min(cargoUnit.strength || 100, 20);
+          if (cargoUnit.morale !== undefined) cargoUnit.morale = Math.floor((cargoUnit.morale || 100) / 2);
+          cargoUnit.status = "damaged";
+          // Eject survivors from destroyed transport
+          cargoUnit.embarkedIn = null;
+        }
+      }
+      unit.cargo = [];
+    }
+  }
+
+  // 3. Resolve DISEMBARK orders: remove unit from transport cargo
+  for (const update of updates) {
+    if (update.entity && update.attribute === "position") {
+      const unit = newUnits.find(u => u.id === update.entity);
+      if (unit?.embarkedIn) {
+        // Check if this unit had a DISEMBARK order by looking at playerActions
+        const actorActions = playerActions[unit.actor];
+        const unitAction = actorActions?.[unit.id] || actorActions?.unitOrders?.[unit.id];
+        const hadDisembark = unitAction?.movementOrder?.type === "DISEMBARK" ||
+                             unitAction?.movementOrder?.id === "DISEMBARK";
+        if (hadDisembark) {
+          const transport = newUnits.find(u => u.id === unit.embarkedIn);
+          if (transport?.cargo) {
+            transport.cargo = transport.cargo.filter(id => id !== unit.id);
+          }
+          unit.embarkedIn = null;
+        }
+      }
     }
   }
 
@@ -925,6 +992,12 @@ export function advanceTurn(gameState) {
         newSupplyNetwork[actorId] = { ...net, depots: newDepots };
       }
     }
+  }
+
+  // Apply air logistics: readiness recovery, fuel, munitions, sortie regeneration
+  // Tier 2+ — helicopters exist at tier 2, fixed-wing at tier 3+
+  if (scaleTier >= 2) {
+    newUnits = applyAirTurnUpdates(newUnits, scaleTier, gameState.scenario?.turnDuration);
   }
 
   // Progress weather/environment between turns

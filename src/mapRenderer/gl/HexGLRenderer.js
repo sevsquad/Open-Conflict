@@ -169,15 +169,30 @@ export default class HexGLRenderer {
     return vao;
   }
 
+  // Upload tile atlas for illustrated hex rendering.
+  // atlasResult: from generateTileAtlas() — { canvas, tileIndexMap, atlasInfo }
+  uploadTileAtlas(atlasResult) {
+    if (!this.gl || this._destroyed || !atlasResult) return;
+    const gl = this.gl;
+
+    // Clean up previous tile atlas
+    if (this._tileAtlasTexture) gl.deleteTexture(this._tileAtlasTexture);
+
+    this._tileAtlasTexture = uploadAtlasTexture(gl, atlasResult.canvas);
+    this._tileAtlasInfo = atlasResult.atlasInfo;
+  }
+
   // Upload map data to GPU as tiles. Returns { smoothedElevMap } for contour labels.
-  uploadMapData(mapData) {
+  // tileIndexMap: optional Map<hexKey, tileIdx> from generateTileAtlas(), maps hex
+  // positions to atlas tile indices. When provided, infraIndex is repurposed.
+  uploadMapData(mapData, tileIndexMap) {
     if (!this.gl || this._destroyed) return null;
     const gl = this.gl;
 
     // Clean up any previous tiles
     this._destroyTiles();
 
-    const { tiles: tileData, smoothedElevMap } = buildAllTiles(mapData);
+    const { tiles: tileData, smoothedElevMap } = buildAllTiles(mapData, tileIndexMap || null);
 
     for (const td of tileData) {
       const vbo = gl.createBuffer();
@@ -346,8 +361,19 @@ export default class HexGLRenderer {
     // Use hex program
     gl.useProgram(this.program);
 
-    // Disable atlas for fine hex rendering
-    gl.uniform1i(this.uniforms.u_useAtlas, 0);
+    // Enable tile atlas for illustrated hex rendering if available
+    if (this._tileAtlasTexture && this._tileAtlasInfo) {
+      gl.uniform1i(this.uniforms.u_useAtlas, 1);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this._tileAtlasTexture);
+      gl.uniform1i(this.uniforms.u_atlas, 0);
+      gl.uniform1f(this.uniforms.u_atlasGridCols, this._tileAtlasInfo.atlasGridCols);
+      gl.uniform2f(this.uniforms.u_atlasSize, this._tileAtlasInfo.atlasSize.w, this._tileAtlasInfo.atlasSize.h);
+      gl.uniform1f(this.uniforms.u_atlasTileSize, this._tileAtlasInfo.tileSize);
+      gl.uniform1f(this.uniforms.u_atlasStride, this._tileAtlasInfo.tileStride);
+    } else {
+      gl.uniform1i(this.uniforms.u_useAtlas, 0);
+    }
 
     // Set viewport uniforms
     gl.uniform2f(this.uniforms.u_canvasSize, canvasWidth, canvasHeight);
@@ -418,6 +444,9 @@ export default class HexGLRenderer {
     const gl = this.gl;
     this._destroyTiles();
     this._destroyStrategic();
+    if (this._tileAtlasTexture) gl.deleteTexture(this._tileAtlasTexture);
+    this._tileAtlasTexture = null;
+    this._tileAtlasInfo = null;
     if (this.hexVBO) gl.deleteBuffer(this.hexVBO);
     if (this.program) gl.deleteProgram(this.program);
     this.gl = null;

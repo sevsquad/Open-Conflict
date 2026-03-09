@@ -11,7 +11,7 @@
 //   - mutual_surprise:  both units unaware, stumble into each other
 // ═══════════════════════════════════════════════════════════════
 
-import { hexDistance, hexLine } from "../mapRenderer/HexMath.js";
+import { hexDistance, hexLine, hexLineThrough } from "../mapRenderer/HexMath.js";
 import { parsePosition, positionToLabel } from "./prompts.js";
 import { computeDetection } from "./detectionEngine.js";
 import { SURPRISE_MODIFIERS } from "./detectionRanges.js";
@@ -49,7 +49,9 @@ function makeContactEvent(type, observer, target, step, extra = {}) {
  *   unitPaths: { unitId: [positions traversed] } for visualization
  */
 export function simulateMovement(gameState, terrainData, sealedOrders, previousVisibility = null) {
-  const allUnits = gameState.units.filter(u => u.status !== "destroyed" && u.status !== "eliminated");
+  const allUnits = gameState.units.filter(u =>
+    u.status !== "destroyed" && u.status !== "eliminated" && !u.embarkedIn
+  );
 
   // Build movement paths for all units from their sealed orders
   const movePaths = {};   // unitId → array of {col, row} positions
@@ -72,7 +74,18 @@ export function simulateMovement(gameState, terrainData, sealedOrders, previousV
           unitPaths[unit.id] = [`${from.col},${from.row}`];
           continue;
         }
-        const path = hexLine(from.col, from.row, to.col, to.row);
+        // Build path through waypoints if present, otherwise straight line
+        const chain = [from];
+        if (moveOrder.waypoints?.length > 0) {
+          for (const wp of moveOrder.waypoints) {
+            const p = parsePosition(wp);
+            if (p) chain.push(p);
+          }
+        }
+        chain.push(to);
+        const path = chain.length === 2
+          ? hexLine(from.col, from.row, to.col, to.row)
+          : hexLineThrough(chain);
         // Filter out any intermediate hexes that go off-map
         const inBounds = path.filter(p => p.col >= 0 && p.col < cols && p.row >= 0 && p.row < rows);
         // Convert to {col, row} objects and skip the starting position

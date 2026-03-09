@@ -6,7 +6,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { hexDistance, hexRange, computeEnhancedLOS, offsetToAxial, axialToOffset, roundHex, hexDistanceAxial, getNeighbors } from "../mapRenderer/HexMath.js";
-import { LOS_TERRAIN } from "./orderTypes.js";
+import { LOS_TERRAIN, isAirUnit } from "./orderTypes.js";
 import { parsePosition, positionToLabel } from "./prompts.js";
 import {
   OBSERVER_VISUAL_KM, DEFAULT_OBSERVER_VISUAL_KM,
@@ -25,6 +25,7 @@ import {
   SPECIAL_CAPABILITY_DETECTION_MODS,
   SKYLINE_SILHOUETTE_BOOST,
   POSTURE_CONCEALMENT,
+  AIR_CANOPY_PENALTY,
 } from "./detectionRanges.js";
 
 
@@ -307,8 +308,16 @@ function evaluateDetection(observer, obsPos, target, tgtPos, terrainData, env, c
   // LOS quality modifier
   const losMod = los.result === "PARTIAL" ? 0.5 : 1.0;
 
+  // Air-to-ground canopy penalty: aircraft can't see through tree cover
+  // without FLIR/thermal. Only applies when observer is air and target is ground.
+  const isAirObserver = isAirUnit(observer);
+  const isGroundTarget = !isAirUnit(target);
+  const canopyPenalty = (isAirObserver && isGroundTarget)
+    ? (AIR_CANOPY_PENALTY[targetTerrain] ?? 1.0)
+    : 1.0;
+
   // Base probability
-  let probability = distanceFactor * concealment * postureConceal * losMod;
+  let probability = distanceFactor * concealment * postureConceal * losMod * canopyPenalty;
 
   // Close-range floor — can't hide a tank one hex away
   const floor = CLOSE_RANGE_FLOORS[distHex] ?? 0;

@@ -9,6 +9,7 @@ import { generateBocageMap } from "./bocage.js";
 import { generateFuldaGapMap } from "./fuldaGap.js";
 import { generateMosulCorridorMap } from "./mosulCorridor.js";
 import { generateVolturnoMap } from "./volturno.js";
+import { generateRiverCrossingMap } from "./riverCrossing.js";
 
 /**
  * Registry of preset map generators.
@@ -21,6 +22,7 @@ const PRESET_MAP_GENERATORS = {
   fulda_gap: { generate: generateFuldaGapMap, cacheKey: "fulda_gap" },
   mosul_corridor: { generate: generateMosulCorridorMap, cacheKey: "mosul_corridor" },
   volturno_crossing: { generate: generateVolturnoMap, cacheKey: "volturno_crossing" },
+  river_crossing_v2: { generate: generateRiverCrossingMap, cacheKey: "river_crossing_v2" },
 };
 
 /**

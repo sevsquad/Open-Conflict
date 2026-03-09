@@ -231,6 +231,29 @@ export const TERRAIN_CONCEALMENT = {
 };
 
 
+// ── Air-to-Ground Canopy Penalty ─────────────────────────────
+// Extra multiplier on detection probability when an AIR observer
+// looks down at a ground target under dense canopy. Aircraft can't
+// see through tree cover without FLIR/thermal — visual-only detection
+// is near-zero under triple canopy. Ground observers under the same
+// canopy can still spot targets at ground level.
+// Values: 0 = totally invisible from air, 1.0 = no penalty.
+
+export const AIR_CANOPY_PENALTY = {
+  dense_forest:     0.05,   // Triple canopy — near-invisible from air
+  jungle:           0.05,   // Triple canopy
+  jungle_hills:     0.08,
+  jungle_mountains: 0.08,
+  forest:           0.2,    // Single canopy — hard but not impossible
+  mountain_forest:  0.2,
+  boreal:           0.25,   // Thinner canopy, some gaps
+  boreal_hills:     0.25,
+  boreal_mountains: 0.3,
+  mangrove:         0.1,    // Dense low canopy over water
+  forested_hills:   0.2,
+};
+
+
 // ── Detection-by-Action Modifiers ────────────────────────────
 // Additive boost to target size mod for units that performed
 // these actions THIS turn. Firing creates muzzle flash, dust,

@@ -30,6 +30,7 @@ export const SCALE_SYSTEMS = {
   fuel_tracking:        2,  // Tiers 2-4
   entrenchment:         1,  // Tiers 1-3
   cohesion:             1,  // Tiers 1-3 — organizational integrity
+  air_operations:       3,  // Tiers 3-6 — air mission orders, ASL, AD envelopes
 };
 
 /** Check if a system is active at a given scale tier number */
@@ -442,7 +443,7 @@ function posToLabel(col, row) {
 
 // Movement budgets for validation (matches orderTypes.js MOVEMENT_BUDGETS)
 const VALIDATION_MOVEMENT_BUDGETS = {
-  foot: 3, wheeled: 5, tracked: 4, air: 8, naval: 6, amphibious: 4,
+  foot: 3, wheeled: 5, tracked: 4, air: 8, naval: 6, amphibious: 4, static: 0,
 };
 
 const IMPASSABLE_TERRAIN = new Set(["coastal_water", "deep_water", "lake"]);
@@ -474,6 +475,9 @@ export function validatePositionUpdates(stateUpdates, gameState, terrainData) {
 
     const unit = unitIndex.get(update.entity);
     if (!unit) continue;
+
+    // Embarked units skip position validation — their position is managed by the transport
+    if (unit.embarkedIn) continue;
 
     // Normalize the proposed position to col,row
     const newPosStr = update.new_value;
@@ -604,8 +608,22 @@ export function getUnitFieldsForScale(tierNumber) {
   return fields;
 }
 
+/**
+ * Extra fields for air-branch units. Applied on top of getUnitFieldsForScale().
+ * Only called when the unit's baseType === "air" AND tier >= 3 (air_operations system active).
+ */
+export function getAirUnitFields(tierNumber) {
+  const fields = {};
+  if (tierNumber >= 3) fields.readiness = 100;     // Tiers 3-6 — operational readiness (0-100)
+  if (tierNumber === 3) fields.fuel = 100;          // Tier 3 only — persistent helicopter fuel (0-100)
+  if (tierNumber >= 3 && tierNumber <= 4) fields.munitions = 100; // Tiers 3-4 — ordnance available (0-100)
+  if (tierNumber >= 4) fields.sorties = 0;          // Tiers 4-6 — computed at turn start from readiness + turn duration
+  fields.baseHex = "";                              // Airfield hex where the unit is based
+  return fields;
+}
+
 // Movement type options
-export const MOVEMENT_TYPES = ["foot", "wheeled", "tracked", "air", "naval", "amphibious"];
+export const MOVEMENT_TYPES = ["foot", "wheeled", "tracked", "air", "naval", "amphibious", "static"];
 
 // ── Diplomacy ────────────────────────────────────────────────
 

@@ -24,6 +24,9 @@ const SimMap = forwardRef(function SimMap({
   proposedMoves = null,       // array of { from, to, color, unitName } for review phase arrows
   strategicGrid = null,       // from buildStrategicGrid() — enables strategic rendering
   strategicMode = false,      // true = render strategic hexes
+  airOverlayData = null,      // { adUnits, flightPaths, casSectors } for air viz
+  activeFeatures = null,      // Set of feature names to show (null = all)
+  showElevBands = false,      // true = hypsometric elevation view
 }, ref) {
   const mapViewRef = useRef(null);
   const [hovCell, setHovCell] = useState(null);
@@ -102,6 +105,9 @@ const SimMap = forwardRef(function SimMap({
         proposedMoves={proposedMoves}
         strategicGrid={strategicGrid}
         strategicMode={strategicMode}
+        airOverlayData={airOverlayData}
+        activeFeatures={activeFeatures}
+        showElevBands={showElevBands}
       />
       {/* Cell tooltip */}
       {cellData && (

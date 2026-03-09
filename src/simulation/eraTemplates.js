@@ -208,7 +208,7 @@ const WW2_ERA = {
       name: "Anti-Aircraft Battery",
       baseType: "air_defense",
       scaleRange: [2, 5],
-      defaults: { movementType: "wheeled", specialCapabilities: ["dual_role"], weaponRangeKm: { pointBlank: 0.5, effective: 2.0, max: 4.0 } },
+      defaults: { movementType: "wheeled", specialCapabilities: ["dual_role", "gun_ad"], weaponRangeKm: { pointBlank: 0.5, effective: 2.0, max: 4.0 } },
       description: "Bofors 40mm, Flak 88, Oerlikon — air defense with anti-armor dual role",
     },
     {
@@ -234,15 +234,47 @@ const WW2_ERA = {
       name: "Fighter Aircraft",
       baseType: "air",
       scaleRange: [3, 6],
-      defaults: { movementType: "air", specialCapabilities: ["air_superiority"], weaponRangeKm: { pointBlank: 0, effective: 15.0, max: 30.0 } },
+      defaults: {
+        movementType: "air", specialCapabilities: ["air_superiority"],
+        weaponRangeKm: { pointBlank: 0, effective: 15.0, max: 30.0 },
+        airProfile: { speed: "medium", maneuverability: 8, weaponsPackage: ["guns"], defensiveArmament: false, ecm: false, radarEquipped: false },
+      },
       description: "Spitfire, Bf-109, P-51, Zero — air superiority fighters",
+    },
+    {
+      templateId: "ww2_fighter_bomber",
+      name: "Fighter-Bomber",
+      baseType: "air",
+      scaleRange: [3, 6],
+      defaults: {
+        movementType: "air", specialCapabilities: ["air_superiority", "close_air_support"],
+        weaponRangeKm: { pointBlank: 0, effective: 12.0, max: 25.0 },
+        airProfile: { speed: "medium", maneuverability: 6, weaponsPackage: ["guns"], defensiveArmament: false, ecm: false, radarEquipped: false },
+      },
+      description: "P-47, Fw-190, Typhoon — dual-role air combat and ground attack",
+    },
+    {
+      templateId: "ww2_night_fighter",
+      name: "Night Fighter",
+      baseType: "air",
+      scaleRange: [3, 6],
+      defaults: {
+        movementType: "air", specialCapabilities: ["air_superiority"],
+        weaponRangeKm: { pointBlank: 0, effective: 10.0, max: 20.0 },
+        airProfile: { speed: "medium", maneuverability: 5, weaponsPackage: ["guns"], defensiveArmament: false, ecm: false, radarEquipped: true },
+      },
+      description: "Bf-110G, Mosquito NF, P-61 Black Widow — radar-equipped night interception",
     },
     {
       templateId: "ww2_tactical_bomber",
       name: "Tactical Bomber / Dive Bomber",
       baseType: "air",
       scaleRange: [3, 6],
-      defaults: { movementType: "air", specialCapabilities: ["close_air_support"], weaponRangeKm: { pointBlank: 0, effective: 10.0, max: 20.0 } },
+      defaults: {
+        movementType: "air", specialCapabilities: ["close_air_support"],
+        weaponRangeKm: { pointBlank: 0, effective: 10.0, max: 20.0 },
+        airProfile: { speed: "medium", maneuverability: 4, weaponsPackage: ["guns"], defensiveArmament: true, ecm: false, radarEquipped: false },
+      },
       description: "Stuka, Il-2, P-47 — close air support and interdiction",
     },
     {
@@ -250,7 +282,11 @@ const WW2_ERA = {
       name: "Strategic Bomber",
       baseType: "air",
       scaleRange: [4, 6],
-      defaults: { movementType: "air", specialCapabilities: ["strategic_bombing"], weaponRangeKm: { pointBlank: 0, effective: 30.0, max: 80.0 } },
+      defaults: {
+        movementType: "air", specialCapabilities: ["strategic_bombing"],
+        weaponRangeKm: { pointBlank: 0, effective: 30.0, max: 80.0 },
+        airProfile: { speed: "medium", maneuverability: 2, weaponsPackage: ["guns"], defensiveArmament: true, ecm: false, radarEquipped: false },
+      },
       description: "B-17, Lancaster, He-111 — area and precision strategic bombing",
     },
     {
@@ -258,7 +294,11 @@ const WW2_ERA = {
       name: "Transport Aircraft",
       baseType: "air",
       scaleRange: [3, 6],
-      defaults: { movementType: "air", specialCapabilities: ["airlift"], weaponRangeKm: { pointBlank: 0, effective: 0, max: 0 } },
+      defaults: {
+        movementType: "air", specialCapabilities: ["airlift"],
+        weaponRangeKm: { pointBlank: 0, effective: 0, max: 0 },
+        airProfile: { speed: "medium", maneuverability: 2, weaponsPackage: [], defensiveArmament: false, ecm: false, radarEquipped: false },
+      },
       description: "C-47 Skytrain, Ju-52 — airborne operations and supply drops",
     },
 
@@ -419,6 +459,46 @@ const COLD_WAR_ERA = {
       defaults: { movementType: "wheeled", specialCapabilities: ["nbc_defense"], weaponRangeKm: { pointBlank: 0, effective: 0, max: 0.3 } },
       description: "Nuclear/biological/chemical defense — decontamination, detection",
     },
+    {
+      templateId: "cw_light_infantry",
+      name: "Light Infantry",
+      baseType: "infantry",
+      scaleRange: [1, 5],
+      defaults: { movementType: "foot", weaponRangeKm: { pointBlank: 0.05, effective: 0.3, max: 0.6 } },
+      description: "Foot-mobile conventional infantry — PAVN, PLA, Jäger, 10th Mountain, light role battalions",
+    },
+    {
+      templateId: "cw_special_operations",
+      name: "Special Operations Forces",
+      baseType: "recon",
+      scaleRange: [1, 3],
+      defaults: { movementType: "foot", specialCapabilities: ["deep_reconnaissance", "sabotage", "unconventional_warfare"], weaponRangeKm: { pointBlank: 0.05, effective: 0.3, max: 0.8 } },
+      description: "Spetsnaz GRU, Green Berets, SAS, SEALs — behind-the-lines sabotage, UW, deep recon",
+    },
+    {
+      templateId: "cw_guerrilla",
+      name: "Guerrilla / Irregular Forces",
+      baseType: "infantry",
+      scaleRange: [1, 4],
+      defaults: { movementType: "foot", specialCapabilities: ["ambush", "sabotage", "dispersal"], weaponRangeKm: { pointBlank: 0.05, effective: 0.2, max: 0.5 } },
+      description: "Viet Cong, Mujahideen, UNITA, Contras — irregular fighters using ambush, IEDs, local terrain knowledge",
+    },
+    {
+      templateId: "cw_militia",
+      name: "Militia / Territorial Defense",
+      baseType: "infantry",
+      scaleRange: [1, 4],
+      defaults: { movementType: "foot", specialCapabilities: ["local_knowledge"], weaponRangeKm: { pointBlank: 0.05, effective: 0.2, max: 0.5 } },
+      description: "Yugoslav Territorial Defense, Kampfgruppen, Home Guard, Swiss militia — state-organized second-line defense",
+    },
+    {
+      templateId: "cw_anti_tank",
+      name: "Anti-Tank (ATGM)",
+      baseType: "mechanized",
+      scaleRange: [2, 5],
+      defaults: { movementType: "wheeled", specialCapabilities: ["anti_armor"], weaponRangeKm: { pointBlank: 0.1, effective: 3.0, max: 4.0 } },
+      description: "BRDM-2 AT-5, M901 ITV, Jaguar, Shturm-S — dedicated ATGM tank-killing platforms",
+    },
 
     // ── Artillery & Support ──
     {
@@ -442,7 +522,7 @@ const COLD_WAR_ERA = {
       name: "SHORAD",
       baseType: "air_defense",
       scaleRange: [2, 5],
-      defaults: { movementType: "tracked", specialCapabilities: ["short_range_ad"], weaponRangeKm: { pointBlank: 0.3, effective: 2.5, max: 4.0 } },
+      defaults: { movementType: "tracked", specialCapabilities: ["short_range_ad", "gun_ad", "ir_missile_ad"], weaponRangeKm: { pointBlank: 0.3, effective: 2.5, max: 4.0 } },
       description: "ZSU-23-4 Shilka, M163 VADS, Roland — short-range air defense",
     },
     {
@@ -450,8 +530,32 @@ const COLD_WAR_ERA = {
       name: "Medium-Range Air Defense",
       baseType: "air_defense",
       scaleRange: [3, 6],
-      defaults: { movementType: "wheeled", specialCapabilities: ["medium_range_ad"], weaponRangeKm: { pointBlank: 3.0, effective: 15.0, max: 25.0 } },
+      defaults: { movementType: "wheeled", specialCapabilities: ["medium_range_ad", "radar_missile_ad"], weaponRangeKm: { pointBlank: 3.0, effective: 15.0, max: 25.0 } },
       description: "SA-6 Gainful, Hawk, Rapier — area air defense coverage",
+    },
+    {
+      templateId: "cw_towed_artillery",
+      name: "Towed Artillery",
+      baseType: "artillery",
+      scaleRange: [2, 5],
+      defaults: { movementType: "towed", weaponRangeKm: { pointBlank: 2.0, effective: 11.0, max: 15.0 } },
+      description: "D-30 122mm, M102 105mm, Type 59 130mm — lighter, cheaper but slower to displace than SP guns",
+    },
+    {
+      templateId: "cw_tactical_missile",
+      name: "Tactical Ballistic Missile",
+      baseType: "artillery",
+      scaleRange: [3, 6],
+      defaults: { movementType: "wheeled", specialCapabilities: ["ballistic_missile"], weaponRangeKm: { pointBlank: 20.0, effective: 120.0, max: 300.0 } },
+      description: "SCUD-B, SS-21 Scarab, Lance, Pershing II — long-range strike, potential WMD delivery",
+    },
+    {
+      templateId: "cw_electronic_warfare",
+      name: "Electronic Warfare",
+      baseType: "headquarters",
+      scaleRange: [2, 5],
+      defaults: { movementType: "wheeled", specialCapabilities: ["jamming", "sigint"], weaponRangeKm: { pointBlank: 0, effective: 0, max: 0 } },
+      description: "EW battalions — comms jamming, SIGINT intercept, direction finding, degrades enemy C2",
     },
     {
       templateId: "cw_headquarters",
@@ -474,17 +578,37 @@ const COLD_WAR_ERA = {
     {
       templateId: "cw_attack_helicopter",
       name: "Attack Helicopter",
-      baseType: "air",
+      baseType: "attack_helicopter",
       scaleRange: [2, 5],
-      defaults: { movementType: "air", specialCapabilities: ["anti_armor", "close_air_support"], weaponRangeKm: { pointBlank: 0, effective: 5.0, max: 10.0 } },
+      defaults: {
+        movementType: "helicopter", specialCapabilities: ["anti_armor", "close_air_support"],
+        weaponRangeKm: { pointBlank: 0, effective: 5.0, max: 10.0 },
+        airProfile: { speed: "slow", maneuverability: 7, weaponsPackage: ["guns", "ir_missiles"], defensiveArmament: false, ecm: false, radarEquipped: false },
+      },
       description: "Mi-24 Hind, AH-1 Cobra, Gazelle HOT — tank-killing rotary wing",
+    },
+    {
+      templateId: "cw_transport_helicopter",
+      name: "Transport Helicopter",
+      baseType: "transport",
+      scaleRange: [2, 5],
+      defaults: {
+        movementType: "helicopter", specialCapabilities: ["air_transport", "resupply"], transportCapacity: 2,
+        weaponRangeKm: { pointBlank: 0, effective: 0.1, max: 0.3 },
+        airProfile: { speed: "slow", maneuverability: 4, weaponsPackage: [], defensiveArmament: false, ecm: false, radarEquipped: false },
+      },
+      description: "Mi-8 Hip, UH-1 Huey, CH-47 Chinook — troop lift, resupply, CASEVAC, door guns only",
     },
     {
       templateId: "cw_cas",
       name: "Close Air Support",
       baseType: "air",
       scaleRange: [3, 6],
-      defaults: { movementType: "air", specialCapabilities: ["close_air_support"], weaponRangeKm: { pointBlank: 0, effective: 15.0, max: 30.0 } },
+      defaults: {
+        movementType: "air", specialCapabilities: ["close_air_support"],
+        weaponRangeKm: { pointBlank: 0, effective: 15.0, max: 30.0 },
+        airProfile: { speed: "fast", maneuverability: 5, weaponsPackage: ["guns"], defensiveArmament: false, ecm: false, radarEquipped: false },
+      },
       description: "A-10, Su-25 Frogfoot, Harrier — dedicated ground attack",
     },
     {
@@ -492,8 +616,36 @@ const COLD_WAR_ERA = {
       name: "Fighter / Interceptor",
       baseType: "air",
       scaleRange: [3, 6],
-      defaults: { movementType: "air", specialCapabilities: ["air_superiority"], weaponRangeKm: { pointBlank: 0, effective: 20.0, max: 40.0 } },
+      defaults: {
+        movementType: "air", specialCapabilities: ["air_superiority"],
+        weaponRangeKm: { pointBlank: 0, effective: 20.0, max: 40.0 },
+        airProfile: { speed: "supersonic", maneuverability: 8, weaponsPackage: ["guns", "ir_missiles", "radar_missiles"], defensiveArmament: false, ecm: false, radarEquipped: true },
+      },
       description: "F-15, MiG-29, Mirage 2000 — air superiority and interception",
+    },
+    {
+      templateId: "cw_wild_weasel",
+      name: "SEAD / Wild Weasel",
+      baseType: "air",
+      scaleRange: [3, 6],
+      defaults: {
+        movementType: "air", specialCapabilities: ["sead_capable", "precision_strike"],
+        weaponRangeKm: { pointBlank: 0, effective: 20.0, max: 40.0 },
+        airProfile: { speed: "supersonic", maneuverability: 6, weaponsPackage: ["guns", "ir_missiles", "radar_missiles"], defensiveArmament: false, ecm: true, radarEquipped: true },
+      },
+      description: "F-4G Wild Weasel, Tornado ECR — suppression and destruction of enemy air defenses",
+    },
+    {
+      templateId: "cw_ecm_aircraft",
+      name: "EW / ECM Aircraft",
+      baseType: "air",
+      scaleRange: [4, 6],
+      defaults: {
+        movementType: "air", specialCapabilities: ["jamming", "sigint"],
+        weaponRangeKm: { pointBlank: 0, effective: 0, max: 0 },
+        airProfile: { speed: "fast", maneuverability: 3, weaponsPackage: [], defensiveArmament: false, ecm: true, radarEquipped: true },
+      },
+      description: "EA-6B Prowler, EF-111 Raven — electronic warfare, radar jamming, SIGINT",
     },
 
     // ── Naval ──
@@ -518,7 +670,7 @@ const COLD_WAR_ERA = {
       name: "Amphibious Assault Ship",
       baseType: "naval",
       scaleRange: [4, 6],
-      defaults: { movementType: "naval", specialCapabilities: ["amphibious_assault", "carrier_air"], weaponRangeKm: { pointBlank: 1.0, effective: 5.0, max: 10.0 } },
+      defaults: { movementType: "naval", specialCapabilities: ["amphibious_assault", "carrier_air"], transportCapacity: 4, weaponRangeKm: { pointBlank: 1.0, effective: 5.0, max: 10.0 } },
       description: "LPH, LPD, LSD — amphibious assault with embarked Marines and helos",
     },
     {
@@ -662,7 +814,7 @@ const MODERN_ERA = {
       name: "SHORAD",
       baseType: "air_defense",
       scaleRange: [2, 5],
-      defaults: { movementType: "tracked", specialCapabilities: ["short_range_ad"], weaponRangeKm: { pointBlank: 0.3, effective: 4.0, max: 8.0 } },
+      defaults: { movementType: "tracked", specialCapabilities: ["short_range_ad", "gun_ad", "ir_missile_ad", "counter_uas"], weaponRangeKm: { pointBlank: 0.3, effective: 4.0, max: 8.0 } },
       description: "Avenger, Tunguska, Gepard — short-range air defense including counter-UAS",
     },
     {
@@ -670,7 +822,7 @@ const MODERN_ERA = {
       name: "Medium-Range Air Defense",
       baseType: "air_defense",
       scaleRange: [3, 6],
-      defaults: { movementType: "wheeled", specialCapabilities: ["medium_range_ad", "radar"], weaponRangeKm: { pointBlank: 3.0, effective: 20.0, max: 40.0 } },
+      defaults: { movementType: "wheeled", specialCapabilities: ["medium_range_ad", "radar", "radar_missile_ad"], weaponRangeKm: { pointBlank: 3.0, effective: 20.0, max: 40.0 } },
       description: "NASAMS, Buk, Iron Dome — area defense against aircraft and missiles",
     },
     {
@@ -678,8 +830,16 @@ const MODERN_ERA = {
       name: "Long-Range Air Defense",
       baseType: "air_defense",
       scaleRange: [4, 6],
-      defaults: { movementType: "wheeled", specialCapabilities: ["long_range_ad", "radar"], weaponRangeKm: { pointBlank: 20.0, effective: 100.0, max: 200.0 } },
+      defaults: { movementType: "wheeled", specialCapabilities: ["long_range_ad", "radar", "radar_missile_ad"], weaponRangeKm: { pointBlank: 20.0, effective: 100.0, max: 200.0 } },
       description: "Patriot, S-400, SAMP/T — theater-level air and ballistic missile defense",
+    },
+    {
+      templateId: "mod_counter_uas",
+      name: "Counter-UAS System",
+      baseType: "air_defense",
+      scaleRange: [2, 5],
+      defaults: { movementType: "wheeled", specialCapabilities: ["counter_uas", "gun_ad", "jamming"], weaponRangeKm: { pointBlank: 0.1, effective: 2.0, max: 5.0 } },
+      description: "Dedicated C-UAS — EW jamming, autocannon, directed energy against drones",
     },
 
     // ── Command & Support ──
@@ -712,9 +872,13 @@ const MODERN_ERA = {
     {
       templateId: "mod_attack_aviation",
       name: "Attack Aviation",
-      baseType: "air",
+      baseType: "attack_helicopter",
       scaleRange: [2, 5],
-      defaults: { movementType: "air", specialCapabilities: ["anti_armor", "close_air_support"], weaponRangeKm: { pointBlank: 0, effective: 8.0, max: 15.0 } },
+      defaults: {
+        movementType: "helicopter", specialCapabilities: ["anti_armor", "close_air_support"],
+        weaponRangeKm: { pointBlank: 0, effective: 8.0, max: 15.0 },
+        airProfile: { speed: "slow", maneuverability: 8, weaponsPackage: ["guns", "ir_missiles", "radar_missiles"], defensiveArmament: false, ecm: true, radarEquipped: true },
+      },
       description: "AH-64 Apache, Ka-52, Tiger — anti-armor and close combat attack",
     },
     {
@@ -722,7 +886,11 @@ const MODERN_ERA = {
       name: "UAS / Drone",
       baseType: "air",
       scaleRange: [1, 5],
-      defaults: { movementType: "air", specialCapabilities: ["drone_equipped", "precision_strike"], weaponRangeKm: { pointBlank: 0, effective: 10.0, max: 20.0 } },
+      defaults: {
+        movementType: "air", specialCapabilities: ["drone_equipped", "precision_strike"],
+        weaponRangeKm: { pointBlank: 0, effective: 10.0, max: 20.0 },
+        airProfile: { speed: "slow", maneuverability: 3, weaponsPackage: [], defensiveArmament: false, ecm: false, radarEquipped: false },
+      },
       description: "MQ-9, TB2 Bayraktar, Shahed — ISR, precision strike, loitering munitions",
     },
     {
@@ -730,8 +898,48 @@ const MODERN_ERA = {
       name: "Multirole Fighter",
       baseType: "air",
       scaleRange: [3, 6],
-      defaults: { movementType: "air", specialCapabilities: ["air_superiority", "precision_strike"], weaponRangeKm: { pointBlank: 0, effective: 30.0, max: 60.0 } },
+      defaults: {
+        movementType: "air", specialCapabilities: ["air_superiority", "precision_strike"],
+        weaponRangeKm: { pointBlank: 0, effective: 30.0, max: 60.0 },
+        airProfile: { speed: "supersonic", maneuverability: 9, weaponsPackage: ["guns", "ir_missiles", "bvr_missiles"], defensiveArmament: false, ecm: true, radarEquipped: true },
+      },
       description: "F-35, Su-57, Rafale, Eurofighter — air dominance and deep strike",
+    },
+    {
+      templateId: "mod_ew_aircraft",
+      name: "EW Aircraft",
+      baseType: "air",
+      scaleRange: [4, 6],
+      defaults: {
+        movementType: "air", specialCapabilities: ["jamming", "sigint", "sead_capable"],
+        weaponRangeKm: { pointBlank: 0, effective: 0, max: 0 },
+        airProfile: { speed: "fast", maneuverability: 4, weaponsPackage: [], defensiveArmament: false, ecm: true, radarEquipped: true },
+      },
+      description: "EA-18G Growler — electronic attack, SEAD escort, signals intelligence",
+    },
+    {
+      templateId: "mod_isr_platform",
+      name: "ISR Platform",
+      baseType: "air",
+      scaleRange: [3, 6],
+      defaults: {
+        movementType: "air", specialCapabilities: ["drone_equipped", "deep_reconnaissance"],
+        weaponRangeKm: { pointBlank: 0, effective: 0, max: 0 },
+        airProfile: { speed: "medium", maneuverability: 2, weaponsPackage: [], defensiveArmament: false, ecm: false, radarEquipped: true },
+      },
+      description: "RQ-4 Global Hawk, E-8 JSTARS — persistent wide-area surveillance and targeting",
+    },
+    {
+      templateId: "mod_standoff_strike",
+      name: "Standoff Strike",
+      baseType: "air",
+      scaleRange: [4, 6],
+      defaults: {
+        movementType: "air", specialCapabilities: ["precision_strike", "strategic_bombing", "standoff_strike"],
+        weaponRangeKm: { pointBlank: 0, effective: 80.0, max: 200.0 },
+        airProfile: { speed: "fast", maneuverability: 3, weaponsPackage: ["ir_missiles"], defensiveArmament: false, ecm: true, radarEquipped: true },
+      },
+      description: "B-1B Lancer, Tu-160 — cruise missile and standoff precision strike",
     },
 
     // ── Naval ──
@@ -762,12 +970,175 @@ const MODERN_ERA = {
   ],
 };
 
+// ── WW1 (1914–1918) ──────────────────────────────────────────
+
+const WW1_ERA = {
+  id: "ww1",
+  label: "World War I (1914–1918)",
+  shortLabel: "WW1",
+  echelonLabels: {
+    battle_group: "Brigade Group",
+  },
+  templates: [
+    // ── Ground ──
+    {
+      templateId: "ww1_rifle_infantry",
+      name: "Rifle Infantry",
+      baseType: "infantry",
+      scaleRange: [1, 5],
+      defaults: { movementType: "foot", weaponRangeKm: { pointBlank: 0.05, effective: 0.2, max: 0.5 } },
+      description: "Bolt-action rifle infantry — the mass of all WW1 armies",
+    },
+    {
+      templateId: "ww1_stormtrooper",
+      name: "Stormtrooper / Assault Infantry",
+      baseType: "special_forces",
+      scaleRange: [1, 3],
+      defaults: { movementType: "foot", specialCapabilities: ["infiltration"], weaponRangeKm: { pointBlank: 0.05, effective: 0.15, max: 0.3 } },
+      description: "Sturmtruppen, Arditi — elite assault infantry for trench warfare",
+    },
+    {
+      templateId: "ww1_machine_gun",
+      name: "Machine Gun Section",
+      baseType: "infantry",
+      scaleRange: [1, 3],
+      defaults: { movementType: "foot", specialCapabilities: ["sustained_fire"], weaponRangeKm: { pointBlank: 0.1, effective: 0.6, max: 1.5 } },
+      description: "Vickers, MG 08, Hotchkiss — devastating defensive firepower",
+    },
+    {
+      templateId: "ww1_cavalry",
+      name: "Cavalry",
+      baseType: "recon",
+      scaleRange: [1, 4],
+      defaults: { movementType: "foot", specialCapabilities: ["mounted"], weaponRangeKm: { pointBlank: 0.05, effective: 0.2, max: 0.5 } },
+      description: "Reconnaissance and exploitation — limited by trench warfare",
+    },
+    {
+      templateId: "ww1_field_artillery",
+      name: "Field Artillery Battery",
+      baseType: "artillery",
+      scaleRange: [2, 5],
+      defaults: { movementType: "foot", weaponRangeKm: { pointBlank: 1.0, effective: 5.0, max: 8.0 } },
+      description: "75mm, 77mm, 18-pounder — the workhorse of WW1 indirect fire",
+    },
+    {
+      templateId: "ww1_heavy_artillery",
+      name: "Heavy Artillery",
+      baseType: "artillery",
+      scaleRange: [3, 5],
+      defaults: { movementType: "foot", specialCapabilities: ["area_fire"], weaponRangeKm: { pointBlank: 3.0, effective: 8.0, max: 14.0 } },
+      description: "Howitzers 150mm+, siege guns — trench destruction and counter-battery",
+    },
+    {
+      templateId: "ww1_trench_mortar",
+      name: "Trench Mortar",
+      baseType: "artillery",
+      scaleRange: [1, 3],
+      defaults: { movementType: "foot", weaponRangeKm: { pointBlank: 0.05, effective: 0.5, max: 1.5 } },
+      description: "Stokes mortar, Minenwerfer — short-range trench-to-trench fire",
+    },
+    {
+      templateId: "ww1_engineer",
+      name: "Pioneer / Sapper",
+      baseType: "engineer",
+      scaleRange: [2, 4],
+      defaults: { movementType: "foot", specialCapabilities: ["breaching", "fortify"], weaponRangeKm: { pointBlank: 0.05, effective: 0.1, max: 0.3 } },
+      description: "Trench construction, mining, wire cutting, tunneling",
+    },
+    {
+      templateId: "ww1_headquarters",
+      name: "Headquarters",
+      baseType: "headquarters",
+      scaleRange: [2, 6],
+      defaults: { movementType: "foot", weaponRangeKm: { pointBlank: 0, effective: 0, max: 0 } },
+      description: "Division, Corps, or Army HQ — command node (very limited comms by modern standards)",
+    },
+    {
+      templateId: "ww1_logistics",
+      name: "Supply Train",
+      baseType: "logistics",
+      scaleRange: [2, 5],
+      defaults: { movementType: "foot", weaponRangeKm: { pointBlank: 0, effective: 0, max: 0 } },
+      description: "Horse-drawn and narrow-gauge rail supply — slow, vulnerable, critical",
+    },
+    {
+      templateId: "ww1_tank",
+      name: "Tank",
+      baseType: "armor",
+      scaleRange: [2, 4],
+      defaults: { movementType: "tracked", specialCapabilities: ["heavy_armor"], weaponRangeKm: { pointBlank: 0.1, effective: 0.3, max: 0.5 } },
+      description: "Mark IV, FT-17, A7V — slow, unreliable, terrifying for defenders (late war only)",
+    },
+
+    // ── Air (4) ──
+    {
+      templateId: "ww1_observation_balloon",
+      name: "Observation Balloon",
+      baseType: "air",
+      scaleRange: [2, 4],
+      defaults: {
+        movementType: "static", specialCapabilities: ["observation", "tethered"],
+        weaponRangeKm: { pointBlank: 0, effective: 0, max: 0 },
+        airProfile: { speed: "slow", maneuverability: 0, weaponsPackage: [], defensiveArmament: false, ecm: false, radarEquipped: false },
+      },
+      description: "Tethered hydrogen balloon — massive observation range, extremely vulnerable to fighters",
+    },
+    {
+      templateId: "ww1_observation_aircraft",
+      name: "Observation Aircraft",
+      baseType: "air",
+      scaleRange: [3, 5],
+      defaults: {
+        movementType: "air", specialCapabilities: ["observation", "deep_reconnaissance"],
+        weaponRangeKm: { pointBlank: 0, effective: 0, max: 0 },
+        airProfile: { speed: "slow", maneuverability: 3, weaponsPackage: ["guns"], defensiveArmament: true, ecm: false, radarEquipped: false },
+      },
+      description: "BE.2, Albatros C-series, SPAD XI — artillery spotting and reconnaissance",
+    },
+    {
+      templateId: "ww1_fighter",
+      name: "Fighter",
+      baseType: "air",
+      scaleRange: [3, 5],
+      defaults: {
+        movementType: "air", specialCapabilities: ["air_superiority"],
+        weaponRangeKm: { pointBlank: 0, effective: 5.0, max: 10.0 },
+        airProfile: { speed: "slow", maneuverability: 7, weaponsPackage: ["guns"], defensiveArmament: false, ecm: false, radarEquipped: false },
+      },
+      description: "Sopwith Camel, Fokker D.VII, SPAD XIII — air combat to deny enemy observation",
+    },
+    {
+      templateId: "ww1_bomber",
+      name: "Bomber",
+      baseType: "air",
+      scaleRange: [4, 5],
+      defaults: {
+        movementType: "air", specialCapabilities: ["strategic_bombing"],
+        weaponRangeKm: { pointBlank: 0, effective: 10.0, max: 25.0 },
+        airProfile: { speed: "slow", maneuverability: 2, weaponsPackage: [], defensiveArmament: true, ecm: false, radarEquipped: false },
+      },
+      description: "Gotha, Handley Page, Caproni — limited strategic bombing (late war only)",
+    },
+
+    // ── Air Defense ──
+    {
+      templateId: "ww1_anti_aircraft",
+      name: "Anti-Aircraft Section",
+      baseType: "air_defense",
+      scaleRange: [2, 5],
+      defaults: { movementType: "foot", specialCapabilities: ["gun_ad"], weaponRangeKm: { pointBlank: 0.3, effective: 1.5, max: 3.0 } },
+      description: "Adapted field guns on AA mounts — volume of fire creates kill zones over key positions",
+    },
+  ],
+};
+
 // ═══════════════════════════════════════════════════════════════
 // Exports and lookup functions
 // ═══════════════════════════════════════════════════════════════
 
 export const ERA_DEFINITIONS = [
   DEFAULT_ERA,
+  WW1_ERA,
   WW2_ERA,
   COLD_WAR_ERA,
   MODERN_ERA,
