@@ -88,7 +88,8 @@
       "Bash(node -e \"const fs = require\\(''fs''\\); const d = JSON.parse\\(fs.readFileSync\\(''C:/Users/Ryan/Documents/open-conflict-v0.10/open-conflict/saves/Paris_0.1km_22x24_2026-03-06.json'',''utf8''\\)\\); const cellKeys = Object.keys\\(d.map.cells\\); console.log\\(''cells key count:'', cellKeys.length\\); console.log\\(''first 10 keys:'', cellKeys.slice\\(0,10\\)\\); console.log\\(''sample cell:'', JSON.stringify\\(d.map.cells[cellKeys[0]]\\)?.substring\\(0,500\\)\\); const fgKeys = Object.keys\\(d.fineGrid\\); console.log\\(''fineGrid key count:'', fgKeys.length\\); console.log\\(''first 10 fineGrid keys:'', fgKeys.slice\\(0,10\\)\\); console.log\\(''sample fineGrid entry:'', JSON.stringify\\(d.fineGrid[fgKeys[0]]\\)?.substring\\(0,500\\)\\);\")",
       "Bash(node -e \"const fs = require\\(''fs''\\); const d = JSON.parse\\(fs.readFileSync\\(''C:/Users/Ryan/Documents/open-conflict-v0.10/open-conflict/saves/Paris_0.1km_22x24_2026-03-06.json'',''utf8''\\)\\); const fg = d.fineGrid; console.log\\(''fineGrid.cols:'', fg.cols\\); console.log\\(''fineGrid.rows:'', fg.rows\\); console.log\\(''fineGrid.cellSizeKm:'', fg.cellSizeKm\\); const fgCells = fg.cells; console.log\\(''fineGrid.cells type:'', typeof fgCells, ''isArray:'', Array.isArray\\(fgCells\\)\\); const fgCellKeys = Object.keys\\(fgCells\\); console.log\\(''fineGrid.cells key count:'', fgCellKeys.length\\); console.log\\(''first 10 fine cell keys:'', fgCellKeys.slice\\(0,10\\)\\); console.log\\(''sample fine cell:'', JSON.stringify\\(fgCells[fgCellKeys[0]]\\)?.substring\\(0,300\\)\\);\")",
       "Bash(grep -rn \"fire\\\\|weapon\\\\|shoot\" /c/Users/Ryan/Documents/open-conflict-v0.10/open-conflict/src/simulation/*.js)",
-      "Bash(git -C \"C:/Users/Ryan/Documents/open-conflict-v0.10/open-conflict\" status --short)"
+      "Bash(git -C \"C:/Users/Ryan/Documents/open-conflict-v0.10/open-conflict\" status --short)",
+      "Bash(where npx)"
     ]
   }
 }

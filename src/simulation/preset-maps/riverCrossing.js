@@ -608,6 +608,35 @@ export function generateRiverCrossingMap() {
     ]},
   ];
 
+  // =========================================================================
+  // PASS: Valley normalization — enforce sheltered valley for hidden movement
+  // Col 15 (P): ridge/overlook clamped to 500-700m
+  // Cols 16-17 (Q, R): valley floor clamped to 350-450m
+  // Any mountain/peak terrain at these elevations becomes forested_hills/highland
+  // =========================================================================
+  for (let r = 0; r < rows; r++) {
+    for (const col of [15, 16, 17]) {
+      const cell = cells[`${col},${r}`];
+      if (!cell) continue;
+
+      if (col === 15) {
+        // Ridge column — clamp to 500-700m
+        cell.elevation = Math.max(500, Math.min(700, cell.elevation));
+        if (["mountain", "peak", "ice", "boreal_mountains"].includes(cell.terrain)) {
+          cell.terrain = "highland";
+          cell.features = cell.features.filter(f => f !== "slope_extreme" && f !== "slope_steep");
+        }
+      } else {
+        // Valley columns (Q, R) — clamp to 350-450m
+        cell.elevation = Math.max(350, Math.min(450, cell.elevation));
+        if (["mountain", "peak", "ice", "boreal_mountains"].includes(cell.terrain)) {
+          cell.terrain = "forested_hills";
+          cell.features = cell.features.filter(f => f !== "slope_extreme" && f !== "slope_steep");
+        }
+      }
+    }
+  }
+
   return {
     cols,
     rows,

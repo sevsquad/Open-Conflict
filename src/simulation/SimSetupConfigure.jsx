@@ -33,9 +33,15 @@ function createInitialState(terrainData, selectedMap) {
 
     // Actors
     actors: [
-      { id: "actor_1", name: "Side A", controller: "player", objectives: [""], constraints: [""] },
-      { id: "actor_2", name: "Side B", controller: "player", objectives: [""], constraints: [""] },
+      { id: "actor_1", name: "Side A", controller: "player", objectives: [""], constraints: [""], cvpHexes: [] },
+      { id: "actor_2", name: "Side B", controller: "player", objectives: [""], constraints: [""], cvpHexes: [] },
     ],
+
+    // Victory Conditions
+    victoryConditions: {
+      vpGoal: 50,
+      hexVP: [],  // [{ hex: "col,row", name: "...", vp: 10 }]
+    },
 
     // Units
     units: [],
@@ -87,6 +93,7 @@ function setupReducer(state, action) {
           controller: "player",
           objectives: [""],
           constraints: [""],
+          cvpHexes: [],
         }],
       };
     }
@@ -131,6 +138,15 @@ function setupReducer(state, action) {
         actors: state.actors.map((a, i) => {
           if (i !== action.idx) return a;
           return { ...a, [action.field]: a[action.field].filter((_, li) => li !== action.listIdx) };
+        }),
+      };
+
+    case "UPDATE_ACTOR_AI_CONFIG":
+      return {
+        ...state,
+        actors: state.actors.map((a, i) => {
+          if (i !== action.idx) return a;
+          return { ...a, aiConfig: { ...(a.aiConfig || { provider: "", model: "", personality: "" }), [action.field]: action.value } };
         }),
       };
 
@@ -267,9 +283,10 @@ function setupReducer(state, action) {
         specialRules: p.specialRules,
         turnDuration: p.turnDuration,
         startDate: p.startDate,
-        actors: p.actors,
+        actors: (p.actors || state.actors).map(a => ({ ...a, cvpHexes: a.cvpHexes || [] })),
         units: normalizedUnits,
         environment: p.environment || { ...DEFAULT_ENVIRONMENT },
+        victoryConditions: p.victoryConditions || state.victoryConditions,
         selectedUnitId: null,
         interactionMode: "navigate",
         placementPayload: null,
@@ -296,6 +313,93 @@ function setupReducer(state, action) {
       return {
         ...state,
         selectedCell: action.cell, // { c, r }
+      };
+
+    // ── Victory Conditions ──────────────────────────────────────
+    case "SET_VP_FIELD":
+      return {
+        ...state,
+        victoryConditions: { ...state.victoryConditions, [action.field]: action.value },
+      };
+
+    case "ADD_VP_HEX":
+      return {
+        ...state,
+        victoryConditions: {
+          ...state.victoryConditions,
+          hexVP: [...state.victoryConditions.hexVP, { hex: action.hex, name: "", vp: 10 }],
+        },
+      };
+
+    case "UPDATE_VP_HEX":
+      return {
+        ...state,
+        victoryConditions: {
+          ...state.victoryConditions,
+          hexVP: state.victoryConditions.hexVP.map((v, i) =>
+            i === action.idx ? { ...v, [action.field]: action.value } : v
+          ),
+        },
+      };
+
+    case "REMOVE_VP_HEX":
+      return {
+        ...state,
+        victoryConditions: {
+          ...state.victoryConditions,
+          hexVP: state.victoryConditions.hexVP.filter((_, i) => i !== action.idx),
+        },
+      };
+
+    case "ENTER_VP_PLACEMENT":
+      return {
+        ...state,
+        interactionMode: "place_vp",
+        selectedUnitId: null,
+        placementPayload: null,
+      };
+
+    case "EXIT_VP_PLACEMENT":
+      return {
+        ...state,
+        interactionMode: "navigate",
+      };
+
+    // ── Critical VP Hexes (per-actor must-hold hexes) ────────
+    case "ADD_ACTOR_CVP_HEX":
+      return {
+        ...state,
+        actors: state.actors.map((a, i) =>
+          i === action.idx
+            ? { ...a, cvpHexes: [...(a.cvpHexes || []), action.hex] }
+            : a
+        ),
+      };
+
+    case "REMOVE_ACTOR_CVP_HEX":
+      return {
+        ...state,
+        actors: state.actors.map((a, i) =>
+          i === action.idx
+            ? { ...a, cvpHexes: (a.cvpHexes || []).filter((_, j) => j !== action.hexIdx) }
+            : a
+        ),
+      };
+
+    // Enter CVP placement mode — stores which actor index we're placing for
+    case "ENTER_CVP_PLACEMENT":
+      return {
+        ...state,
+        interactionMode: "place_cvp",
+        placementPayload: { actorIdx: action.idx },
+        selectedUnitId: null,
+      };
+
+    case "EXIT_CVP_PLACEMENT":
+      return {
+        ...state,
+        interactionMode: "navigate",
+        placementPayload: null,
       };
 
     default:
@@ -379,6 +483,10 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
           }
         } else if (state.interactionMode === "place_unit") {
           dispatch({ type: "EXIT_PLACEMENT_MODE" });
+        } else if (state.interactionMode === "place_vp") {
+          dispatch({ type: "EXIT_VP_PLACEMENT" });
+        } else if (state.interactionMode === "place_cvp") {
+          dispatch({ type: "EXIT_CVP_PLACEMENT" });
         } else if (state.selectedUnitId) {
           dispatch({ type: "SELECT_UNIT", unitId: state.selectedUnitId }); // deselect
         }
@@ -393,6 +501,22 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
     if (state.interactionMode === "edit_terrain") {
       // Edit mode: select this cell for editing
       dispatch({ type: "SELECT_CELL_FOR_EDIT", cell: { c: cell.c, r: cell.r } });
+    } else if (state.interactionMode === "place_vp") {
+      // VP placement: add a VP hex at this location (skip if already exists)
+      const hexKey = `${cell.c},${cell.r}`;
+      const exists = state.victoryConditions.hexVP.some(v => v.hex === hexKey);
+      if (!exists) {
+        dispatch({ type: "ADD_VP_HEX", hex: hexKey });
+      }
+    } else if (state.interactionMode === "place_cvp" && state.placementPayload) {
+      // CVP placement: add a CVP hex for this actor (skip duplicates)
+      const hexKey = `${cell.c},${cell.r}`;
+      const actorIdx = state.placementPayload.actorIdx;
+      const actor = state.actors[actorIdx];
+      const exists = (actor?.cvpHexes || []).includes(hexKey);
+      if (!exists) {
+        dispatch({ type: "ADD_ACTOR_CVP_HEX", idx: actorIdx, hex: hexKey });
+      }
     } else if (state.interactionMode === "place_unit" && state.placementPayload) {
       // Place a new unit at this cell
       const pos = cellToPositionString(cell.c, cell.r);
@@ -485,6 +609,7 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
         units: namedUnits,
         environment: state.environment,
         eraSelections: state.eraSelections,
+        ...(state.victoryConditions.hexVP.length > 0 ? { victoryConditions: state.victoryConditions } : {}),
       };
 
       const gameState = createGame({
@@ -602,6 +727,19 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
             isSetupMode={true}
             strategicGrid={strategicGrid}
             strategicMode={state.strategicEnabled && !!strategicGrid}
+            vpOverlayData={(() => {
+              const hasVP = state.victoryConditions.hexVP.length > 0;
+              const hasCVP = state.actors.some(a => (a.cvpHexes || []).length > 0);
+              if (!hasVP && !hasCVP) return null;
+              return {
+                hexVP: state.victoryConditions.hexVP,
+                vpControl: null,
+                // Per-actor CVP hexes: [{ hex, actorId }]
+                cvpHexes: state.actors.flatMap(a =>
+                  (a.cvpHexes || []).map(hex => ({ hex, actorId: a.id }))
+                ),
+              };
+            })()}
           />
         </div>
 

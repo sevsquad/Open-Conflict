@@ -6,6 +6,7 @@
 import { ADJUDICATION_SCHEMA_EXAMPLE, SCALE_TIERS } from "./schemas.js";
 import { colLbl, cellCoord, labelToColRow, formatCellDetail, formatCellLight, isFeatureRelevant, getTerrainLabelForTier, buildElevationBands, buildElevationNarrative, buildFeatureRegions, buildNamedFeatures, buildUrbanNarrative } from "./terrainCodec.js";
 import { getNeighbors, hexRange, hexLine } from "../mapRenderer/HexMath.js";
+import { buildEffectiveTerrain } from "./terrainMerge.js";
 
 // ── Scale Declaration Blocks ────────────────────────────────
 // Tells the LLM what scale it's operating at and what to focus on.
@@ -178,6 +179,26 @@ Examples:
 - "Tanks engage target behind a ridgeline with BLOCKED LOS" → IMPOSSIBLE (no line of sight for direct fire)
 - "Artillery fire mission on target with BLOCKED LOS but observer available" → FEASIBLE (indirect fire via observer)`);
 
+  // ── Range Band Enforcement (always) ──
+  sections.push(`\n## RANGE BAND ENFORCEMENT
+
+Each unit's order bundle includes a pre-computed RANGE BAND to its target: POINT_BLANK, EFFECTIVE, MAX, or ⚠ OUT OF RANGE.
+
+Use ONLY the pre-computed range band — do NOT substitute your own knowledge of real-world weapon ranges. The engine has already calculated the correct range based on unit type, weapon systems, and hex distance.
+
+Rules:
+1. **⚠ OUT OF RANGE** = HARD CONSTRAINT. The unit CANNOT deal or receive direct fire damage at this range. No exceptions. If two units are both marked OUT OF RANGE to each other, neither can damage the other through direct fire.
+2. **MAX range**: Severely degraded fire. Maximum 0-5% strength loss on the target per turn. Hits are rare and ineffective at this distance.
+3. **EFFECTIVE range**: Normal combat. Apply standard resolution guidance.
+4. **POINT_BLANK range**: Enhanced lethality. Close combat is brutal and decisive.
+
+Exceptions:
+- Artillery FIRE_MISSION uses indirect fire — range bands don't apply (range is governed by artillery range tables).
+- Air CAS missions engage from altitude — range bands don't apply.
+- These rules apply to ALL direct-fire engagements: tank vs tank, infantry vs infantry, AT vs armor, etc.
+
+⚠ The simulation engine will validate your output. Any strength loss applied between units marked OUT OF RANGE will be capped to 5% automatically. Get the range right the first time.`);
+
   // ── Order Compliance (always) ──
   sections.push(`\n## ORDER COMPLIANCE
 
@@ -261,7 +282,13 @@ Movement paths and final positions are PRE-COMPUTED by the order computer. You M
    - Fortune 31-70: unit reaches ~50% of path
    - Fortune 1-30: unit barely moves, reaches ~25% of path
 
-8. IMPOSSIBLE movements NEVER succeed regardless of fortune. The unit holds position.`);
+8. IMPOSSIBLE movements NEVER succeed regardless of fortune. The unit holds position.
+
+9. FEASIBLE movement means the unit REACHES its destination. Period. Do not narrate a unit "making progress toward" or "advancing in the direction of" a FEASIBLE destination — the pre-computed path confirms it CAN reach the hex within its movement budget. The position state_update MUST be the destination hex.
+   - Only exceptions: enemy contact encountered on the movement path, or catastrophic fortune (1-8) representing mechanical breakdown, navigation error, or traffic jam.
+   - If neither exception applies and the movement is FEASIBLE, the unit arrives at the ordered destination.
+
+10. When writing position state_updates for FEASIBLE movements, use the destination hex from the order, not an intermediate hex. The engine pre-computed the path and confirmed it fits within the movement budget. Do not second-guess the path computation.`);
 
   // ── Resolution Guidance (always, scale-specific) ──
   sections.push(`\n## RESOLUTION GUIDANCE\n\n${RESOLUTION_GUIDANCE[scaleKey] || RESOLUTION_GUIDANCE.grand_tactical}`);
@@ -433,6 +460,35 @@ You MUST adjudicate EVERY unit listed in the game state. No unit may be skipped 
 - Units without movement orders that are not engaged in combat still need a state_update for any attribute that changed (e.g., entrenchment increasing from DIG_IN).
 - Count the units in your response against the unit roster. If your response covers fewer units than the roster, you have forgotten units — go back and add them.`);
 
+  // ── Terrain Modifications ──
+  sections.push(`\n## TERRAIN MODIFICATIONS
+
+You may propose terrain modifications via state_updates using entity: "terrain".
+The attribute is the cell coordinate (Excel-style, e.g., "H4").
+The new_value is an object specifying the modification type and parameters.
+
+Valid terrain modification types:
+- bridge_built: { type: "bridge_built" } — Engineer builds a bridge at a river hex. Requires ENGINEER:BRIDGE order and uninterrupted work.
+- bridge_destroyed: { type: "bridge_destroyed" } — Bridge demolished. Requires ENGINEER:DEMOLISH order or sustained heavy artillery on a bridge hex.
+- obstacle: { type: "obstacle", subtype: "minefield|wire|abatis|tank_ditch" } — Engineer places obstacle. Requires ENGINEER:OBSTACLE order.
+- obstacle_cleared: { type: "obstacle_cleared" } — Obstacle breached/cleared. Requires ENGINEER:BREACH order.
+- fortification: { type: "fortification", level: 0-100 } — Hex fortification level from ENGINEER:FORTIFY. Set the cumulative level (not increment). Faster than DIG_IN which accrues automatically.
+- smoke: { type: "smoke", turnsRemaining: 1-2 } — Smoke screen from FIRE_MISSION:SMOKE. Blocks LOS through the hex. Decays automatically each turn.
+- terrain_damaged: { type: "terrain_damaged", level: 0-100 } — Terrain degradation from sustained combat or heavy bombardment. Reduces defensive value. Set cumulative level.
+
+When to propose terrain modifications:
+- ALWAYS propose bridge_built when an ENGINEER:BRIDGE order succeeds at a river hex.
+- ALWAYS propose bridge_destroyed when an ENGINEER:DEMOLISH targets a bridge, or sustained artillery hits a bridge hex.
+- ALWAYS propose smoke when a FIRE_MISSION:SMOKE order is executed.
+- Propose obstacle when ENGINEER:OBSTACLE succeeds.
+- Propose terrain_damaged when a hex receives concentrated bombardment or prolonged urban combat.
+- DIG_IN automatically accrues hex fortification — you do NOT need to propose fortification for DIG_IN. Only propose it for ENGINEER:FORTIFY.
+
+Example terrain state_updates:
+{ entity: "terrain", attribute: "H4", old_value: null, new_value: { type: "bridge_destroyed" }, justification: "Artillery concentration destroyed the Stonebrook Bridge" }
+{ entity: "terrain", attribute: "F6", old_value: null, new_value: { type: "fortification", level: 40 }, justification: "2nd Engineer Co spent the turn fortifying the position" }
+{ entity: "terrain", attribute: "G5", old_value: null, new_value: { type: "smoke", turnsRemaining: 2 }, justification: "Smoke mission screens the river crossing" }`);
+
   // ── Naval & Amphibious Doctrine (tier 2+ — tactical and above) ──
   if (scaleTier >= 2) {
     sections.push(`\n## NAVAL & AMPHIBIOUS DOCTRINE
@@ -540,7 +596,24 @@ You receive the computed result. Narrate it — do NOT recompute or override it.
 - **Rain**: Reduced CAS accuracy (unguided weapons), no effect on precision weapons
 - **Storm**: Air operations severely degraded — all missions at reduced effectiveness, increased accident risk
 - **Fog**: LOW altitude CAS impossible (no target identification), MEDIUM/HIGH operations with precision weapons only
-- **Snow**: Similar to rain but with additional icing risk at altitude`);
+- **Snow**: Similar to rain but with additional icing risk at altitude
+
+### ANTI-GROUNDING RULE — MANDATORY
+Air units with FEASIBLE orders MUST execute those orders. You may NOT ground an aircraft that has a feasible mission.
+
+- If a transport helicopter has cargo AND a FEASIBLE movement order → it MUST fly to its destination. Narrate the flight.
+- If an attack helicopter has a FEASIBLE CAS or attack order → it MUST execute. Narrate the sortie.
+- If a fixed-wing aircraft has a FEASIBLE air mission → it MUST fly. Narrate the mission.
+
+The ONLY valid reasons to ground an aircraft:
+1. Movement/mission feasibility is IMPOSSIBLE (not just risky — actually impossible)
+2. Readiness is below 25% (effectively non-operational)
+3. A scenario-specific rule prohibits flight
+4. A specific friction event (fortune roll 1-5) causes mechanical failure
+
+If you find yourself writing "remains grounded due to..." — STOP and verify that one of the four reasons above actually exists in the game state. "Caution," "consolidating," "maintaining readiness," and "awaiting orders" are NOT valid grounding reasons when the unit has feasible orders.
+
+⚠ Systematic grounding of aviation assets is a known failure mode. The simulation engine tracks grounding frequency. Aircraft with feasible orders that are grounded without valid cause will be flagged.`);
   }
 
   // WW1 air doctrine — observation dominance, not ground attack
@@ -935,10 +1008,13 @@ function buildTier3ActionContext(terrainData, actionTexts, tier2Cells, scaleTier
  *         neighbors when FOW is off.
  * Tier 3 (when actions present): Pre-decoded cells around action-referenced locations.
  */
-export function buildTerrainSummary(terrainData, { units = [], actionTexts = {}, scaleTier = null, detectionContext = null } = {}) {
+export function buildTerrainSummary(terrainData, { units = [], actionTexts = {}, scaleTier = null, detectionContext = null, terrainMods = null } = {}) {
   if (!terrainData) return "No terrain data loaded.";
 
-  const D = terrainData;
+  // Merge terrain modifications so per-cell detail reflects bridges, smoke, etc.
+  const D = terrainMods && Object.keys(terrainMods).length > 0
+    ? buildEffectiveTerrain(terrainData, terrainMods)
+    : terrainData;
   const lines = [];
 
   // ── Tier 1: Aggregate context ──
@@ -1026,6 +1102,26 @@ export function buildTerrainSummary(terrainData, { units = [], actionTexts = {},
     }
   }
 
+  // Active terrain modifications summary
+  if (terrainMods && Object.keys(terrainMods).length > 0) {
+    const modLines = ["", "ACTIVE TERRAIN MODIFICATIONS:"];
+    for (const [cellKey, mods] of Object.entries(terrainMods)) {
+      const parts = [];
+      if (mods.bridge_built) parts.push("bridge constructed");
+      if (mods.bridge_destroyed) parts.push("bridge destroyed");
+      if (mods.obstacle) parts.push(`obstacle (${mods.obstacle.subtype || "general"})`);
+      if (mods.obstacle_cleared) parts.push("obstacle cleared");
+      if (mods.fortification) parts.push(`fortified ${mods.fortification.level}%`);
+      if (mods.smoke) parts.push(`smoke (${mods.smoke.turnsRemaining} turn${mods.smoke.turnsRemaining > 1 ? "s" : ""} remaining)`);
+      if (mods.terrain_damaged) parts.push(`terrain damaged ${mods.terrain_damaged.level}%`);
+      if (parts.length > 0) {
+        const label = positionToLabel(cellKey);
+        modLines.push(`  ${label}: ${parts.join(", ")}`);
+      }
+    }
+    if (modLines.length > 2) lines.push(...modLines);
+  }
+
   return lines.join("\n");
 }
 
@@ -1080,6 +1176,7 @@ export function buildAdjudicationPrompt({ scenario, gameState, terrainData, acti
     actionTexts: playerActions || {},
     scaleTier,
     detectionContext,
+    terrainMods: gameState.terrainMods,
   }));
 
   // Current game state
@@ -1089,6 +1186,17 @@ export function buildAdjudicationPrompt({ scenario, gameState, terrainData, acti
   sections.push(`Phase: ${gameState.game.phase}`);
   if (gameState.game.currentDate) {
     sections.push(`Simulation Date: ${gameState.game.currentDate}`);
+  }
+
+  // VP status (concise — adjudicator just needs awareness, not full clock)
+  const vc = gameState.scenario?.victoryConditions;
+  const vpSt = gameState.game?.vpStatus?.vp;
+  if (vc?.hexVP?.length > 0 && vpSt) {
+    const maxT = gameState.game.config?.maxTurns || 20;
+    const vpParts = (gameState.scenario.actors || []).map(a =>
+      `${a.name}: ${vpSt[a.id] || 0} VP`
+    );
+    sections.push(`VP STATUS: ${vpParts.join(" | ")} | Turn ${gameState.game.turn} of ${maxT}`);
   }
 
   // Environment conditions
@@ -1213,6 +1321,16 @@ export function buildAdjudicationPrompt({ scenario, gameState, terrainData, acti
     }
   }
 
+  // Forgotten-unit reminder from previous turn(s).
+  // If the LLM failed to cover all units last turn, warn it explicitly.
+  const fu = gameState.game?.forgottenUnits;
+  if (fu?.names?.length > 0) {
+    sections.push("");
+    sections.push("⚠ UNIT COVERAGE WARNING:");
+    sections.push(`Last turn you failed to include state_updates for: ${fu.names.join(", ")}.`);
+    sections.push("You MUST include a state_update for EVERY unit this turn — no exceptions.");
+  }
+
   if (orderBundleSection) {
     // Pre-computed order bundles include fortune, friction, movement paths, LOS,
     // force ratios — everything the LLM needs in one dense section.
@@ -1265,7 +1383,7 @@ export function buildAdjudicationPrompt({ scenario, gameState, terrainData, acti
   // Detection context (FOW system)
   if (detectionContext) {
     sections.push("");
-    sections.push(buildDetectionContextSection(detectionContext, scenario.actors, gameState.units));
+    sections.push(buildDetectionContextSection(detectionContext, scenario.actors, gameState.units, gameState));
   }
 
   // Schema example
@@ -1281,7 +1399,7 @@ export function buildAdjudicationPrompt({ scenario, gameState, terrainData, acti
 // Builds the detection/FOW prompt section that tells the LLM what
 // each actor can and cannot see, plus ambiguous contacts to resolve.
 
-function buildDetectionContextSection(detectionContext, actors, allUnits) {
+function buildDetectionContextSection(detectionContext, actors, allUnits, gameState) {
   const lines = [];
 
   lines.push("═══ DETECTION & FOG OF WAR CONTEXT ═══");
@@ -1435,6 +1553,28 @@ function buildDetectionContextSection(detectionContext, actors, allUnits) {
   lines.push("- TEST: For every casualty or material effect in an actor's perspective, you should be able to point to the");
   lines.push("  specific enemy unit and action in outcome_determination that caused it. If you cannot, remove the event.");
   lines.push("");
+  // ── Adjudicator feedback from previous turn ──
+  const adjScore = gameState?.game?.adjudicatorScore?.lastTurn;
+  if (adjScore) {
+    lines.push("═══ PREVIOUS TURN ACCURACY ═══");
+    const totalCorr = adjScore.positionCorrections + adjScore.rangeViolations;
+    lines.push(`Accuracy: ${adjScore.accuracy}% (${totalCorr} corrections / ${adjScore.totalUpdates} state updates)`);
+    if (adjScore.positionCorrections > 0) {
+      lines.push(`- ${adjScore.positionCorrections} position correction(s): units moved beyond budget — engine clamped to valid hex`);
+    }
+    if (adjScore.rangeViolations > 0) {
+      lines.push(`- ${adjScore.rangeViolations} range violation(s): damage applied beyond weapon range — engine capped to 5%`);
+    }
+    if (adjScore.hedgeWarnings > 0) {
+      lines.push(`- ${adjScore.hedgeWarnings} hedge language warning(s): vague positions or indeterminate outcomes`);
+    }
+    if (adjScore.forgottenUnits > 0) {
+      lines.push(`- ${adjScore.forgottenUnits} forgotten unit(s): units missing from state_updates`);
+    }
+    lines.push("The simulation engine validated and corrected your output. Improve accuracy this turn.");
+    lines.push("");
+  }
+
   lines.push("HARD PROHIBITIONS for actor_perspectives:");
   lines.push("- Do NOT reveal UNDETECTED enemy positions, orders, or intentions");
   lines.push("- Do NOT reveal details about CONTACT-tier enemies beyond \"activity detected\"");
@@ -1620,9 +1760,17 @@ function formatSingleBundle(b) {
       } // end else (non-DISEMBARK movement)
     }
 
-    // Cargo manifest for transport units
+    // Cargo manifest for transport units — with AIRLIFT context if applicable
     if (b.cargoManifest?.length > 0) {
       lines.push(`  CARGO: [${b.cargoManifest.map(c => c.name).join(", ")}] (${b.cargoManifest.length}/${b.transportCapacity})`);
+      // When transport has AIRLIFT action + cargo, explain the full air assault picture
+      if (b.actionOrder?.type === "AIRLIFT" && b.movementOrder) {
+        const dest = b.movementOrder.targetHex ? positionToLabel(b.movementOrder.targetHex) : "destination";
+        const cargoNames = b.cargoManifest.map(c => `${c.name} (${c.type})`).join(", ");
+        lines.push(`  AIR ASSAULT DELIVERY: Flying ${b.cargoManifest.length} unit(s) to LZ at ${dest}`);
+        lines.push(`    Delivering: ${cargoNames}`);
+        lines.push(`    Embarked troops should DISEMBARK on arrival and execute their action orders.`);
+      }
     }
     if (b.embarkedIn) {
       lines.push(`  EMBARKED IN: ${b.embarkedIn}`);

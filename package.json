@@ -1,30 +1,37 @@
 {
-  "name": "open-conflict",
-  "private": true,
-  "version": "1.0.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
-    "server": "node --import ./server/nodeLoader.js server/index.js",
-    "server:dev": "node --watch --import ./server/nodeLoader.js server/index.js",
-    "start": "npm run build && NODE_ENV=production node --import ./server/nodeLoader.js server/index.js"
-  },
-  "dependencies": {
-    "better-sqlite3": "^12.6.2",
-    "cors": "^2.8.6",
-    "express": "^5.2.1",
-    "express-rate-limit": "^8.3.0",
-    "geotiff": "^2.1.3",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "undici": "^7.22.0"
-  },
-  "devDependencies": {
-    "@types/react": "^18.3.3",
-    "@types/react-dom": "^18.3.0",
-    "@vitejs/plugin-react": "^4.3.1",
-    "vite": "^5.4.0"
-  }
+    "name": "open-conflict",
+    "private": true,
+    "version": "1.0.0",
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "build": "vite build",
+        "preview": "vite preview",
+        "server": "node --import ./server/nodeLoader.js server/index.js",
+        "server:dev": "node --watch --import ./server/nodeLoader.js server/index.js",
+        "start": "npm run build && NODE_ENV=production node --import ./server/nodeLoader.js server/index.js",
+        "smoke:one-turn": "node --import ./server/nodeLoader.js ./scripts/oneTurnSmoke.mjs",
+        "smoke:ai-opponent": "node --import ./server/nodeLoader.js ./scripts/serverAiSmoke.mjs",
+        "smoke:one-turn:live-parse": "node --import ./server/nodeLoader.js ./scripts/oneTurnSmoke.mjs --live-parse",
+        "smoke:one-turn:live": "node --import ./server/nodeLoader.js ./scripts/oneTurnSmoke.mjs --live-parse --live-llm",
+        "visual:snapshot": "node scripts/visual-snapshot.mjs",
+        "visual:snapshot:show": "node scripts/visual-snapshot.mjs --show"
+    },
+    "dependencies": {
+        "better-sqlite3": "^12.6.2",
+        "cors": "^2.8.6",
+        "express": "^5.2.1",
+        "express-rate-limit": "^8.3.0",
+        "geotiff": "^2.1.3",
+        "react": "^18.3.1",
+        "react-dom": "^18.3.1",
+        "undici": "^7.22.0"
+    },
+    "devDependencies": {
+        "@types/react": "^18.3.3",
+        "@types/react-dom": "^18.3.0",
+        "@vitejs/plugin-react": "^4.3.1",
+        "puppeteer-core": "^24.42.0",
+        "vite": "^5.4.0"
+    }
 }

@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { colors, typography, radius, shadows, animation, space } from "./theme.js";
 import { Button, Input, Card, Badge, SectionHeader } from "./components/ui.jsx";
 import PBEMGame from "./simulation/PBEMGame.jsx";
 import ModeratorPanel from "./simulation/ModeratorPanel.jsx";
+import { listAiProfiles, listThinkBudgets } from "./simulation/aiProfiles.js";
 
 // ═══════════════════════════════════════════════════════════════
 // DASHBOARD — PBEM game lobby and management screen.
@@ -57,6 +58,8 @@ export default function Dashboard({ onBack }) {
   const [showCreate, setShowCreate] = useState(false); // create game form toggle
   const [activeGame, setActiveGame] = useState(null);  // game entry to launch PBEMGame
   const [moderating, setModerating] = useState(null);  // { gameId, moderatorToken } to launch ModeratorPanel
+  const mountedRef = useRef(true);
+  useEffect(() => { return () => { mountedRef.current = false; }; }, []);
 
   // Load joined games from localStorage and fetch their status
   const refreshGames = useCallback(async () => {
@@ -75,6 +78,7 @@ export default function Dashboard({ onBack }) {
       }
     }
 
+    if (!mountedRef.current) return;
     setGames(updated);
     setRefreshing(false);
   }, []);
@@ -251,6 +255,8 @@ export default function Dashboard({ onBack }) {
 // ── Create Game Form ─────────────────────────────────────────
 
 function CreateGame({ onBack, onCreated }) {
+  const aiProfiles = listAiProfiles();
+  const thinkBudgets = listThinkBudgets();
   const [gameName, setGameName] = useState("");
   const [anthropicKey, setAnthropicKey] = useState("");
   const [openaiKey, setOpenaiKey] = useState("");
@@ -266,8 +272,8 @@ function CreateGame({ onBack, onCreated }) {
 
   // Actor configuration — simple 2-player default
   const [actors, setActors] = useState([
-    { id: "actor_1", name: "Blue Force", email: "", isAi: false },
-    { id: "actor_2", name: "Red Force", email: "", isAi: false },
+    { id: "actor_1", name: "Blue Force", email: "", isAi: false, aiConfig: { engine: "algorithmic", profile: "balanced", thinkBudget: "standard" } },
+    { id: "actor_2", name: "Red Force", email: "", isAi: false, aiConfig: { engine: "algorithmic", profile: "balanced", thinkBudget: "standard" } },
   ]);
 
   // Load available terrain saves on mount
@@ -287,6 +293,23 @@ function CreateGame({ onBack, onCreated }) {
 
   const updateActor = (index, field, value) => {
     setActors(prev => prev.map((a, i) => i === index ? { ...a, [field]: value } : a));
+  };
+
+  const updateActorAiConfig = (index, field, value) => {
+    setActors(prev => prev.map((actor, i) => (
+      i === index
+        ? {
+            ...actor,
+            aiConfig: {
+              engine: actor.aiConfig?.engine || "algorithmic",
+              profile: actor.aiConfig?.profile || "balanced",
+              thinkBudget: actor.aiConfig?.thinkBudget || "standard",
+              ...actor.aiConfig,
+              [field]: value,
+            },
+          }
+        : actor
+    )));
   };
 
   const handleCreate = async () => {
@@ -315,6 +338,7 @@ function CreateGame({ onBack, onCreated }) {
           name: a.name,
           email: a.email || undefined,
           isAi: a.isAi,
+          ...(a.isAi ? { aiConfig: a.aiConfig || { engine: "algorithmic", profile: "balanced", thinkBudget: "standard" } } : {}),
           affiliation: a.id === "actor_1" ? "friendly" : "hostile",
         })),
       };
@@ -556,10 +580,63 @@ function CreateGame({ onBack, onCreated }) {
                 <input
                   type="checkbox"
                   checked={actor.isAi}
-                  onChange={e => updateActor(i, "isAi", e.target.checked)}
+                  onChange={e => {
+                    updateActor(i, "isAi", e.target.checked);
+                    if (e.target.checked && !actor.aiConfig) {
+                      updateActorAiConfig(i, "engine", "algorithmic");
+                    }
+                  }}
                 />
                 AI-controlled
               </label>
+              {actor.isAi && (
+                <div style={{
+                  marginTop: space[2],
+                  padding: space[2],
+                  background: `${colors.accent.purple}10`,
+                  border: `1px solid ${colors.accent.purple}25`,
+                  borderRadius: radius.sm,
+                }}>
+                  <div style={{ display: "flex", gap: space[2], marginBottom: space[2], flexWrap: "wrap" }}>
+                    <div style={{ flex: "1 1 180px" }}>
+                      <label style={{ fontSize: typography.body.xs, color: colors.text.muted, display: "block", marginBottom: 2 }}>AI Engine</label>
+                      <select
+                        value={actor.aiConfig?.engine || "algorithmic"}
+                        onChange={e => updateActorAiConfig(i, "engine", e.target.value)}
+                        style={{ width: "100%", padding: "8px 10px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}
+                      >
+                        <option value="algorithmic">Algorithmic Opponent</option>
+                        <option value="llm">LLM Commander</option>
+                      </select>
+                    </div>
+                    <div style={{ flex: "1 1 180px" }}>
+                      <label style={{ fontSize: typography.body.xs, color: colors.text.muted, display: "block", marginBottom: 2 }}>Doctrine Profile</label>
+                      <select
+                        value={actor.aiConfig?.profile || "balanced"}
+                        onChange={e => updateActorAiConfig(i, "profile", e.target.value)}
+                        style={{ width: "100%", padding: "8px 10px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}
+                      >
+                        {aiProfiles.map(profile => <option key={profile.id} value={profile.id}>{profile.label}</option>)}
+                      </select>
+                    </div>
+                    <div style={{ flex: "1 1 180px" }}>
+                      <label style={{ fontSize: typography.body.xs, color: colors.text.muted, display: "block", marginBottom: 2 }}>Thinking Budget</label>
+                      <select
+                        value={actor.aiConfig?.thinkBudget || "standard"}
+                        onChange={e => updateActorAiConfig(i, "thinkBudget", e.target.value)}
+                        style={{ width: "100%", padding: "8px 10px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}
+                      >
+                        {thinkBudgets.map(budget => <option key={budget.id} value={budget.id}>{budget.label}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: typography.body.xs, color: colors.text.muted, lineHeight: 1.45 }}>
+                    {actor.aiConfig?.engine === "algorithmic"
+                      ? "Zero-token order generation. Uses doctrine profiles, route search, and server-side coordination logic."
+                      : "Uses the existing prompt-driven commander path for this actor's orders."}
+                  </div>
+                </div>
+              )}
             </div>
           ))}
           <Button
@@ -571,6 +648,7 @@ function CreateGame({ onBack, onCreated }) {
                 name: `Force ${nextNum}`,
                 email: "",
                 isAi: false,
+                aiConfig: { engine: "algorithmic", profile: "balanced", thinkBudget: "standard" },
               }];
             })}
           >

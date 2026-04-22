@@ -169,6 +169,13 @@ export const ADJUDICATION_SCHEMA_EXAMPLE = {
         old_value: "current value",
         new_value: "proposed new value (clamp numerics to valid ranges; do not propose then correct — propose the correct value once)",
         justification: "Why this change follows from the adjudication"
+      },
+      {
+        entity: "terrain",
+        attribute: "H4",
+        old_value: null,
+        new_value: { type: "smoke", turnsRemaining: 2 },
+        justification: "Smoke mission obscures the river crossing"
       }
     ],
     // Per-actor perspectives — each actor gets a narrative describing ONLY what they observe.
@@ -388,6 +395,13 @@ export function validateStateUpdates(stateUpdates, gameState) {
       if (unit.status === "destroyed" || unit.status === "eliminated") {
         warnings.push(`Update references ${entity} which has status '${unit.status}'`);
       }
+    }
+    // Terrain modifications — skip unit-specific checks
+    if (entity === "terrain") {
+      if (!update.new_value?.type) {
+        warnings.push(`Terrain update for ${attribute} missing type in new_value`);
+      }
+      continue;
     }
     // Non-unit entities (diplomacy, etc.) get a warning only in Phase 1
     // since we don't have deep state category tracking yet
@@ -990,6 +1004,8 @@ export function createGameState({ scenario, terrainRef, terrainSummary, llmConfi
       specialRules: scenario.specialRules || "",
       escalationLevel: scenario.escalationLevel || (scaleTier.tier >= 4 ? "Level 1: Peacetime Competition" : ""),
       eraSelections: scenario.eraSelections || {},
+      // VP-based victory conditions (optional — scenario may not define any)
+      ...(scenario.victoryConditions ? { victoryConditions: scenario.victoryConditions } : {}),
     },
     environment: scenario.environment || { ...DEFAULT_ENVIRONMENT },
     terrain: {
@@ -1000,6 +1016,14 @@ export function createGameState({ scenario, terrainRef, terrainSummary, llmConfi
     supplyNetwork: scaleTier.tier >= 3 ? initSupplyNetwork(scenario.units || [], scenario.actors || []) : {},
     diplomacy: scaleTier.tier >= 4 ? initDiplomacy(scenario.actors || []) : {},
     reinforcementQueue: [],
+    terrainMods: {},  // sparse overlay of terrain modifications keyed by "col,row"
+    aiState: {
+      unitOrderHistory: {},
+      callLog: [],
+      commanderThoughts: {},
+      operationalState: {},
+      reasoningLog: [],
+    },
     turnLog: [],
     promptLog: []
   };

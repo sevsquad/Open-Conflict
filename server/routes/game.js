@@ -1,8 +1,8 @@
-// ═══════════════════════════════════════════════════════════════
-// GAME ROUTES — Player-facing API endpoints.
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// GAME ROUTES â€” Player-facing API endpoints.
 // All routes require authenticatePlayer middleware (Bearer token).
 // Players can only see data for their own actor within their game.
-// ═══════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 import { Router } from "express";
 import { authenticatePlayer } from "../auth.js";
@@ -12,7 +12,7 @@ import {
   appendGameLog, getGameLog, hashOrders,
   saveDraftOrders, getDraftOrders, deleteDraftOrders,
 } from "../db.js";
-import { checkOrdersReady, processTurn, finalizeTurn, processRebuttal } from "../gameEngine.js";
+import { checkOrdersReady, processTurn, finalizeTurn, processRebuttal, isTurnProcessing } from "../gameEngine.js";
 import { filterAdjudicationForActor } from "../../src/simulation/adjudicationFilter.js";
 import { buildActorBriefing } from "../../src/simulation/briefingExport.js";
 import { notifyAllOrdersIn, notifyChallengeRaised, notifyTurnResults, notifyYourTurn } from "../email.js";
@@ -22,7 +22,7 @@ const router = Router();
 // All game routes require player authentication
 router.use(authenticatePlayer);
 
-// ── Game State (filtered for this actor) ─────────────────────
+// â”€â”€ Game State (filtered for this actor) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 router.get("/state", (req, res) => {
   const db = req.app.locals.db;
@@ -105,8 +105,8 @@ router.get("/state", (req, res) => {
   });
 });
 
-// ── Terrain Data ─────────────────────────────────────────────
-// Terrain is shared — all players see the same map
+// â”€â”€ Terrain Data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Terrain is shared â€” all players see the same map
 
 router.get("/terrain", (req, res) => {
   const db = req.app.locals.db;
@@ -120,9 +120,9 @@ router.get("/terrain", (req, res) => {
   res.json(JSON.parse(game.terrain_json));
 });
 
-// ── Submit Orders ────────────────────────────────────────────
+// â”€â”€ Submit Orders â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-router.post("/orders", (req, res) => {
+router.post("/orders", async (req, res) => {
   const db = req.app.locals.db;
   const game = getGame(db, req.gameId);
   if (!game) return res.status(404).json({ error: "Game not found" });
@@ -132,6 +132,13 @@ router.post("/orders", (req, res) => {
   // Only accept orders during planning phase
   if (gameState.game.phase !== "planning") {
     return res.status(400).json({ error: `Cannot submit orders during ${gameState.game.phase} phase` });
+  }
+
+  if (isTurnProcessing(req.gameId)) {
+    return res.status(409).json({ error: "Turn processing is already in progress" });
+  }
+  if (getTurnResults(db, req.gameId, gameState.game.turn)) {
+    return res.status(409).json({ error: "Turn has already been adjudicated" });
   }
 
   const { unitOrders, actorIntent } = req.body;
@@ -174,8 +181,8 @@ router.post("/orders", (req, res) => {
   // Clear draft since orders are now sealed
   deleteDraftOrders(db, req.gameId, req.actorId);
 
-  // Check if all players have submitted — if so, notify moderator
-  const readiness = checkOrdersReady(db, req.gameId);
+  // Check if all players have submitted â€” if so, notify moderator
+  const readiness = await checkOrdersReady(db, req.gameId);
 
   if (readiness.ready) {
     notifyAllOrdersIn({
@@ -185,10 +192,10 @@ router.post("/orders", (req, res) => {
     }).catch(() => {});
 
     // Player Moderator mode: auto-process turn when all orders are in.
-    // No human moderator needed — server runs adjudication immediately.
+    // No human moderator needed â€” server runs adjudication immediately.
     const config = getGameConfig(db, req.gameId);
     if (config.moderationMode === "player") {
-      // Fire-and-forget — don't block the response
+      // Fire-and-forget â€” don't block the response
       processTurn(db, req.gameId).then(result => {
         if (result.success) {
           const players = getPlayersForGame(db, req.gameId);
@@ -198,6 +205,9 @@ router.post("/orders", (req, res) => {
             }
           }
           appendGameLog(db, { gameId: req.gameId, turn: result.turn, type: "auto_processed", dataJson: JSON.stringify({ mode: "player" }) });
+
+          // Auto-accept for AI players â€” they never challenge
+          autoAcceptForAIPlayers(db, req.gameId, result.turn, players);
         }
       }).catch(() => {});
     }
@@ -212,7 +222,7 @@ router.post("/orders", (req, res) => {
   });
 });
 
-// ── Draft Orders (Google Docs-style auto-save) ─────────────
+// â”€â”€ Draft Orders (Google Docs-style auto-save) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 router.post("/draft-orders", (req, res) => {
   const db = req.app.locals.db;
@@ -239,7 +249,7 @@ router.get("/draft-orders", (req, res) => {
   });
 });
 
-// ── Turn Results (filtered for this actor) ───────────────────
+// â”€â”€ Turn Results (filtered for this actor) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 router.get("/results/:turn", (req, res) => {
   const db = req.app.locals.db;
@@ -260,7 +270,7 @@ router.get("/results/:turn", (req, res) => {
   });
 });
 
-// ── Accept / Challenge ───────────────────────────────────────
+// â”€â”€ Accept / Challenge â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 router.post("/decision", (req, res) => {
   const db = req.app.locals.db;
@@ -340,7 +350,7 @@ router.post("/decision", (req, res) => {
           }).catch(() => {});
         }
       } else {
-        // All accepted — auto-finalize immediately
+        // All accepted â€” auto-finalize immediately
         autoFinalize(db, req.gameId, game);
       }
     }
@@ -353,9 +363,9 @@ router.post("/decision", (req, res) => {
   });
 });
 
-// ── Challenge Details (FOW-aware routing) ──────────────────
+// â”€â”€ Challenge Details (FOW-aware routing) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Returns challenges from other actors, filtered by FOW.
-// Visible challenged units → full text. Hidden → vague notification.
+// Visible challenged units â†’ full text. Hidden â†’ vague notification.
 
 router.get("/challenges", (req, res) => {
   const db = req.app.locals.db;
@@ -391,7 +401,7 @@ router.get("/challenges", (req, res) => {
     const hasVisibleUnits = visibleChallengedUnits.length > 0;
 
     if (hasVisibleUnits) {
-      // Player can see the challenged units → show full challenge text
+      // Player can see the challenged units â†’ show full challenge text
       return {
         actorId: c.actor_id,
         actorName: challengerName,
@@ -400,7 +410,7 @@ router.get("/challenges", (req, res) => {
         visible: true,
       };
     }
-    // Player cannot see the challenged units → vague notification
+    // Player cannot see the challenged units â†’ vague notification
     return {
       actorId: c.actor_id,
       actorName: challengerName,
@@ -414,7 +424,7 @@ router.get("/challenges", (req, res) => {
   res.json({ challenges: filtered });
 });
 
-// ── Briefing (FOW-filtered markdown) ─────────────────────────
+// â”€â”€ Briefing (FOW-filtered markdown) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 router.get("/briefing", (req, res) => {
   const db = req.app.locals.db;
@@ -429,7 +439,7 @@ router.get("/briefing", (req, res) => {
   res.type("text/markdown").send(briefing);
 });
 
-// ── Game Events (own events only) ────────────────────────────
+// â”€â”€ Game Events (own events only) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Named "events" instead of "log" to avoid collision with Vite's
 // /api/game/log middleware (used for hotseat game logging).
 
@@ -454,16 +464,16 @@ router.get("/events", (req, res) => {
   res.json(filtered);
 });
 
-// ── Player Status (who's submitted orders) ───────────────────
+// â”€â”€ Player Status (who's submitted orders) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-router.get("/status", (req, res) => {
+router.get("/status", async (req, res) => {
   const db = req.app.locals.db;
-  const readiness = checkOrdersReady(db, req.gameId);
+  const readiness = await checkOrdersReady(db, req.gameId);
 
   // Include turn deadline so client can show countdown
   const game = getGame(db, req.gameId);
 
-  // Don't reveal which specific actors submitted — just counts
+  // Don't reveal which specific actors submitted â€” just counts
   res.json({
     turn: readiness.turn,
     totalPlayers: readiness.submitted.length + readiness.missing.length,
@@ -475,13 +485,49 @@ router.get("/status", (req, res) => {
 });
 
 
-// ── Helpers ──────────────────────────────────────────────────
+// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+/**
+ * Auto-accept decisions for AI players after turn processing.
+ * AI actors never challenge â€” they always accept. If all actors have now decided,
+ * auto-finalize the turn.
+ */
+function autoAcceptForAIPlayers(db, gameId, turn, players) {
+  const aiPlayers = players.filter(p => p.is_ai);
+  for (const p of aiPlayers) {
+    setActorDecision(db, {
+      gameId,
+      actorId: p.actor_id,
+      turn,
+      decision: "accept",
+      challengeText: "",
+      rebuttalText: "",
+      challengedUnitIds: null,
+    });
+  }
+
+  // Check if all players have now decided
+  const decisions = getDecisionsForTurn(db, gameId, turn);
+  const allDecided = players.every(p => decisions.find(d => d.actor_id === p.actor_id));
+
+  if (allDecided) {
+    const hasChallenges = decisions.some(d => d.decision === "challenge");
+    if (!hasChallenges) {
+      autoFinalize(db, gameId);
+    }
+    // If humans challenged, the normal challenge/rebuttal flow in /decision handles it.
+    // AI players already auto-accepted above, so they won't block the flow.
+  }
+}
 
 /**
  * Auto-finalize turn in Player Moderator mode.
  * Applies state updates, advances turn, notifies players.
  */
-function autoFinalize(db, gameId, game) {
+function autoFinalize(db, gameId) {
+  // Re-fetch game from DB to avoid stale state from caller's closure
+  const game = getGame(db, gameId);
+  if (!game) return;
   const gameState = JSON.parse(game.state_json);
   const turn = gameState.game.turn;
   const turnResults = getTurnResults(db, gameId, turn);
@@ -525,7 +571,7 @@ function sanitizePlayerText(text) {
     .slice(0, 2000) // hard length cap
     .replace(/```/g, "") // no code fences
     .replace(/<[^>]+>/g, "") // no HTML tags
-    .replace(/\{[^}]*\}/g, "") // no JSON-like blocks
+    .replace(/\{[\s\S]*?\}/g, "") // no JSON-like blocks (dotall to catch multiline)
     .trim();
 }
 

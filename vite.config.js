@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import fs from 'fs'
 import path from 'path'
 import { Agent, setGlobalDispatcher } from 'undici'
+import { callLLM } from './server/llmProxy.js'
 
 // Node's native fetch uses undici with a default bodyTimeout of 300s.
 // Override globally so ALL fetches (including to LLM APIs) get 15min timeouts.
@@ -102,11 +103,15 @@ function readBody(req, maxSize = 10 * 1024 * 1024) {
 }
 
 // Plugin: LLM API proxy — routes adjudication calls to Anthropic or OpenAI
-function llmPlugin() {
-  // Simple in-memory rate limiter for LLM proxy
+function llmPlugin({ isProd }) {
+  // In local dev, all-AI turns can legitimately burst many requests at once.
+  // Keep protection in prod, but disable the local cap unless explicitly set.
   const llmRequestTimes = [];
-  const LLM_RATE_LIMIT = 10;       // max requests
-  const LLM_RATE_WINDOW = 60_000;  // per minute
+  const configuredLlmLimit = Number.parseInt(process.env.LLM_RATE_LIMIT_MAX || '', 10);
+  const llmRateLimit = Number.isFinite(configuredLlmLimit) && configuredLlmLimit > 0
+    ? configuredLlmLimit
+    : (isProd ? 60 : 0);
+  const LLM_RATE_WINDOW = 60_000;
 
   return {
     name: 'llm-proxy',
@@ -118,17 +123,20 @@ function llmPlugin() {
 
         // Rate limit check
         const now = Date.now();
-        while (llmRequestTimes.length > 0 && llmRequestTimes[0] < now - LLM_RATE_WINDOW) llmRequestTimes.shift();
-        llmRequestTimes.push(now);
-        if (llmRequestTimes.length > LLM_RATE_LIMIT) {
-          res.statusCode = 429;
-          res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ ok: false, error: 'Rate limited: too many LLM requests' }));
-          return;
+        if (llmRateLimit > 0) {
+          while (llmRequestTimes.length > 0 && llmRequestTimes[0] < now - LLM_RATE_WINDOW) llmRequestTimes.shift();
+          llmRequestTimes.push(now);
+          if (llmRequestTimes.length > llmRateLimit) {
+            res.statusCode = 429;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ ok: false, error: 'Rate limited: too many LLM requests' }));
+            return;
+          }
         }
+        let heartbeat;
         try {
           const body = JSON.parse(await readBody(req));
-          const { provider, model, temperature, messages, max_tokens: clientMaxTokens } = body;
+          const { provider, model, temperature, messages, max_tokens: clientMaxTokens, budget_key: budgetKey } = body;
 
           if (!provider || !model || !messages) {
             res.statusCode = 400;
@@ -143,9 +151,23 @@ function llmPlugin() {
           // the socket after ~100-300s of silence.  JSON.parse ignores
           // leading whitespace, so the heartbeat spaces are harmless.
           res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
-          const heartbeat = setInterval(() => {
+          heartbeat = setInterval(() => {
             try { res.write(' '); } catch (_) { /* connection already gone */ }
           }, 15_000);
+
+          const proxyResult = await callLLM(
+            provider,
+            model,
+            messages,
+            {
+              temperature: temperature ?? 0.4,
+              maxTokens: clientMaxTokens || 8192,
+              budgetKey,
+            }
+          );
+          clearInterval(heartbeat);
+          res.end(JSON.stringify(proxyResult));
+          return;
 
           let result;
           try {
@@ -281,6 +303,7 @@ function llmPlugin() {
           res.end(JSON.stringify(result));
 
         } catch (e) {
+          if (heartbeat) clearInterval(heartbeat);
           // Headers already sent (writeHead 200 + heartbeat), so we can't
           // change status code.  Client checks data.ok, not HTTP status.
           if (e.name === 'AbortError') {
@@ -817,6 +840,40 @@ function gamePlugin() {
         }
       });
 
+      // POST /api/game/save-artifact — save an arbitrary file into a game folder
+      // Body: { folder, filename, data }
+      // Writes to games/<folder>/<filename> — used for AI call logs, order logs, etc.
+      server.middlewares.use('/api/game/save-artifact', async (req, res) => {
+        if (req.method !== 'POST') { res.statusCode = 405; res.end('POST only'); return; }
+        try {
+          const { folder, filename, data } = JSON.parse(await readBody(req));
+          if (!folder || !filename || data === undefined) {
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ ok: false, error: 'Missing folder, filename, or data' }));
+            return;
+          }
+          const safeFolder = folder.replace(/[^a-zA-Z0-9_\-]/g, '_');
+          const safeFile = filename.replace(/[^a-zA-Z0-9_\-\.]/g, '_').replace(/^\.+/, '').slice(0, 200);
+          const folderPath = path.join(gamesRoot(), safeFolder);
+          if (!folderPath.startsWith(gamesRoot())) {
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ ok: false, error: 'Invalid folder' }));
+            return;
+          }
+          if (!fs.existsSync(folderPath)) fs.mkdirSync(folderPath, { recursive: true });
+          const filepath = path.join(folderPath, safeFile);
+          fs.writeFileSync(filepath, typeof data === 'string' ? data : JSON.stringify(data, null, 2));
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ ok: true, path: `games/${safeFolder}/${safeFile}` }));
+        } catch (e) {
+          res.statusCode = 500;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ ok: false, error: e.message }));
+        }
+      });
+
       // DELETE /api/game/delete — delete a game save (autosaves only for safety)
       // ?folder=<name>&autosave=<turn> — delete autosave from folder
       // ?file=<filename> — legacy delete from saves/games/
@@ -886,7 +943,7 @@ export default defineConfig(({ mode }) => {
   define: {
     __DEV_TOOLS__: mode !== 'production',
   },
-  plugins: [react(), serverTimeoutPlugin(), savePlugin(), llmPlugin(), netlogPlugin(), parserNetlogPlugin(), gamePlugin(), auditlogPlugin()],
+  plugins: [react(), serverTimeoutPlugin(), savePlugin(), llmPlugin({ isProd: mode === 'production' }), netlogPlugin(), parserNetlogPlugin(), gamePlugin(), auditlogPlugin()],
   server: {
     watch: {
       ignored: ['**/saves/**', '**/games/**'],

@@ -1,7 +1,7 @@
-// ═══════════════════════════════════════════════════════════════
-// DATABASE — SQLite persistence layer for PBEM game state.
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// DATABASE â€” SQLite persistence layer for PBEM game state.
 // Uses better-sqlite3 (synchronous, zero-config, single file).
-// ═══════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 import Database from "better-sqlite3";
 import { randomBytes, createHash } from "crypto";
@@ -125,7 +125,7 @@ function initSchema(db) {
   } catch { /* column already exists */ }
 }
 
-// ── Token generation ─────────────────────────────────────────
+// â”€â”€ Token generation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function generateToken() {
   return randomBytes(32).toString("hex");
@@ -136,7 +136,7 @@ export function hashOrders(orders) {
   return createHash("sha256").update(canonical).digest("hex");
 }
 
-// ── Game CRUD ────────────────────────────────────────────────
+// â”€â”€ Game CRUD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function createGame(db, { id, name, stateJson, terrainJson, configJson, turnDeadlineHours }) {
   const moderatorToken = generateToken();
@@ -148,7 +148,7 @@ export function createGame(db, { id, name, stateJson, terrainJson, configJson, t
 }
 
 export function getGame(db, gameId) {
-  // Deliberately excludes config_json — it contains API keys that should
+  // Deliberately excludes config_json â€” it contains API keys that should
   // never leak into request context or API responses. Use getGameConfig()
   // when you specifically need the config (e.g., loading per-game API keys).
   return db.prepare(
@@ -174,7 +174,7 @@ export function listGames(db) {
   return db.prepare("SELECT id, name, status, created_at, turn_deadline_hours FROM games ORDER BY created_at DESC").all();
 }
 
-// ── Player CRUD ──────────────────────────────────────────────
+// â”€â”€ Player CRUD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function addPlayer(db, { gameId, actorId, actorName, email, isAi, aiConfigJson }) {
   const inviteToken = generateToken();
@@ -207,7 +207,7 @@ export function getPlayersForGame(db, gameId) {
   return db.prepare("SELECT * FROM players WHERE game_id = ? ORDER BY actor_id").all(gameId);
 }
 
-// ── Sealed Orders ────────────────────────────────────────────
+// â”€â”€ Sealed Orders â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function submitOrders(db, { gameId, actorId, turn, ordersJson }) {
   const hash = hashOrders(JSON.parse(ordersJson));
@@ -226,7 +226,7 @@ export function getPlayerOrders(db, gameId, actorId, turn) {
   return db.prepare("SELECT * FROM sealed_orders WHERE game_id = ? AND actor_id = ? AND turn = ?").get(gameId, actorId, turn);
 }
 
-// ── Turn Results ─────────────────────────────────────────────
+// â”€â”€ Turn Results â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function saveTurnResults(db, { gameId, turn, masterJson, actorResultsJson, visibilityJson }) {
   db.prepare(`
@@ -239,7 +239,7 @@ export function getTurnResults(db, gameId, turn) {
   return db.prepare("SELECT * FROM turn_results WHERE game_id = ? AND turn = ?").get(gameId, turn);
 }
 
-// ── Actor Decisions (accept/challenge/rebuttal) ──────────────
+// â”€â”€ Actor Decisions (accept/challenge/rebuttal) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function setActorDecision(db, { gameId, actorId, turn, decision, challengeText, rebuttalText, challengedUnitIds }) {
   db.prepare(`
@@ -252,7 +252,7 @@ export function getDecisionsForTurn(db, gameId, turn) {
   return db.prepare("SELECT * FROM actor_decisions WHERE game_id = ? AND turn = ?").all(gameId, turn);
 }
 
-// ── Game Log ─────────────────────────────────────────────────
+// â”€â”€ Game Log â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function appendGameLog(db, { gameId, turn, type, dataJson }) {
   db.prepare(`
@@ -265,7 +265,7 @@ export function getGameLog(db, gameId, { limit = 100, offset = 0 } = {}) {
   return db.prepare("SELECT * FROM game_log WHERE game_id = ? ORDER BY id DESC LIMIT ? OFFSET ?").all(gameId, limit, offset);
 }
 
-// ── Draft Orders (auto-saved, Google Docs style) ──────────────
+// â”€â”€ Draft Orders (auto-saved, Google Docs style) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function saveDraftOrders(db, { gameId, actorId, draftJson }) {
   db.prepare(`
@@ -282,7 +282,7 @@ export function deleteDraftOrders(db, gameId, actorId) {
   db.prepare("DELETE FROM draft_orders WHERE game_id = ? AND actor_id = ?").run(gameId, actorId);
 }
 
-// ── Turn Deadline ───────────────────────────────────────────
+// â”€â”€ Turn Deadline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** Set the deadline for the current turn. Called when a turn starts. */
 export function setTurnDeadline(db, gameId, hoursFromNow) {
@@ -306,6 +306,6 @@ export function getGamesWithExpiredDeadlines(db) {
     FROM games
     WHERE status = 'active'
       AND turn_deadline_at IS NOT NULL
-      AND turn_deadline_at < datetime('now')
+      AND julianday(turn_deadline_at) < julianday('now')
   `).all();
 }
