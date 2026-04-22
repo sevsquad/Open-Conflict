@@ -1,86 +1,350 @@
-// ═══════════════════════════════════════════════════════════════
-// GAME ENGINE — Server-side orchestration of the simulation.
+// ============================================================================
+// GAME ENGINE - Server-side orchestration of the simulation.
 // Imports the pure-JS simulation modules (no DOM dependencies)
-// and drives the turn cycle: detection → movement → adjudication
-// → state application → turn advance.
+// and drives the turn cycle: detection -> movement -> adjudication
+// -> state application -> turn advance.
 //
 // This is the server-authoritative version of what SimGame.jsx
 // does on the client. All randomness and LLM calls happen here.
-// ═══════════════════════════════════════════════════════════════
+// ============================================================================
 
+import { AsyncLocalStorage } from "async_hooks";
 import { callLLM } from "./llmProxy.js";
 import {
   getGame, getGameConfig, updateGameState, getOrdersForTurn, saveTurnResults,
   getPlayersForGame, appendGameLog, setTurnDeadline, clearTurnDeadline,
+  getPlayerOrders, submitOrders, getTurnResults,
 } from "./db.js";
 
-// Simulation modules — pure JS, no browser APIs
-import { createGame as createGameState, adjudicate, adjudicateRebuttal, applyStateUpdates, advanceTurn } from "../src/simulation/orchestrator.js";
-import { computeDetection, serializeVisibility } from "../src/simulation/detectionEngine.js";
+// Simulation modules - pure JS, no browser APIs
+import { adjudicate, adjudicateRebuttal, applyStateUpdates, advanceTurn } from "../src/simulation/orchestrator.js";
+import { computeDetection, serializeVisibility, deserializeVisibility } from "../src/simulation/detectionEngine.js";
 import { simulateMovement } from "../src/simulation/movementSimulator.js";
 import { filterAdjudicationForActor } from "../src/simulation/adjudicationFilter.js";
-import { buildActorBriefing } from "../src/simulation/briefingExport.js";
 import { auditAllNarratives } from "../src/simulation/narrativeAuditor.js";
 import { PHASES } from "../src/simulation/turnPhases.js";
+import { buildEffectiveTerrain } from "../src/simulation/terrainMerge.js";
+import { generateAIOrders } from "./aiPlayer.js";
 
-// ── Per-game API keys ────────────────────────────────────────
-// Set before processTurn(), cleared after. Single-threaded Node
-// means this is safe — only one turn processes at a time.
-let _activeGameApiKeys = null;
+const serverRequestContext = new AsyncLocalStorage();
 
-/** Set game-specific API keys for the current turn processing. */
-export function setGameApiKeys(keys) { _activeGameApiKeys = keys; }
+function runWithServerRequestContext(apiKeys, fn) {
+  return serverRequestContext.run({ apiKeys: apiKeys || null }, fn);
+}
 
-/** Clear game-specific API keys after turn processing. */
-export function clearGameApiKeys() { _activeGameApiKeys = null; }
+function getServerRequestContext() {
+  return serverRequestContext.getStore() || {};
+}
 
-// ── Monkey-patch fetch for server-side adjudication ─────────
-// The orchestrator's adjudicate() calls fetch("/api/llm/adjudicate")
-// which only works in the browser. On the server we intercept that
-// and route directly to callLLM().
-//
-// WHY: The orchestrator is shared code used by both client and server.
-// Rather than forking it, we override the fetch target so the same
-// adjudicate() function works in both environments.
-
+// Monkey-patch fetch for server-side adjudication.
+// The shared orchestrator calls fetch("/api/llm/adjudicate") which only exists in the browser.
 const originalFetch = globalThis.fetch;
 
+function okResponse(body = { ok: true }) {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => body,
+    text: async () => JSON.stringify(body),
+  };
+}
+
 function patchedFetch(url, options = {}) {
-  // Intercept only the LLM adjudication calls
   if (typeof url === "string" && url.includes("/api/llm/adjudicate")) {
     return handleServerLLMCall(options);
   }
-  // Everything else (external APIs etc.) uses real fetch
+  if (typeof url === "string" && (url.includes("/api/netlog/save") || url.includes("/api/auditlog/save"))) {
+    return Promise.resolve(okResponse());
+  }
   return originalFetch(url, options);
 }
 
-async function handleServerLLMCall(options) {
-  const body = JSON.parse(options.body);
+async function handleServerLLMCall(options = {}) {
+  const body = JSON.parse(options.body || "{}");
+  const { apiKeys } = getServerRequestContext();
   const result = await callLLM(body.provider, body.model, body.messages, {
     temperature: body.temperature,
     maxTokens: body.max_tokens,
-    apiKeys: _activeGameApiKeys, // game-specific keys, if set
+    apiKeys,
+    budgetKey: body.budget_key,
   });
-  // Return a Response-like object that adjudicate() can .json()
   return {
     ok: true,
     json: async () => result,
   };
 }
 
-// Apply the patch
-globalThis.fetch = patchedFetch;
+if (!globalThis.__openConflictServerFetchPatched) {
+  globalThis.fetch = patchedFetch;
+  globalThis.__openConflictServerFetchPatched = true;
+}
 
-// Also patch the netlog save call (fire-and-forget in orchestrator, noop on server)
-// The orchestrator calls fetch("/api/netlog/save") — just swallow it silently.
+// Per-game locks to avoid duplicate work from polling + moderator actions.
+const _aiGenerationInProgress = new Set();
+const _turnProcessingInProgress = new Set();
 
-// ── Turn Processing ─────────────────────────────────────────
+export function isTurnProcessing(gameId) {
+  return _turnProcessingInProgress.has(gameId);
+}
 
-/**
- * Check if all players have submitted orders for the current turn.
- * Returns { ready: boolean, submitted: string[], missing: string[] }
- */
-export function checkOrdersReady(db, gameId) {
+function setGamePhase(db, gameId, gameState, phase) {
+  updateGameState(db, gameId, JSON.stringify({
+    ...gameState,
+    game: {
+      ...gameState.game,
+      phase,
+    },
+  }));
+}
+
+function parseStoredTurnResults(turnResults, turn) {
+  return {
+    success: true,
+    adjudication: turnResults?.master_adjudication_json ? JSON.parse(turnResults.master_adjudication_json) : null,
+    actorResults: JSON.parse(turnResults?.actor_results_json || "{}"),
+    turn,
+    alreadyProcessed: true,
+  };
+}
+
+function ensureAiState(gameState) {
+  if (gameState.aiState?.operationalState && gameState.aiState?.reasoningLog) return gameState;
+  return {
+    ...gameState,
+    aiState: {
+      unitOrderHistory: gameState.aiState?.unitOrderHistory || {},
+      callLog: gameState.aiState?.callLog || [],
+      commanderThoughts: gameState.aiState?.commanderThoughts || {},
+      operationalState: gameState.aiState?.operationalState || {},
+      reasoningLog: gameState.aiState?.reasoningLog || [],
+    },
+  };
+}
+
+function normalizeAiConfig(aiConfig = {}) {
+  return {
+    engine: aiConfig.engine || "llm",
+    profile: aiConfig.profile || "balanced",
+    thinkBudget: aiConfig.thinkBudget || "standard",
+    ...aiConfig,
+  };
+}
+
+function parseVisibilityState(turnResults) {
+  if (!turnResults?.visibility_json) return null;
+  try {
+    return deserializeVisibility(JSON.parse(turnResults.visibility_json));
+  } catch {
+    return null;
+  }
+}
+
+function updateAIOperationalState(gameState, players, orderRows = []) {
+  const nextState = ensureAiState(gameState);
+  const orderByActor = Object.fromEntries(orderRows.map((row) => [row.actor_id, JSON.parse(row.orders_json)]));
+  const updatedOperationalState = { ...(nextState.aiState?.operationalState || {}) };
+  const priorReasoning = nextState.aiState?.reasoningLog || [];
+  const reasoningLog = [...priorReasoning];
+
+  for (const player of players.filter((entry) => entry.is_ai)) {
+    const sealed = orderByActor[player.actor_id];
+    const reasoning = sealed?.reasoning || null;
+    const selectedHypothesis = reasoning?.hypotheses?.find((hypothesis) => hypothesis.selected) || null;
+    const primaryObjectiveHex = selectedHypothesis?.primaryObjective?.hex || reasoning?.selectedHypothesis?.coordination?.mainEffortHex || null;
+    const previous = updatedOperationalState[player.actor_id] || { objectiveCooldowns: {} };
+    const objectiveCooldowns = { ...(previous.objectiveCooldowns || {}) };
+    for (const key of Object.keys(objectiveCooldowns)) {
+      objectiveCooldowns[key] = Math.max(0, objectiveCooldowns[key] - 1);
+    }
+
+    const currentlyHeld = primaryObjectiveHex ? nextState.game?.vpControl?.[primaryObjectiveHex] === player.actor_id : false;
+    if (primaryObjectiveHex) {
+      if (currentlyHeld) objectiveCooldowns[primaryObjectiveHex] = 0;
+      else if (previous.lastPrimaryObjective === primaryObjectiveHex) objectiveCooldowns[primaryObjectiveHex] = Math.min(3, (objectiveCooldowns[primaryObjectiveHex] || 0) + 1);
+      else objectiveCooldowns[primaryObjectiveHex] = objectiveCooldowns[primaryObjectiveHex] || 0;
+    }
+
+    const reserveCommitted = !!(reasoning?.unitDecisions || []).some((decision) =>
+      decision.reserveUnit
+      && ["ATTACK", "SUPPORT_FIRE"].includes(decision.subsequentOrders?.actionOrder?.id)
+    );
+    updatedOperationalState[player.actor_id] = {
+      ...previous,
+      lastTurn: nextState.game.turn,
+      lastHypothesisId: reasoning?.selectedHypothesis?.id || selectedHypothesis?.id || null,
+      lastPrimaryObjective: primaryObjectiveHex,
+      reserveCommitted,
+      objectiveCooldowns,
+      lastTurnSummary: {
+        primaryObjectiveHex,
+        primaryObjectiveName: selectedHypothesis?.primaryObjective?.name || null,
+        objectiveHeld: currentlyHeld,
+        myVp: nextState.game?.vpStatus?.vp?.[player.actor_id] || 0,
+      },
+    };
+
+    if (reasoning) {
+      reasoningLog.push({
+        actorId: player.actor_id,
+        turn: nextState.game.turn,
+        reasoning,
+      });
+    }
+  }
+
+  return {
+    ...nextState,
+    aiState: {
+      ...nextState.aiState,
+      operationalState: updatedOperationalState,
+      reasoningLog: reasoningLog.slice(-20),
+    },
+  };
+}
+
+// ============================================================================
+// AI Order Generation (PBEM)
+// ============================================================================
+
+export async function generateAndSubmitAIOrders(db, gameId) {
+  const game = getGame(db, gameId);
+  if (!game) return { submitted: [], errors: [{ actorId: "system", error: "Game not found" }] };
+
+  const gameState = ensureAiState(JSON.parse(game.state_json));
+  const terrainData = game.terrain_json ? JSON.parse(game.terrain_json) : null;
+  const turn = gameState.game.turn;
+  const players = getPlayersForGame(db, gameId);
+  const aiPlayers = players.filter(p => p.is_ai);
+
+  if (aiPlayers.length === 0) return { submitted: [], errors: [] };
+
+  if (_aiGenerationInProgress.has(gameId)) {
+    return { submitted: [], errors: [{ actorId: "system", error: "AI generation already in progress" }] };
+  }
+  _aiGenerationInProgress.add(gameId);
+
+  const config = getGameConfig(db, gameId);
+  const gameApiKeys = config.apiKeys || null;
+  const submitted = [];
+  const errors = [];
+
+  try {
+    for (const player of aiPlayers) {
+      try {
+        const existing = getPlayerOrders(db, gameId, player.actor_id, turn);
+        if (existing) {
+          submitted.push(player.actor_id);
+          continue;
+        }
+
+        const aiConfig = normalizeAiConfig(player.ai_config_json ? JSON.parse(player.ai_config_json) : {});
+        const provider = aiConfig.provider || "anthropic";
+        const mergedAiConfig = {
+          ...aiConfig,
+          ...(aiConfig.apiKey ? {} : {
+            apiKey: provider === "openai"
+              ? gameApiKeys?.openaiKey
+              : gameApiKeys?.anthropicKey,
+          }),
+        };
+
+        let previousTurnContext = null;
+        let previousVisibilityState = null;
+        if (turn > 1) {
+          const prevTurn = turn - 1;
+          const prevResults = getTurnResults(db, gameId, prevTurn);
+          const prevOrders = getPlayerOrders(db, gameId, player.actor_id, prevTurn);
+          previousVisibilityState = parseVisibilityState(prevResults);
+          if (prevResults || prevOrders) {
+            previousTurnContext = { history: [] };
+            if (prevResults?.actor_results_json) {
+              const actorResults = JSON.parse(prevResults.actor_results_json);
+              const actorResult = actorResults[player.actor_id];
+              previousTurnContext.narrative = actorResult?.adjudication?.actor_perspectives?.[player.actor_id]?.narrative
+                || actorResult?.adjudication?.situation_assessment || null;
+            }
+            if (prevOrders) {
+              const prevOrderData = JSON.parse(prevOrders.orders_json);
+              previousTurnContext.intent = prevOrderData.actorIntent || null;
+              previousTurnContext.commanderThoughts = prevOrderData.commanderThoughts || null;
+            }
+
+            const historyStart = Math.max(1, prevTurn - 4);
+            for (let t = historyStart; t < prevTurn; t++) {
+              const hResults = getTurnResults(db, gameId, t);
+              const hOrders = getPlayerOrders(db, gameId, player.actor_id, t);
+              const entry = { turn: t, intent: null, narrative: null };
+              if (hResults?.actor_results_json) {
+                const ar = JSON.parse(hResults.actor_results_json);
+                const ap = ar[player.actor_id];
+                entry.narrative = ap?.adjudication?.actor_perspectives?.[player.actor_id]?.narrative
+                  || ap?.adjudication?.situation_assessment || null;
+              }
+              if (hOrders) {
+                const od = JSON.parse(hOrders.orders_json);
+                entry.intent = od.actorIntent || null;
+              }
+              if (entry.intent || entry.narrative) previousTurnContext.history.push(entry);
+            }
+          }
+        }
+
+        const effectiveTerrain = terrainData ? buildEffectiveTerrain(terrainData, gameState.terrainMods) : null;
+        const visibilityState = effectiveTerrain
+          ? computeDetection(gameState, effectiveTerrain, null, previousVisibilityState)
+          : previousVisibilityState;
+
+        const result = await generateAIOrders(gameState, player.actor_id, terrainData, mergedAiConfig, {
+          visibilityState,
+          previousTurnContext,
+          operationalState: gameState.aiState?.operationalState?.[player.actor_id] || null,
+        });
+
+        if (result.error) {
+          errors.push({ actorId: player.actor_id, error: result.error });
+          appendGameLog(db, { gameId, turn, type: "ai_order_error", dataJson: JSON.stringify({ actorId: player.actor_id, error: result.error }) });
+        }
+
+        const ordersJson = JSON.stringify({
+          unitOrders: result.unitOrders || {},
+          actorIntent: result.actorIntent || "",
+          commanderThoughts: result.commanderThoughts || "",
+          reasoning: result.reasoning || null,
+          aiEngine: mergedAiConfig.engine || "llm",
+        });
+
+        submitOrders(db, { gameId, actorId: player.actor_id, turn, ordersJson });
+        submitted.push(player.actor_id);
+
+        appendGameLog(db, {
+          gameId,
+          turn,
+          type: "ai_orders_submitted",
+          dataJson: JSON.stringify({
+            actorId: player.actor_id,
+            engine: mergedAiConfig.engine || "llm",
+            usage: result.usage || null,
+            retryCount: result.retryCount || 0,
+            selectedHypothesis: result.reasoning?.selectedHypothesis?.id || null,
+          }),
+        });
+      } catch (e) {
+        errors.push({ actorId: player.actor_id, error: e.message });
+        appendGameLog(db, { gameId, turn, type: "ai_order_error", dataJson: JSON.stringify({ actorId: player.actor_id, error: e.message }) });
+      }
+    }
+  } finally {
+    _aiGenerationInProgress.delete(gameId);
+  }
+
+  return { submitted, errors };
+}
+
+// ============================================================================
+// Turn Processing
+// ============================================================================
+
+export async function checkOrdersReady(db, gameId) {
   const game = getGame(db, gameId);
   if (!game) return { ready: false, error: "Game not found" };
 
@@ -90,6 +354,17 @@ export function checkOrdersReady(db, gameId) {
   const orders = getOrdersForTurn(db, gameId, turn);
 
   const submittedActors = new Set(orders.map(o => o.actor_id));
+  const aiPlayers = players.filter(p => p.is_ai);
+  const aiMissing = aiPlayers.filter(p => !submittedActors.has(p.actor_id));
+  if (aiMissing.length > 0) {
+    await generateAndSubmitAIOrders(db, gameId);
+    const updatedOrders = getOrdersForTurn(db, gameId, turn);
+    const updatedSubmitted = new Set(updatedOrders.map(o => o.actor_id));
+    for (const p of aiMissing) {
+      if (updatedSubmitted.has(p.actor_id)) submittedActors.add(p.actor_id);
+    }
+  }
+
   const humanPlayers = players.filter(p => !p.is_ai);
   const submitted = humanPlayers.filter(p => submittedActors.has(p.actor_id)).map(p => p.actor_id);
   const missing = humanPlayers.filter(p => !submittedActors.has(p.actor_id)).map(p => p.actor_id);
@@ -97,254 +372,277 @@ export function checkOrdersReady(db, gameId) {
   return { ready: missing.length === 0, submitted, missing, turn };
 }
 
-/**
- * Run the full turn cycle: detection → movement → adjudication → apply → advance.
- * Called when all orders are in.
- *
- * Returns { success, newState, error }
- */
 export async function processTurn(db, gameId) {
   const game = getGame(db, gameId);
   if (!game) return { success: false, error: "Game not found" };
 
-  // Load game-specific API keys if provided during game creation.
-  // These override the server's env vars for this game's LLM calls.
-  // Uses separate getGameConfig() to avoid loading keys into general game context.
-  const config = getGameConfig(db, gameId);
-  if (config.apiKeys) {
-    setGameApiKeys(config.apiKeys);
+  const persistedState = JSON.parse(game.state_json);
+  const turn = persistedState.game.turn;
+  const existingResults = getTurnResults(db, gameId, turn);
+  if (existingResults) {
+    return parseStoredTurnResults(existingResults, turn);
   }
 
+  if (isTurnProcessing(gameId)) {
+    return { success: false, error: "Turn processing already in progress" };
+  }
+
+  const readiness = await checkOrdersReady(db, gameId);
+  if (!readiness.ready) {
+    return { success: false, error: `Orders still missing for: ${readiness.missing.join(", ")}` };
+  }
+
+  const config = getGameConfig(db, gameId);
+  const terrainData = game.terrain_json ? JSON.parse(game.terrain_json) : null;
+  let resultsStored = false;
+
+  _turnProcessingInProgress.add(gameId);
+  setGamePhase(db, gameId, persistedState, PHASES.ADJUDICATING);
+  clearTurnDeadline(db, gameId);
+
   try {
-    let gameState = JSON.parse(game.state_json);
-    const terrainData = game.terrain_json ? JSON.parse(game.terrain_json) : null;
-    const turn = gameState.game.turn;
+    return await runWithServerRequestContext(config.apiKeys, async () => {
+      let gameState = persistedState;
 
-    // All orders are in — clear the deadline for this turn
-    clearTurnDeadline(db, gameId);
+      const orderRows = getOrdersForTurn(db, gameId, turn);
+      const sealedOrders = {};
+      const playerActions = {};
+      const structuredOrders = { unitOrders: {}, actorIntents: {} };
 
-    // Gather all sealed orders for this turn
-    const orderRows = getOrdersForTurn(db, gameId, turn);
-    const sealedOrders = {};
-    const playerActions = {};
-    const structuredOrders = { unitOrders: {}, actorIntents: {} };
+      for (const row of orderRows) {
+        const orders = JSON.parse(row.orders_json);
+        sealedOrders[row.actor_id] = orders;
+        playerActions[row.actor_id] = orders.actorIntent || "";
+        structuredOrders.unitOrders[row.actor_id] = orders.unitOrders || {};
+        structuredOrders.actorIntents[row.actor_id] = orders.actorIntent || "";
+      }
 
-    for (const row of orderRows) {
-      const orders = JSON.parse(row.orders_json);
-      sealedOrders[row.actor_id] = orders;
-      playerActions[row.actor_id] = orders.actorIntent || "";
-      structuredOrders.unitOrders[row.actor_id] = orders.unitOrders || {};
-      structuredOrders.actorIntents[row.actor_id] = orders.actorIntent || "";
-    }
+      const effectiveTerrain = buildEffectiveTerrain(terrainData, gameState.terrainMods);
+      const previousVisibilityState = turn > 1 ? parseVisibilityState(getTurnResults(db, gameId, turn - 1)) : null;
+      const detectionResult = computeDetection(gameState, effectiveTerrain, sealedOrders, previousVisibilityState);
+      const movementResult = simulateMovement(gameState, effectiveTerrain, sealedOrders, previousVisibilityState);
+      const visibilityState = movementResult?.finalVisibility || detectionResult;
 
-    // Phase 1: Detection
-    const detectionResult = computeDetection(gameState, terrainData, sealedOrders);
+      if (movementResult?.finalPositions) {
+        gameState = {
+          ...gameState,
+          units: gameState.units.map(u => {
+            const pos = movementResult.finalPositions[u.id];
+            return pos ? { ...u, position: pos } : u;
+          }),
+        };
+      }
 
-    // Phase 2: Movement simulation
-    const movementResult = simulateMovement(gameState, terrainData, sealedOrders, detectionResult?.visibilityState);
-
-    // Apply movement positions to game state
-    if (movementResult?.finalPositions) {
-      gameState = {
-        ...gameState,
-        units: gameState.units.map(u => {
-          const pos = movementResult.finalPositions[u.id];
-          return pos ? { ...u, position: pos } : u;
-        }),
+      const logEntries = [];
+      const serverLogger = {
+        log: (loggedTurn, type, data) => logEntries.push({ turn: loggedTurn, type, data, timestamp: new Date().toISOString() }),
       };
-    }
 
-    // Phase 3: Adjudication (LLM call)
-    // Create a minimal logger for server-side use
-    const logEntries = [];
-    const serverLogger = {
-      log: (turn, type, data) => logEntries.push({ turn, type, data, timestamp: new Date().toISOString() }),
-    };
+      const adjResult = await adjudicate(
+        gameState,
+        playerActions,
+        terrainData,
+        serverLogger,
+        structuredOrders,
+        { visibilityState },
+        null
+      );
 
-    const adjResult = await adjudicate(
-      gameState, playerActions, terrainData, serverLogger,
-      structuredOrders, { visibilityState: detectionResult?.visibilityState },
-      null // no abort signal on server
-    );
+      if (adjResult.error && !adjResult.adjudication) {
+        appendGameLog(db, { gameId, turn, type: "adjudication_failed", dataJson: JSON.stringify({ error: adjResult.error }) });
+        setGamePhase(db, gameId, persistedState, PHASES.PLANNING);
+        return { success: false, error: adjResult.error };
+      }
 
-    if (adjResult.error && !adjResult.adjudication) {
-      appendGameLog(db, { gameId, turn, type: "adjudication_failed", dataJson: JSON.stringify({ error: adjResult.error }) });
-      return { success: false, error: adjResult.error };
-    }
-
-    // Run narrative auditor in Player Moderator mode to catch FOW leaks
-    // in free-text fields. Human Moderator mode skips this — the moderator
-    // reviews narratives manually before finalizing.
-    const gameConfig = getGameConfig(db, gameId);
-    if (gameConfig.moderationMode === "player") {
-      const llmConfig = gameConfig.llm || { provider: "anthropic", model: "claude-sonnet-4-20250514" };
-      try {
-        const auditResults = await auditAllNarratives(
-          adjResult.adjudication, detectionResult?.visibilityState,
-          gameState, llmConfig, null
-        );
-        if (auditResults.length > 0) {
+      if (config.moderationMode === "player") {
+        const llmConfig = config.llm || { provider: "anthropic", model: "claude-sonnet-4-20250514" };
+        try {
+          const auditResults = await auditAllNarratives(
+            adjResult.adjudication,
+            visibilityState,
+            gameState,
+            llmConfig,
+            null
+          );
+          if (auditResults.length > 0) {
+            appendGameLog(db, {
+              gameId,
+              turn,
+              type: "narrative_audit",
+              dataJson: JSON.stringify({ corrected: auditResults }),
+            });
+          }
+        } catch (auditErr) {
           appendGameLog(db, {
-            gameId, turn,
-            type: "narrative_audit",
-            dataJson: JSON.stringify({ corrected: auditResults }),
+            gameId,
+            turn,
+            type: "narrative_audit_error",
+            dataJson: JSON.stringify({ error: auditErr.message }),
           });
         }
-      } catch (auditErr) {
-        // Audit failure is non-fatal — deterministic scrub fallback runs inside the auditor.
-        // Log it but don't block turn processing.
-        appendGameLog(db, {
-          gameId, turn,
-          type: "narrative_audit_error",
-          dataJson: JSON.stringify({ error: auditErr.message }),
-        });
       }
-    }
 
-    // Build per-actor filtered views before applying state updates
-    const actorResults = {};
-    const players = getPlayersForGame(db, gameId);
-    for (const player of players) {
-      actorResults[player.actor_id] = filterAdjudicationForActor(
-        adjResult.adjudication,
-        player.actor_id,
-        detectionResult?.visibilityState,
-        gameState
-      );
-    }
+      const actorResults = {};
+      const players = getPlayersForGame(db, gameId);
+      for (const player of players) {
+        actorResults[player.actor_id] = filterAdjudicationForActor(
+          adjResult.adjudication,
+          player.actor_id,
+          visibilityState,
+          gameState
+        );
+      }
 
-    // Save turn results (master + per-actor views) before state application.
-    // Players retrieve their filtered view; master is for moderator only.
-    saveTurnResults(db, {
-      gameId,
-      turn,
-      masterJson: JSON.stringify(adjResult.adjudication),
-      actorResultsJson: JSON.stringify(actorResults),
-      visibilityJson: JSON.stringify(serializeVisibility(detectionResult?.visibilityState)),
+      saveTurnResults(db, {
+        gameId,
+        turn,
+        masterJson: JSON.stringify(adjResult.adjudication),
+        actorResultsJson: JSON.stringify(actorResults),
+        visibilityJson: JSON.stringify(serializeVisibility(visibilityState)),
+      });
+      resultsStored = true;
+
+      for (const entry of logEntries) {
+        appendGameLog(db, { gameId, turn: entry.turn, type: entry.type, dataJson: JSON.stringify(entry.data) });
+      }
+
+      setGamePhase(db, gameId, persistedState, PHASES.REVIEW);
+      return {
+        success: true,
+        adjudication: adjResult.adjudication,
+        actorResults,
+        turn,
+      };
     });
-
-    // Log server-side events
-    for (const entry of logEntries) {
-      appendGameLog(db, { gameId, turn: entry.turn, type: entry.type, dataJson: JSON.stringify(entry.data) });
-    }
-
-    // Return results — state is NOT applied yet.
-    // Players must review and accept/challenge before state is finalized.
-    // The moderator (or auto-advance logic) calls finalizeTurn() after review.
-    return {
-      success: true,
-      adjudication: adjResult.adjudication,
-      actorResults,
-      turn,
-    };
+  } catch (err) {
+    setGamePhase(db, gameId, persistedState, resultsStored ? PHASES.REVIEW : PHASES.PLANNING);
+    return { success: false, error: err.message };
   } finally {
-    clearGameApiKeys();
+    _turnProcessingInProgress.delete(gameId);
   }
 }
 
-/**
- * Finalize the turn: apply state updates and advance to next turn.
- * Called after all actors have reviewed (accepted or challenges resolved).
- */
+// ============================================================================
+// Finalization and Rebuttals
+// ============================================================================
+
 export function finalizeTurn(db, gameId, adjudication, playerActions = {}) {
   const game = getGame(db, gameId);
   if (!game) return { success: false, error: "Game not found" };
 
-  let gameState = JSON.parse(game.state_json);
-
-  // Apply state updates from adjudication
-  gameState = applyStateUpdates(gameState, adjudication, playerActions);
-
-  // Advance turn counter, date, supply, weather
+  let gameState = ensureAiState(JSON.parse(game.state_json));
+  const currentTurn = gameState.game.turn;
+  const orderRows = getOrdersForTurn(db, gameId, currentTurn);
+  const structuredPlayerActions = Object.fromEntries(orderRows.map((row) => [row.actor_id, JSON.parse(row.orders_json)]));
+  gameState = applyStateUpdates(
+    gameState,
+    adjudication,
+    Object.keys(structuredPlayerActions).length > 0 ? structuredPlayerActions : playerActions
+  );
+  const players = getPlayersForGame(db, gameId);
+  gameState = updateAIOperationalState(gameState, players, orderRows);
   gameState = advanceTurn(gameState);
 
-  // Persist
   updateGameState(db, gameId, JSON.stringify(gameState));
 
-  // Set deadline for the new turn (default 24h, overridden by per-game config)
   const deadlineHours = game.turn_deadline_hours || 24;
   setTurnDeadline(db, gameId, deadlineHours);
 
   appendGameLog(db, {
     gameId,
-    turn: gameState.game.turn - 1, // log under the turn we just finished
+    turn: gameState.game.turn - 1,
     type: "turn_finalized",
     dataJson: JSON.stringify({ newTurn: gameState.game.turn }),
+  });
+
+  generateAndSubmitAIOrders(db, gameId).catch(e => {
+    appendGameLog(db, { gameId, turn: gameState.game.turn, type: "ai_order_error", dataJson: JSON.stringify({ error: e.message }) });
   });
 
   return { success: true, newState: gameState };
 }
 
-/**
- * Re-adjudicate after challenges. Same flow as adjudicate but with
- * challenge/rebuttal context appended.
- */
 export async function processRebuttal(db, gameId, challenges, counterRebuttals, originalResult) {
   const game = getGame(db, gameId);
   if (!game) return { success: false, error: "Game not found" };
-
-  // Load game-specific API keys (same as processTurn)
-  const config = getGameConfig(db, gameId);
-  if (config.apiKeys) {
-    setGameApiKeys(config.apiKeys);
+  if (isTurnProcessing(gameId)) {
+    return { success: false, error: "Turn processing already in progress" };
   }
 
+  const persistedState = JSON.parse(game.state_json);
+  const turn = persistedState.game.turn;
+  const storedTurnResults = getTurnResults(db, gameId, turn);
+  const storedVisibilityJson = storedTurnResults?.visibility_json || null;
+  const visibilityState = storedVisibilityJson ? deserializeVisibility(JSON.parse(storedVisibilityJson)) : null;
+  const config = getGameConfig(db, gameId);
+
+  _turnProcessingInProgress.add(gameId);
+  setGamePhase(db, gameId, persistedState, PHASES.RE_ADJUDICATING);
+
   try {
-    const gameState = JSON.parse(game.state_json);
-    const terrainData = game.terrain_json ? JSON.parse(game.terrain_json) : null;
-    const turn = gameState.game.turn;
+    return await runWithServerRequestContext(config.apiKeys, async () => {
+      const gameState = persistedState;
+      const terrainData = game.terrain_json ? JSON.parse(game.terrain_json) : null;
 
-    // Reconstruct playerActions and structuredOrders from sealed orders
-    const orderRows = getOrdersForTurn(db, gameId, turn);
-    const playerActions = {};
-    const structuredOrders = { unitOrders: {}, actorIntents: {} };
-    for (const row of orderRows) {
-      const orders = JSON.parse(row.orders_json);
-      playerActions[row.actor_id] = orders.actorIntent || "";
-      structuredOrders.unitOrders[row.actor_id] = orders.unitOrders || {};
-      structuredOrders.actorIntents[row.actor_id] = orders.actorIntent || "";
-    }
+      const orderRows = getOrdersForTurn(db, gameId, turn);
+      const playerActions = {};
+      const structuredOrders = { unitOrders: {}, actorIntents: {} };
+      for (const row of orderRows) {
+        const orders = JSON.parse(row.orders_json);
+        playerActions[row.actor_id] = orders.actorIntent || "";
+        structuredOrders.unitOrders[row.actor_id] = orders.unitOrders || {};
+        structuredOrders.actorIntents[row.actor_id] = orders.actorIntent || "";
+      }
 
-    const serverLogger = {
-      log: () => {}, // silent for rebuttals
-    };
-
-    const rebuttalResult = await adjudicateRebuttal(
-      gameState, playerActions, terrainData, originalResult,
-      challenges, serverLogger, counterRebuttals, null,
-      structuredOrders, null
-    );
-
-    if (rebuttalResult.error && !rebuttalResult.adjudication) {
-      return { success: false, error: rebuttalResult.error };
-    }
-
-    // Update stored turn results with rebuttal outcome
-    const players = getPlayersForGame(db, gameId);
-    const actorResults = {};
-    for (const player of players) {
-      actorResults[player.actor_id] = filterAdjudicationForActor(
-        rebuttalResult.adjudication,
-        player.actor_id,
-        null, // visibility doesn't change during rebuttal
-        gameState
+      const serverLogger = { log: () => {} };
+      const rebuttalResult = await adjudicateRebuttal(
+        gameState,
+        playerActions,
+        terrainData,
+        originalResult,
+        challenges,
+        serverLogger,
+        counterRebuttals,
+        null,
+        structuredOrders,
+        null
       );
-    }
 
-    saveTurnResults(db, {
-      gameId,
-      turn,
-      masterJson: JSON.stringify(rebuttalResult.adjudication),
-      actorResultsJson: JSON.stringify(actorResults),
-      visibilityJson: null, // keep original visibility
+      if (rebuttalResult.error && !rebuttalResult.adjudication) {
+        setGamePhase(db, gameId, persistedState, PHASES.REVIEW);
+        return { success: false, error: rebuttalResult.error };
+      }
+
+      const players = getPlayersForGame(db, gameId);
+      const actorResults = {};
+      for (const player of players) {
+        actorResults[player.actor_id] = filterAdjudicationForActor(
+          rebuttalResult.adjudication,
+          player.actor_id,
+          visibilityState,
+          gameState
+        );
+      }
+
+      saveTurnResults(db, {
+        gameId,
+        turn,
+        masterJson: JSON.stringify(rebuttalResult.adjudication),
+        actorResultsJson: JSON.stringify(actorResults),
+        visibilityJson: storedVisibilityJson,
+      });
+
+      setGamePhase(db, gameId, persistedState, PHASES.REVIEW);
+      return {
+        success: true,
+        adjudication: rebuttalResult.adjudication,
+        actorResults,
+      };
     });
-
-    return {
-      success: true,
-      adjudication: rebuttalResult.adjudication,
-      actorResults,
-    };
+  } catch (err) {
+    setGamePhase(db, gameId, persistedState, PHASES.REVIEW);
+    return { success: false, error: err.message };
   } finally {
-    clearGameApiKeys();
+    _turnProcessingInProgress.delete(gameId);
   }
 }

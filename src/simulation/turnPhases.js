@@ -131,13 +131,21 @@ export function isBusyPhase(phase) {
 
 /**
  * Check if an actor needs to provide input during challenge/rebuttal collection.
+ * AI actors never need human input — they auto-accept/auto-skip all phases.
  *
  * @param {string} phase - CHALLENGE_COLLECT or REBUTTAL_COLLECT
  * @param {string} actorId - the actor to check
  * @param {Object} actorDecisions - { actorId: "accept"|"challenge" }
+ * @param {Array} [actors] - actor objects array (optional, needed for AI check)
  * @returns {boolean}
  */
-export function actorNeedsInput(phase, actorId, actorDecisions) {
+export function actorNeedsInput(phase, actorId, actorDecisions, actors) {
+  // AI actors never need human input in any phase
+  if (actors) {
+    const actor = actors.find(a => a.id === actorId);
+    if (actor?.controller === "ai") return false;
+  }
+
   if (phase === PHASES.CHALLENGE_COLLECT) {
     // Only challengers need to write challenge text
     return actorDecisions[actorId] === "challenge";

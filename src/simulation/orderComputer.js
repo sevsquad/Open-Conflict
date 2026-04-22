@@ -12,6 +12,7 @@ import {
   isAirUnit, isHelicopter,
 } from "./orderTypes.js";
 import { parsePosition, positionToLabel } from "./prompts.js";
+import { buildEffectiveTerrain } from "./terrainMerge.js";
 
 // ═══════════════════════════════════════════════════════════════
 // 1. MOVEMENT PATH & FEASIBILITY
@@ -92,6 +93,11 @@ export function computeMovePath(fromPos, toPos, terrainData, movementType = "foo
         riverCrossings++;
         cost = Math.max(cost, 3.0);
       }
+    }
+
+    // Obstacles (mines, wire, AT ditches) impose heavy movement cost
+    if (features.includes("obstacle")) {
+      cost = Math.max(cost, 2.5);
     }
 
     // Road/highway reduces cost (take the better of terrain cost or road cost)
@@ -274,6 +280,14 @@ export function computeForceRatio(attackers, defenders, defenderCell) {
   const avgEntrenchment = defenders.reduce((s, u) => s + (u.entrenchment || 0), 0) / defenders.length;
   defenderPower *= 1 + (avgEntrenchment / 100) * 0.5;
 
+  // Hex-level fortification from terrain mods (fieldworks that persist after units leave)
+  const hexFort = defenderCell?.hexFortification || 0;
+  if (hexFort > 0) defenderPower *= 1 + (hexFort / 100) * 0.5;
+
+  // Terrain damage from sustained combat reduces defensive value
+  const hexDamage = defenderCell?.terrainDamage || 0;
+  if (hexDamage > 0) defenderPower *= 1 - (hexDamage / 100) * 0.3;
+
   const ratio = defenderPower > 0 ? attackerPower / defenderPower : Infinity;
   const ratioStr = ratio === Infinity ? "∞" : ratio.toFixed(1);
 
@@ -335,6 +349,19 @@ export function computeTerrainDefense(posStr, terrainData) {
   }
   if (features.includes("military_base")) {
     modifiers.push("prepared military facilities");
+  }
+  // Terrain modification overlays
+  if (cell.hexFortification > 0) {
+    modifiers.push(`fortified position (${cell.hexFortification}% defense bonus)`);
+  }
+  if (cell.terrainDamage > 0) {
+    modifiers.push(`terrain damaged (${cell.terrainDamage}% degraded)`);
+  }
+  if (features.includes("obstacle")) {
+    modifiers.push(`obstacle (${cell.obstacleMeta?.subtype || "general"}) impedes movement`);
+  }
+  if (features.includes("smoke")) {
+    modifiers.push("smoke obscures LOS");
   }
 
   const summary = modifiers.length > 0
@@ -1910,6 +1937,8 @@ export function buildOrderBundle(unit, orders, gameState, terrainData, fortuneRo
  * @returns {Array<Object>} array of order bundles
  */
 export function buildAllBundles(allOrders, gameState, terrainData, unitFortuneRolls = {}, unitFrictionEvents = {}, detectionContext = null) {
+  // Merge terrain modifications (bridges, smoke, obstacles, etc.) into effective terrain
+  const effectiveTerrain = buildEffectiveTerrain(terrainData, gameState.terrainMods);
   const bundles = [];
 
   for (const unit of gameState.units) {
@@ -1925,7 +1954,7 @@ export function buildAllBundles(allOrders, gameState, terrainData, unitFortuneRo
     // Stash all orders on gameState so DISEMBARK can look up transport's destination
     if (!gameState._pendingOrders) gameState._pendingOrders = allOrders;
 
-    const bundle = buildOrderBundle(unit, unitOrders, gameState, terrainData, fortune, friction);
+    const bundle = buildOrderBundle(unit, unitOrders, gameState, effectiveTerrain, fortune, friction);
     bundle.isHold = !hasOrders;
 
     // Annotate transport units with their cargo manifest
@@ -1974,6 +2003,51 @@ export function buildAllBundles(allOrders, gameState, terrainData, unitFortuneRo
     }
 
     bundles.push(bundle);
+  }
+
+  // Second pass: annotate coordinated attacks and movement congestion.
+  const attackGroups = {};
+  const movementCounts = {};
+  for (const bundle of bundles) {
+    const targetHex = bundle.actionOrder?.targetHex || null;
+    if (targetHex && bundle.actor && bundle.actionOrder?.type && ["ATTACK", "SUPPORT_FIRE", "FIRE_MISSION", "SHORE_BOMBARDMENT", "CAS"].includes(bundle.actionOrder.type)) {
+      const key = `${bundle.actor}:${targetHex}`;
+      if (!attackGroups[key]) attackGroups[key] = [];
+      attackGroups[key].push(bundle);
+    }
+    const moveTarget = bundle.movementOrder?.targetHex || null;
+    if (moveTarget) {
+      movementCounts[moveTarget] = (movementCounts[moveTarget] || 0) + 1;
+    }
+  }
+
+  for (const bundle of bundles) {
+    const targetHex = bundle.actionOrder?.targetHex || null;
+    if (targetHex && bundle.actor) {
+      const groupKey = `${bundle.actor}:${targetHex}`;
+      const group = attackGroups[groupKey] || [];
+      if (group.length > 1) {
+        const teammates = group
+          .filter(other => other.unitId !== bundle.unitId)
+          .map(other => ({ unitId: other.unitId, unitName: other.unitName, orderType: other.actionOrder?.type || null }));
+        if (!bundle.combat) bundle.combat = {};
+        bundle.combat.coAttackers = teammates;
+        bundle.combat.coordinationBonus = `${group.length} units converging on ${positionToLabel(targetHex)}`;
+      }
+    }
+
+    const moveTarget = bundle.movementOrder?.targetHex || null;
+    if (moveTarget && bundle.movement) {
+      const count = movementCounts[moveTarget] || 0;
+      const cell = effectiveTerrain.cells?.[moveTarget];
+      const bridgeish = !!(cell?.features || []).some(f => f === "bridge" || f === "dam" || f === "river_crossing");
+      if (count > 1 || bridgeish) {
+        bundle.movement.congestion = {
+          unitsSharingDestination: count,
+          bottleneck: bridgeish,
+        };
+      }
+    }
   }
 
   // Clean up temp stash

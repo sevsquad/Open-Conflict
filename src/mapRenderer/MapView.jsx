@@ -4,7 +4,7 @@
 // Used by both Viewer and SimMap
 // ════════════════════════════════════════════════════════════════
 
-import { useRef, useEffect, useCallback, useState, useImperativeHandle, forwardRef } from "react";
+import { useRef, useEffect, useLayoutEffect, useCallback, useState, useImperativeHandle, forwardRef } from "react";
 import HexGLRenderer from "./gl/HexGLRenderer.js";
 import LineRenderer from "./gl/LineRenderer.js";
 import { buildLinearNetworks } from "./RoadNetwork.js";
@@ -22,6 +22,9 @@ import { generateStrategicAtlas } from "./gl/StrategicAtlas.js";
 import { generateTileAtlas } from "./gl/tileAtlas/index.js";
 import { drawStrategicGridOverlay } from "./overlays/StrategicGridOverlay.js";
 import { drawADCoverage, drawFlightPaths, drawCASSectors } from "./overlays/AirOverlay.js";
+import { drawOrderOverlay } from "./overlays/OrderOverlay.js";
+import { drawTerrainMods } from "./overlays/TerrainModOverlay.js";
+import { drawVPHexes } from "./overlays/VPOverlay.js";
 
 const CLICK_THRESHOLD = 5;
 // Sub-tactical overlay threshold: if fine-to-strategic ratio is below this,
@@ -51,6 +54,12 @@ const MapView = forwardRef(function MapView({
   strategicMode = false,         // true = render strategic hexes, false = render fine hexes
   // Air overlays — optional, only passed from SimMap when air units are present
   airOverlayData = null,         // { adUnits, flightPaths, casSectors } for air viz
+  // Confirmed-order overlays — ghosts + target rings during planning phase
+  orderOverlayData = null,       // { ghosts: [...], rings: { "col,row": [...] } }
+  // Terrain modifications overlay — smoke, fortifications, obstacles, bridge status
+  terrainModsData = null,
+  // Victory Point hex markers
+  vpOverlayData = null,        // { hexVP: [...], vpControl: {...} }
   style = {},
 }, ref) {
   const glCanvasRef = useRef(null);
@@ -117,6 +126,12 @@ const MapView = forwardRef(function MapView({
       renderer.destroy();
       rendererRef.current = null;
       lineRendererRef.current = null;
+      // Release large data structures held in refs
+      preprocessedRef.current = { roadNetworks: null, nameGroups: null };
+      elevRangeRef.current = null;
+      smoothedElevRef.current = null;
+      contourLabelRef.current = null;
+      elevBandsRef.current = null;
     };
   }, []);
 
@@ -191,9 +206,17 @@ const MapView = forwardRef(function MapView({
   }, []);
 
   // ── Auto-fit viewport on data load ──
-  useEffect(() => {
-    if (!cols || !rows || !containerSizeRef.current.w) return;
-    const { w, h } = containerSizeRef.current;
+  // useLayoutEffect fires synchronously after DOM mutations, so getBoundingClientRect()
+  // returns the real container size rather than the initial containerSizeRef value (600x400).
+  useLayoutEffect(() => {
+    if (!cols || !rows) return;
+    const el = containerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+    const w = Math.round(rect.width);
+    const h = Math.round(rect.height);
+    containerSizeRef.current = { w, h };
     viewportRef.current = createViewport(cols, rows, w, h);
     setRedrawTick(t => t + 1);
   }, [cols, rows]);
@@ -311,6 +334,15 @@ const MapView = forwardRef(function MapView({
         drawStrategicGridOverlay(ctx, strategicGrid, viewport, w, h, fSize);
       }
     }
+    // Terrain modifications overlay (smoke, fortifications, obstacles, bridges)
+    if (terrainModsData) {
+      drawTerrainMods(ctx, terrainModsData, viewport, w, h, cols, rows);
+    }
+    // Victory Point + Critical VP hex markers
+    if (vpOverlayData) {
+      drawVPHexes(ctx, vpOverlayData.hexVP, vpOverlayData.vpControl, actorColorMap, viewport, w, h, cols, rows, vpOverlayData.cvpHexes);
+    }
+
     // Air overlays (AD coverage, flight paths, CAS sectors) — drawn under units
     if (airOverlayData) {
       if (airOverlayData.adUnits) {
@@ -322,6 +354,11 @@ const MapView = forwardRef(function MapView({
       if (airOverlayData.flightPaths) {
         drawFlightPaths(ctx, airOverlayData.flightPaths, viewport, w, h);
       }
+    }
+
+    // Confirmed-order overlays (movement ghosts + hex target rings)
+    if (orderOverlayData) {
+      drawOrderOverlay(ctx, orderOverlayData, actorColorMap, viewport, w, h, cols, rows);
     }
 
     // Units
@@ -370,7 +407,7 @@ const MapView = forwardRef(function MapView({
         drawHoverDistance(ctx, viewport, w, h, selCell, hovCell, `${dist} hex · ${km} km`);
       }
     }
-  }, [D, units, hovCell, selCell, activeGhostUnit, redrawTick, cols, rows, actorColorMap, isSetupMode, activeFeatures, showElevBands, cellSizeKm, measureStart, measureEnd, interactionMode, unitOverlayOptions, movePath, proposedMoves, airOverlayData]);
+  }, [D, units, hovCell, selCell, activeGhostUnit, redrawTick, cols, rows, actorColorMap, isSetupMode, activeFeatures, showElevBands, cellSizeKm, measureStart, measureEnd, interactionMode, unitOverlayOptions, movePath, proposedMoves, airOverlayData, orderOverlayData, terrainModsData, vpOverlayData]);
 
   // ── Mouse handlers ──
   const getCellFromEvent = useCallback((e) => {
@@ -593,7 +630,11 @@ const MapView = forwardRef(function MapView({
       const cctx = composite.getContext("2d");
       cctx.drawImage(gl, 0, 0);
       cctx.drawImage(overlay, 0, 0);
-      return composite.toDataURL("image/png");
+      const dataUrl = composite.toDataURL("image/png");
+      // Release GPU-backed bitmap immediately instead of waiting for GC
+      composite.width = 0;
+      composite.height = 0;
+      return dataUrl;
     },
   }), [D, cols, rows, activeFeatures, showElevBands, strategicMode, strategicGrid]);
 

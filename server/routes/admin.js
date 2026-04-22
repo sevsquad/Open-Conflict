@@ -29,6 +29,16 @@ router.post("/games", (req, res) => {
     return res.status(400).json({ error: "Missing required fields: name, scenario" });
   }
 
+  // Validate actor counts before creating anything in DB
+  const actorList = scenario.actors || [];
+  if (actorList.length > 8) {
+    return res.status(400).json({ error: "Maximum 8 actors per game" });
+  }
+  const aiCount = actorList.filter(a => a.isAi).length;
+  if (aiCount > 6) {
+    return res.status(400).json({ error: "Maximum 6 AI actors per game" });
+  }
+
   const llmConfig = config?.llm || {
     provider: "anthropic",
     model: "claude-sonnet-4-20250514",
@@ -67,7 +77,7 @@ router.post("/games", (req, res) => {
 
   // Auto-create player slots for each actor in the scenario
   const inviteTokens = {};
-  for (const actor of scenario.actors || []) {
+  for (const actor of actorList) {
     const { inviteToken } = addPlayer(db, {
       gameId,
       actorId: actor.id,
@@ -166,9 +176,9 @@ router.get("/games/:gameId/players", (req, res) => {
 
 // ── Order Status ─────────────────────────────────────────────
 
-router.get("/games/:gameId/orders-status", (req, res) => {
+router.get("/games/:gameId/orders-status", async (req, res) => {
   const db = req.app.locals.db;
-  const readiness = checkOrdersReady(db, req.gameId);
+  const readiness = await checkOrdersReady(db, req.gameId);
   res.json(readiness);
 });
 

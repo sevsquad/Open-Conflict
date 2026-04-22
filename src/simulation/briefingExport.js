@@ -90,7 +90,7 @@ function buildCapabilitiesTable(units, terrainData) {
  * Contains only information that actor would have access to.
  * @param {Object} visibilityState - from computeDetection(); used to filter enemy units
  */
-export function buildActorBriefing(gameState, actorId, terrainData, { fortuneRolls, frictionEvents, visibilityState } = {}) {
+export function buildActorBriefing(gameState, actorId, terrainData, { fortuneRolls, frictionEvents, visibilityState, skipHistory, skipOrdersSection } = {}) {
   const actor = gameState.scenario.actors.find(a => a.id === actorId);
   if (!actor) return `# Error: Actor "${actorId}" not found`;
 
@@ -220,7 +220,9 @@ export function buildActorBriefing(gameState, actorId, terrainData, { fortuneRol
   }
 
   // Recent history (last 2-3 turns) — uses per-actor narrative if available
-  if (gameState.turnLog.length > 0) {
+  // Skipped for AI calls: CAMPAIGN MEMORY in the prompt provides 5 turns with intent tracking,
+  // making this section redundant and wasteful of tokens.
+  if (!skipHistory && gameState.turnLog.length > 0) {
     lines.push("## Recent History");
     const recentTurns = gameState.turnLog.slice(-3);
     for (const entry of recentTurns) {
@@ -268,15 +270,19 @@ export function buildActorBriefing(gameState, actorId, terrainData, { fortuneRol
   }
   lines.push("");
 
-  // Orders prompt
-  lines.push("## Your Orders");
-  lines.push(`You are the commander of **${actor.name}**. Based on the above situation, issue your orders for this turn.`);
-  lines.push("");
-  lines.push("Be specific about:");
-  lines.push("- Which units do what (reference by name)");
-  lines.push("- Where they move or attack (reference grid coordinates like H4, B7)");
-  lines.push("- Your overall intent and priorities");
-  lines.push("- Any coordination between units");
+  // Orders prompt — skipped for AI calls because the AI prompt has its own
+  // JSON format spec with numeric coordinates, and this section's "H4, B7"
+  // format conflicts with the prompt's "col,row" requirement.
+  if (!skipOrdersSection) {
+    lines.push("## Your Orders");
+    lines.push(`You are the commander of **${actor.name}**. Based on the above situation, issue your orders for this turn.`);
+    lines.push("");
+    lines.push("Be specific about:");
+    lines.push("- Which units do what (reference by name)");
+    lines.push("- Where they move or attack (reference grid coordinates like H4, B7)");
+    lines.push("- Your overall intent and priorities");
+    lines.push("- Any coordination between units");
+  }
 
   return lines.join("\n");
 }

@@ -2,17 +2,26 @@ import { colors, typography, radius, animation, space } from "../theme.js";
 import { Button, Input, Select, CollapsibleSection } from "../components/ui.jsx";
 import { ACTOR_COLORS } from "../terrainColors.js";
 import { SCALE_TIERS, SCALE_KEYS, WEATHER_OPTIONS, VISIBILITY_OPTIONS, GROUND_OPTIONS, TIME_OF_DAY_OPTIONS, CLIMATE_OPTIONS, STABILITY_OPTIONS, SEVERITY_OPTIONS } from "./schemas.js";
+import { isVisionModel } from "./aiOrderClient.js";
+import { listAiProfiles, listThinkBudgets } from "./aiProfiles.js";
 
 // ═══════════════════════════════════════════════════════════════
 // SETUP LEFT SIDEBAR — Scale, Scenario, Actors, LLM, Turn Settings
 // ═══════════════════════════════════════════════════════════════
 
+// Hide number input spin buttons globally for this sidebar
+const HIDE_SPIN_CSS = `input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }`;
+
 export default function SetupLeftSidebar({ state, dispatch, providers, open, onToggle, cellSizeKm }) {
+  const aiProfiles = listAiProfiles();
+  const thinkBudgets = listThinkBudgets();
   const {
     scale, title, description, initialConditions, specialRules,
     actors, turnDuration, startDate, environment,
     provider, model, temperature,
     strategicEnabled, strategicHexSizeKm,
+    victoryConditions, interactionMode,
   } = state;
 
   const selectedProvider = providers.find(p => p.id === provider);
@@ -35,6 +44,7 @@ export default function SetupLeftSidebar({ state, dispatch, providers, open, onT
       width: open ? 320 : 20,
       transition: `width ${animation.normal} ${animation.easeOut}`,
     }}>
+      <style>{HIDE_SPIN_CSS}</style>
       {/* Content */}
       <div style={{
         width: open ? 300 : 0, overflow: "hidden",
@@ -123,6 +133,74 @@ export default function SetupLeftSidebar({ state, dispatch, providers, open, onT
             <Input label="Special Rules" value={specialRules} onChange={v => dispatch({ type: "SET_FIELD", field: "specialRules", value: v })} placeholder="Scenario-specific adjudication guidance..." multiline />
           </CollapsibleSection>
 
+          {/* Victory Points */}
+          <CollapsibleSection title="Victory Points" accent={colors.accent.amber}>
+            <div style={{ marginBottom: space[2] }}>
+              <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>VP Goal</div>
+              <input
+                type="number"
+                value={victoryConditions?.vpGoal ?? 50}
+                onChange={e => dispatch({ type: "SET_VP_FIELD", field: "vpGoal", value: parseInt(e.target.value) || 0 })}
+                style={{
+                  width: 80, padding: "4px 6px", background: colors.bg.input,
+                  border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm,
+                  color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily, outline: "none",
+                }}
+              />
+              <span style={{ fontSize: typography.body.xs, color: colors.text.muted, marginLeft: space[1] }}>points to win</span>
+            </div>
+
+            {/* VP Hex List */}
+            <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 4 }}>VP Objectives</div>
+            {(victoryConditions?.hexVP || []).map((vp, vi) => {
+              const parts = vp.hex.split(",");
+              const col = parseInt(parts[0]);
+              const row = parseInt(parts[1]);
+              let hexLabel = "";
+              let n = col;
+              do { hexLabel = String.fromCharCode(65 + (n % 26)) + hexLabel; n = Math.floor(n / 26) - 1; } while (n >= 0);
+              hexLabel += (row + 1);
+
+              return (
+                <div key={vi} style={{
+                  display: "flex", alignItems: "center", gap: 4, marginBottom: 4,
+                  padding: "3px 5px", background: colors.bg.base,
+                  borderRadius: radius.sm, border: `1px solid ${colors.border.subtle}`,
+                }}>
+                  <span style={{ fontSize: 10, color: colors.accent.amber, fontWeight: 700, fontFamily: typography.monoFamily, minWidth: 24 }}>{hexLabel}</span>
+                  <input
+                    value={vp.name}
+                    onChange={e => dispatch({ type: "UPDATE_VP_HEX", idx: vi, field: "name", value: e.target.value })}
+                    placeholder="Name"
+                    style={{ flex: 1, minWidth: 0, padding: "2px 4px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: 10, fontFamily: typography.fontFamily, outline: "none" }}
+                  />
+                  <input
+                    type="number"
+                    value={vp.vp}
+                    onChange={e => dispatch({ type: "UPDATE_VP_HEX", idx: vi, field: "vp", value: parseInt(e.target.value) || 0 })}
+                    title="Victory Points"
+                    style={{ width: 44, padding: "2px 4px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.accent.amber, fontSize: 10, fontFamily: typography.monoFamily, outline: "none", textAlign: "center" }}
+                  />
+                  <span style={{ fontSize: 8, color: colors.text.muted }}>VP</span>
+                  <button
+                    onClick={() => dispatch({ type: "REMOVE_VP_HEX", idx: vi })}
+                    style={{ background: "none", border: "none", color: colors.text.muted, cursor: "pointer", fontSize: 11, padding: 0 }}
+                  >&times;</button>
+                </div>
+              );
+            })}
+            {interactionMode === "place_vp" ? (
+              <div style={{ fontSize: typography.body.xs, color: colors.accent.amber, padding: "4px 0" }}>
+                Click a hex on the map to place a VP objective. Press Esc to cancel.
+              </div>
+            ) : (
+              <button
+                onClick={() => dispatch({ type: "ENTER_VP_PLACEMENT" })}
+                style={{ background: "none", border: "none", color: colors.accent.amber, cursor: "pointer", fontSize: typography.body.xs, padding: "1px 0", fontFamily: typography.fontFamily }}
+              >+ Add VP Hex</button>
+            )}
+          </CollapsibleSection>
+
           {/* Actors */}
           <CollapsibleSection title="Actors" accent={colors.accent.blue}>
             {actors.map((actor, ai) => (
@@ -145,6 +223,123 @@ export default function SetupLeftSidebar({ state, dispatch, providers, open, onT
                     <button onClick={() => dispatch({ type: "REMOVE_ACTOR", idx: ai })} style={{ background: "none", border: "none", color: colors.text.muted, cursor: "pointer", fontSize: 12 }}>&times;</button>
                   )}
                 </div>
+
+                {/* AI Controlled toggle */}
+                <label style={{
+                  display: "flex", alignItems: "center", gap: space[1],
+                  fontSize: typography.body.xs, color: colors.text.secondary,
+                  cursor: "pointer", marginTop: space[1], marginBottom: space[1],
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={actor.controller === "ai"}
+                    onChange={e => {
+                      dispatch({ type: "UPDATE_ACTOR", idx: ai, field: "controller", value: e.target.checked ? "ai" : "player" });
+                      // Initialize aiConfig when first toggled on
+                      if (e.target.checked && !actor.aiConfig) {
+                        const defaultProvider = providers[0]?.id || "";
+                        const defaultModel = providers[0]?.models?.[0]?.id || "";
+                        dispatch({ type: "UPDATE_ACTOR_AI_CONFIG", idx: ai, field: "engine", value: "algorithmic" });
+                        dispatch({ type: "UPDATE_ACTOR_AI_CONFIG", idx: ai, field: "profile", value: "balanced" });
+                        dispatch({ type: "UPDATE_ACTOR_AI_CONFIG", idx: ai, field: "thinkBudget", value: "standard" });
+                        dispatch({ type: "UPDATE_ACTOR_AI_CONFIG", idx: ai, field: "provider", value: defaultProvider });
+                        dispatch({ type: "UPDATE_ACTOR_AI_CONFIG", idx: ai, field: "model", value: defaultModel });
+                        dispatch({ type: "UPDATE_ACTOR_AI_CONFIG", idx: ai, field: "personality", value: "" });
+                      }
+                    }}
+                    style={{ accentColor: colors.accent.purple }}
+                  />
+                  AI Controlled
+                </label>
+
+                {/* AI Configuration (shown when AI controlled) */}
+                {actor.controller === "ai" && (
+                  <div style={{
+                    padding: space[2], marginBottom: space[1],
+                    background: `${colors.accent.purple}08`,
+                    border: `1px solid ${colors.accent.purple}30`,
+                    borderRadius: radius.sm,
+                  }}>
+                    <div style={{ fontSize: typography.body.xs, color: colors.accent.purple, fontWeight: typography.weight.semibold, marginBottom: space[1] }}>AI Commander</div>
+                    <>
+                        <div style={{ marginBottom: space[1] }}>
+                          <div style={{ fontSize: 9, color: colors.text.muted, marginBottom: 1 }}>Engine</div>
+                          <select
+                            value={actor.aiConfig?.engine || "algorithmic"}
+                            onChange={e => dispatch({ type: "UPDATE_ACTOR_AI_CONFIG", idx: ai, field: "engine", value: e.target.value })}
+                            style={{ width: "100%", padding: "3px 6px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.xs, fontFamily: typography.fontFamily }}
+                          >
+                            <option value="algorithmic">Algorithmic Opponent</option>
+                            <option value="llm">LLM Commander</option>
+                          </select>
+                        </div>
+                        <div style={{ marginBottom: space[1] }}>
+                          <div style={{ fontSize: 9, color: colors.text.muted, marginBottom: 1 }}>Doctrine Profile</div>
+                          <select
+                            value={actor.aiConfig?.profile || "balanced"}
+                            onChange={e => dispatch({ type: "UPDATE_ACTOR_AI_CONFIG", idx: ai, field: "profile", value: e.target.value })}
+                            style={{ width: "100%", padding: "3px 6px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.xs, fontFamily: typography.fontFamily }}
+                          >
+                            {aiProfiles.map(profile => <option key={profile.id} value={profile.id}>{profile.label}</option>)}
+                          </select>
+                        </div>
+                        <div style={{ marginBottom: space[1] }}>
+                          <div style={{ fontSize: 9, color: colors.text.muted, marginBottom: 1 }}>Thinking Budget</div>
+                          <select
+                            value={actor.aiConfig?.thinkBudget || "standard"}
+                            onChange={e => dispatch({ type: "UPDATE_ACTOR_AI_CONFIG", idx: ai, field: "thinkBudget", value: e.target.value })}
+                            style={{ width: "100%", padding: "3px 6px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.xs, fontFamily: typography.fontFamily }}
+                          >
+                            {thinkBudgets.map(budget => <option key={budget.id} value={budget.id}>{budget.label}</option>)}
+                          </select>
+                        </div>
+                        {actor.aiConfig?.engine === "llm" && providers.length === 0 && (
+                          <div style={{ fontSize: typography.body.xs, color: colors.accent.red, lineHeight: 1.4, marginBottom: space[1] }}>
+                            No LLM providers configured. Add API keys to .env.
+                          </div>
+                        )}
+                        {actor.aiConfig?.engine === "llm" && providers.length > 0 && (
+                          <>
+                        <div style={{ marginBottom: space[1] }}>
+                          <div style={{ fontSize: 9, color: colors.text.muted, marginBottom: 1 }}>Provider</div>
+                          <select
+                            value={actor.aiConfig?.provider || ""}
+                            onChange={e => {
+                              dispatch({ type: "UPDATE_ACTOR_AI_CONFIG", idx: ai, field: "provider", value: e.target.value });
+                              const p = providers.find(p => p.id === e.target.value);
+                              dispatch({ type: "UPDATE_ACTOR_AI_CONFIG", idx: ai, field: "model", value: p?.models?.[0]?.id || "" });
+                            }}
+                            style={{ width: "100%", padding: "3px 6px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.xs, fontFamily: typography.fontFamily }}
+                          >
+                            {providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                          </select>
+                        </div>
+                        <div style={{ marginBottom: space[1] }}>
+                          <div style={{ fontSize: 9, color: colors.text.muted, marginBottom: 1 }}>Model</div>
+                          <select
+                            value={actor.aiConfig?.model || ""}
+                            onChange={e => dispatch({ type: "UPDATE_ACTOR_AI_CONFIG", idx: ai, field: "model", value: e.target.value })}
+                            style={{ width: "100%", padding: "3px 6px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.xs, fontFamily: typography.fontFamily }}
+                          >
+                            {(providers.find(p => p.id === (actor.aiConfig?.provider || providers[0]?.id))?.models || []).map(m => (
+                              <option key={m.id} value={m.id}>{m.id}{isVisionModel(m.id) ? " 📷" : ""}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 9, color: colors.text.muted, marginBottom: 1 }}>Commander Personality</div>
+                          <textarea
+                            value={actor.aiConfig?.personality || ""}
+                            onChange={e => dispatch({ type: "UPDATE_ACTOR_AI_CONFIG", idx: ai, field: "personality", value: e.target.value })}
+                            placeholder="Describe the commander's style, historical figure, doctrine..."
+                            style={{ width: "100%", padding: "3px 6px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.xs, fontFamily: typography.fontFamily, minHeight: 48, resize: "vertical", outline: "none", boxSizing: "border-box" }}
+                          />
+                        </div>
+                          </>
+                        )}
+                    </>
+                  </div>
+                )}
 
                 {/* Objectives */}
                 <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2, marginTop: space[1] }}>Objectives</div>
@@ -173,6 +368,39 @@ export default function SetupLeftSidebar({ state, dispatch, providers, open, onT
                   </div>
                 ))}
                 <button onClick={() => dispatch({ type: "ADD_ACTOR_LIST_ITEM", idx: ai, field: "constraints" })} style={{ background: "none", border: "none", color: colors.accent.amber, cursor: "pointer", fontSize: typography.body.xs, padding: "1px 0", fontFamily: typography.fontFamily }}>+ constraint</button>
+
+                {/* Critical VP Hexes — must-hold hexes, lose all = lose game */}
+                <div style={{ fontSize: typography.body.xs, color: colors.accent.red, marginBottom: 2, marginTop: space[1], fontWeight: typography.weight.semibold }}>Critical VP Hexes</div>
+                {(actor.cvpHexes || []).map((hex, hi) => {
+                  const hp = hex.split(",");
+                  const hc = parseInt(hp[0]);
+                  const hr = parseInt(hp[1]);
+                  let hl = "";
+                  let hn = hc;
+                  do { hl = String.fromCharCode(65 + (hn % 26)) + hl; hn = Math.floor(hn / 26) - 1; } while (hn >= 0);
+                  hl += (hr + 1);
+                  return (
+                    <div key={hi} style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 2 }}>
+                      <span style={{ fontSize: 10, color: ACTOR_COLORS[ai % ACTOR_COLORS.length], fontWeight: 700, fontFamily: typography.monoFamily, minWidth: 24 }}>{hl}</span>
+                      <span style={{ fontSize: typography.body.xs, color: colors.text.muted, flex: 1 }}>must hold</span>
+                      <button
+                        onClick={() => dispatch({ type: "REMOVE_ACTOR_CVP_HEX", idx: ai, hexIdx: hi })}
+                        style={{ background: "none", border: "none", color: colors.text.muted, cursor: "pointer", fontSize: 11, padding: 0 }}
+                      >&times;</button>
+                    </div>
+                  );
+                })}
+                {interactionMode === "place_cvp" && state.placementPayload?.actorIdx === ai ? (
+                  <div style={{ fontSize: typography.body.xs, color: colors.accent.red, padding: "2px 0" }}>
+                    Click a hex on the map. Esc to cancel.
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => dispatch({ type: "ENTER_CVP_PLACEMENT", idx: ai })}
+                    style={{ background: "none", border: "none", color: colors.accent.red, cursor: "pointer", fontSize: typography.body.xs, padding: "1px 0", fontFamily: typography.fontFamily }}
+                  >+ Add CVP Hex</button>
+                )}
+
               </div>
             ))}
             <Button variant="ghost" onClick={() => dispatch({ type: "ADD_ACTOR" })} size="sm" style={{ width: "100%" }}>+ Add Actor</Button>

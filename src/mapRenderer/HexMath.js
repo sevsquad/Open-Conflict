@@ -361,6 +361,11 @@ export function computeLOS(col1, row1, col2, row2, terrainData, losTerrainLookup
       return { result: "BLOCKED", detail: `ridgeline at ${cellCoordFromOffset(col, row)}` };
     }
 
+    // Smoke blocks LOS through the hex (from terrain modifications overlay)
+    if (cell.features?.includes("smoke")) {
+      return { result: "BLOCKED", detail: `smoke at ${cellCoordFromOffset(col, row)}` };
+    }
+
     // Terrain-based LOS effects
     const effect = losTerrainLookup[cell.terrain];
     if (effect === "block") {
@@ -462,6 +467,11 @@ export function computeEnhancedLOS(col1, row1, col2, row2, terrainData, losTerra
     // Ridgeline blocking: source is lower than the ridge
     if (cell.features?.includes("ridgeline") && sourceElev < cellElev) {
       return { result: "BLOCKED", detail: `ridgeline at ${cellCoordFromOffset(col, row)}` };
+    }
+
+    // Smoke blocks LOS through the hex (from terrain modifications overlay)
+    if (cell.features?.includes("smoke")) {
+      return { result: "BLOCKED", detail: `smoke at ${cellCoordFromOffset(col, row)}` };
     }
 
     // Terrain-based LOS effects

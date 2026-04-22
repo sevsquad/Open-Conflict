@@ -139,6 +139,27 @@ const PRESET_REGISTRY = [
     requiredMap: "test-fixture",
     getPreset: () => getAdValleyPreset(),
   },
+  // AI reference — human vs AI for testing AI player features
+  {
+    id: "ai_reference",
+    name: "AI Commander Test (Human vs AI)",
+    description: "Human-controlled Blue Force vs AI-controlled Red Force. Tests AI order generation, idle tracking, mixed human/AI handoff, review auto-accept, and AI call logging.",
+    era: "cold_war",
+    scale: "grand_tactical",
+    mapType: "test-fixture",
+    requiredMap: "test-fixture",
+    getPreset: () => getAIReferencePreset(),
+  },
+  {
+    id: "server_ai_duel",
+    name: "AI Opponent Test (AI vs AI)",
+    description: "Algorithmic server AI on both sides over the VP river-crossing test map. Used for long-run soak testing, profile divergence, and reasoning artifact capture.",
+    era: "cold_war",
+    scale: "grand_tactical",
+    mapType: "test-fixture",
+    requiredMap: "test-fixture",
+    getPreset: () => getServerAiDuelPreset(),
+  },
   // LEGACY — original test-fixture preset, kept for backward compatibility
   {
     id: "river_crossing",
@@ -225,6 +246,7 @@ export function getQuickstartPreset() {
         controller: "player",
         objectives: ["Secure the Stonebrook bridge at D5", "Establish a bridgehead west of the river", "Neutralize Red Force artillery positions"],
         constraints: ["Minimize civilian casualties in Ashbury and Hexville", "Bridge capture preferred over destruction"],
+        cvpHexes: ["3,4"],  // D5 — Stonebrook Bridge is critical for Blue
       },
       {
         id: "actor_2",
@@ -232,8 +254,20 @@ export function getQuickstartPreset() {
         controller: "player",
         objectives: ["Deny Blue Force access to the western bank", "Hold defensive line along the Stonebrook", "Preserve combat strength for counterattack"],
         constraints: ["Bridge destruction is a last resort only", "Do not withdraw past column B"],
+        cvpHexes: ["3,4", "1,6"],  // D5 bridge + B7 Hexville are critical for Red
       },
     ],
+
+    // Victory conditions — VP-based scoring
+    victoryConditions: {
+      type: "vp",
+      vpGoal: 50,          // first to 50 VP wins (or highest at game end)
+      hexVP: [
+        { hex: "3,4", name: "Stonebrook Bridge", vp: 30 },   // D5 — the bridge
+        { hex: "5,5", name: "Ashbury",           vp: 15 },   // F6 — town east of bridge
+        { hex: "1,6", name: "Hexville",           vp: 10 },   // B7 — town west of river
+      ],
+    },
 
     // Units — Blue Force (east side, cols 7-11)
     // Units — Red Force (west side, cols 0-4)
@@ -255,6 +289,98 @@ export function getQuickstartPreset() {
       { id: uid(), actor: "actor_2", name: "Red HQ (Bastion)", type: "headquarters", echelon: "brigade", posture: "ready", position: "0,6", strength: 100, supply: 100, status: "ready", notes: "Command post", morale: 100, ammo: 100, entrenchment: 0, detected: true, parentHQ: "", movementType: "wheeled", specialCapabilities: [] },
     ],
   };
+}
+
+// ════════════════════════════════════════════════════════════════
+// AI REFERENCE — Human vs AI for testing AI player features.
+// Reuses quickstart units/map but makes Red Force an AI actor with
+// personality. Tests: AI order generation, idle tracking, mixed
+// human/AI handoff, review auto-accept, AI call logging.
+// ════════════════════════════════════════════════════════════════
+
+function getAIReferencePreset() {
+  const base = getQuickstartPreset();
+
+  // Override Red Force to be AI-controlled with a personality
+  base.actors = [
+    {
+      id: "actor_1",
+      name: "Blue Force",
+      controller: "player",
+      objectives: ["Secure the Stonebrook bridge at D5", "Establish a bridgehead west of the river"],
+      constraints: ["Minimize civilian casualties in Ashbury"],
+    },
+    {
+      id: "actor_2",
+      name: "Red Force",
+      controller: "ai",
+      aiConfig: {
+        provider: "",  // empty = use adjudication provider (filled at runtime)
+        model: "",     // empty = use adjudication model (filled at runtime)
+        personality: "Aggressive Soviet-doctrine commander. Favors armored thrusts with artillery preparation. "
+          + "Will counterattack rather than hold static positions. Commits reserves early if an opportunity presents. "
+          + "Low tolerance for retreat — prefers fighting withdrawal over disengagement. "
+          + "Values surprise and tempo over methodical approaches.",
+      },
+      objectives: ["Deny Blue Force access to the western bank", "Destroy the bridge rather than let it be captured", "Counterattack any penetration of the main defensive line"],
+      constraints: ["Do not withdraw past column B", "Preserve artillery for counter-battery fire"],
+    },
+  ];
+
+  base.title = "AI Commander Test";
+  base.description = "Human-controlled Blue Force vs AI-controlled Red Force. Red Force uses aggressive Soviet doctrine with armored counterattack bias.";
+
+  return base;
+}
+
+export function getServerAiDuelPreset() {
+  const base = getQuickstartPreset();
+
+  base.title = "AI Opponent Test";
+  base.description = "Algorithmic server AI on both sides fighting over Stonebrook Bridge, Ashbury, and Hexville. Intended for long-run opponent soak tests with doctrine divergence and reasoning capture.";
+  base.maxTurns = 16;
+  base.actors = [
+    {
+      ...base.actors[0],
+      controller: "ai",
+      isAi: true,
+      aiConfig: {
+        engine: "algorithmic",
+        profile: "aggressive_breakthrough",
+        thinkBudget: "deliberate",
+      },
+      objectives: [
+        "Seize Stonebrook Bridge and Ashbury quickly",
+        "Exploit across the river before Red Force can recover",
+        "Use armor as the main effort once the bridgehead opens",
+      ],
+      constraints: [
+        "Keep pressure on the decisive crossing",
+        "Do not strand the reserve without support",
+      ],
+    },
+    {
+      ...base.actors[1],
+      controller: "ai",
+      isAi: true,
+      aiConfig: {
+        engine: "algorithmic",
+        profile: "cautious_defender",
+        thinkBudget: "deliberate",
+      },
+      objectives: [
+        "Hold Stonebrook Bridge and Hexville",
+        "Trade space for time only if the bridge line is collapsing",
+        "Preserve the reserve for a deliberate counterattack",
+      ],
+      constraints: [
+        "Do not waste the counterattack reserve early",
+        "Force Blue to pay for every crossing attempt",
+      ],
+    },
+  ];
+
+  return base;
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -307,13 +433,41 @@ function getRiverCrossingV2Preset() {
   }
 
   const northernTowns = "Northfield, Ridgemont, and Clearwater";
+  const blueRearCvpHexes = ["5,14", "10,16", "6,19", "9,27", "7,28"];
+  const redRearCvpHexes = ["7,1", "9,2", "5,3", "10,5", "6,7"];
+  const riverCrossingHexVP = [
+    // Primary swing points around the crossing and highland flank.
+    { hex: "4,10", name: "Stonebrook Bridge", vp: 70 },
+    { hex: "16,10", name: "Stonebrook Dam", vp: 45 },
+    { hex: "3,9", name: "Ashbury", vp: 40 },
+    { hex: "2,10", name: "Stonebrook Harbor", vp: 30 },
+    { hex: "3,11", name: "Hexville", vp: 30 },
+    { hex: "2,9", name: "Ashbury Port", vp: 25 },
+    { hex: "7,10", name: "Ashbury Power Station", vp: 20 },
+    { hex: "2,11", name: "Hexville Docks", vp: 18 },
+    { hex: "17,10", name: "Stonebrook Lake", vp: 7 },
+
+    // Named towns and bases on the northern approaches.
+    { hex: "7,1", name: "Northern Air Base", vp: 18 },
+    { hex: "9,2", name: "Camp Sentinel", vp: 15 },
+    { hex: "5,3", name: "Northfield", vp: 15 },
+    { hex: "10,5", name: "Ridgemont", vp: 20 },
+    { hex: "6,7", name: "Clearwater", vp: 15 },
+
+    // Blue rear-area positions that still matter if Red breaks through.
+    { hex: "5,14", name: "Southhaven", vp: 15 },
+    { hex: "10,16", name: "Pinewood", vp: 15 },
+    { hex: "6,19", name: "Millbrook", vp: 12 },
+    { hex: "9,27", name: "Camp Vanguard", vp: 15 },
+    { hex: "7,28", name: "Southern Air Base", vp: 18 },
+  ];
 
   return {
     scale: "grand_tactical",
     title: "Contested River Crossing",
-    description: `Blue Force (US 3rd Mechanized Infantry Division) attacks south-to-north to secure the Stonebrook Bridge, the coastal port at Ashbury, and capture all towns north of the river (${northernTowns}). Red Force (Soviet 47th Motor Rifle Division, understrength, with 11th Air Assault Brigade) defends the crossing and northern approaches. A ford exists in the eastern forest but only supports light vehicles and infantry.`,
-    initialConditions: "Dawn, early summer 1985. Visibility moderate due to morning fog in river valley. Blue Force is advancing from the south along the main highway corridor. Red Force has had 48 hours to prepare defensive positions north of the Stonebrook. The 11th Air Assault Brigade is in reserve with transport helicopters at Northern Air Base. The highland valley east of the ridge offers a concealed N-S movement corridor invisible from the plain.",
-    specialRules: "The Stonebrook Bridge at Ashbury is the only heavy vehicle crossing. A ford in the eastern forest (wetland tiles) allows infantry and light vehicles at reduced speed. The coastal port at Ashbury is a strategic logistics objective. Urban areas provide +30% defensive bonus. Red air assault brigade can conduct helicopter insertion behind Blue lines. Both sides have limited attack helicopter sorties (fuel/maintenance). SAM umbrella restricts helicopter operations within 3km of AD units. The highland valley is dead ground from the plain — units in the valley cannot be observed from west of the ridge except through the river gap.",
+    description: `Blue Force (US 3rd Mechanized Infantry Division) attacks south-to-north to secure the Stonebrook Bridge, the coastal port at Ashbury, and capture all towns north of the river (${northernTowns}). Red Force (Soviet 47th Motor Rifle Division, understrength, with 11th Air Assault Brigade) defends the crossing and northern approaches. The sheltered highland valley to the east offers a potential approach over rough ground, though movement is slow and the terrain channels forces.`,
+    initialConditions: "Dawn, early summer 1985. Visibility moderate due to morning fog in river valley. Blue Force is advancing from the south along the main highway corridor. Red Force has had 48 hours to prepare defensive positions north of the Stonebrook. The 11th Air Assault Brigade is in reserve with transport helicopters at Northern Air Base. The highland valley east of the ridge offers a concealed N-S movement corridor invisible from the plain. Both sides have engineer assets capable of bridging the Stonebrook at any point along its length given sufficient time and security.",
+    specialRules: "The Stonebrook Bridge at Ashbury is the only pre-existing crossing — capturing it intact saves critical time. Engineers can erect temporary bridges at any point along the river (requires ~4 hours uninterrupted work and local security). Infantry can ford the river at reduced speed but vehicles require a bridge. The coastal port at Ashbury is a strategic logistics objective. Urban areas provide +30% defensive bonus. Red air assault brigade can conduct helicopter insertion behind Blue lines. Both sides have limited attack helicopter sorties (fuel/maintenance). SAM umbrella restricts helicopter operations within 3km of AD units. The highland valley is dead ground from the plain — units in the valley cannot be observed from west of the ridge except through the river gap.",
     turnDuration: "4 hours",
     startDate: "1985-06-12",
 
@@ -345,6 +499,7 @@ function getRiverCrossingV2Preset() {
           "Do not advance beyond row 0 (northern map edge)",
           "Maintain supply lines along the highway corridor",
         ],
+        cvpHexes: blueRearCvpHexes,
       },
       {
         id: "actor_2",
@@ -363,8 +518,15 @@ function getRiverCrossingV2Preset() {
           "Air assault brigade limited to 2 major helicopter lifts (fuel constraints)",
           "Understrength — no replacements available",
         ],
+        cvpHexes: redRearCvpHexes,
       },
     ],
+
+    victoryConditions: {
+      type: "vp",
+      vpGoal: 250,
+      hexVP: riverCrossingHexVP,
+    },
 
     units: [
       // ══════════════════════════════════════════════════
@@ -619,6 +781,28 @@ function getRiverCrossingV2Preset() {
         notes: "6x Mi-24 Hind attack helicopters — divisional fire support, small squadron",
         parentHQ: "unit_preset_23",
         specialCapabilities: ["attack_helicopter"],
+      }),
+
+      // ── City Militia — local territorial defense garrisons ──
+      red("Ashbury Peoples Militia (Zarya)", "infantry", "company", "4,9", {
+        posture: "defending", movementType: "foot", entrenchment: 40,
+        strength: 70, morale: 70, supply: 60,
+        notes: "Territorial defense militia — AKMs, RPGs, local knowledge of Ashbury streets",
+        specialCapabilities: ["local_knowledge"],
+      }),
+      red("Hexville Peoples Militia (Voskhod)", "infantry", "company", "3,11", {
+        posture: "defending", movementType: "foot", entrenchment: 40,
+        strength: 65, morale: 70, supply: 60,
+        notes: "Territorial defense militia — AKMs, RPGs, local knowledge of Hexville district",
+        specialCapabilities: ["local_knowledge"],
+      }),
+
+      // ── Blue Special Forces — infiltrated north of the eastern ford ──
+      blue("ODA 312 (Pathfinder)", "special_forces", "company", "11,9", {
+        posture: "ready", movementType: "foot", detected: false,
+        strength: 100, morale: 95, supply: 80,
+        notes: "Special Forces ODA — pre-positioned in dense forest north of Stonebrook ford, recon and direct action",
+        specialCapabilities: ["local_knowledge"],
       }),
     ],
   };

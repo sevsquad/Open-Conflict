@@ -169,6 +169,7 @@ export function Select({ label, value, onChange, options, placeholder, style: ex
 export function Card({ children, accent, onClick, padding, style: extraStyle, ...rest }) {
   const [hovered, setHovered] = useState(false);
   const isClickable = !!onClick;
+  const borderColor = hovered && accent ? accent + "60" : colors.border.subtle;
   return (
     <div
       onClick={onClick}
@@ -176,14 +177,16 @@ export function Card({ children, accent, onClick, padding, style: extraStyle, ..
       onMouseLeave={() => setHovered(false)}
       style={{
         background: hovered && isClickable ? colors.bg.surface : colors.bg.raised,
-        border: `1px solid ${hovered && accent ? accent + "60" : colors.border.subtle}`,
+        borderLeft: `1px solid ${borderColor}`,
+        borderRight: `1px solid ${borderColor}`,
+        borderBottom: `1px solid ${borderColor}`,
+        borderTop: accent ? `3px solid ${accent}` : `1px solid ${borderColor}`,
         borderRadius: radius.xl,
         padding: padding !== undefined ? padding : space[4],
         cursor: isClickable ? "pointer" : "default",
         transition: `all ${animation.normal} ${animation.easeOut}`,
         transform: hovered && isClickable ? "translateY(-2px)" : "translateY(0)",
         boxShadow: hovered && isClickable ? shadows.md : "none",
-        ...(accent && { borderTop: `3px solid ${accent}` }),
         ...extraStyle,
       }}
       {...rest}

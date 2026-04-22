@@ -16,6 +16,8 @@ export default function Simulation({ onBack, initialData, preset }) {
   const [terrainError, setTerrainError] = useState(null);
   const [airTestLog, setAirTestLog] = useState([]);
   const [airTestRunning, setAirTestRunning] = useState(false);
+  const mountedRef = useRef(true);
+  useEffect(() => { return () => { mountedRef.current = false; }; }, []);
 
   // Auto-detect ?airtest=true URL parameter and run the test suite
   // Module-level guard prevents React strict mode double-fire
@@ -88,16 +90,18 @@ export default function Simulation({ onBack, initialData, preset }) {
           return r.json();
         })
         .then(data => {
+          if (!mountedRef.current) return;
           setTerrainData(data.map || data);
           setPhase("game");
         })
         .catch(err => {
+          if (!mountedRef.current) return;
           // Fallback: try loading from saves/ (terrain._ref) for compatibility
           if (gs.terrain?._ref) {
             fetch(`/api/load?file=${encodeURIComponent(gs.terrain._ref)}`)
               .then(r => r.ok ? r.json() : Promise.reject(new Error("Not in saves either")))
-              .then(data => { setTerrainData(data.map || data); setPhase("game"); })
-              .catch(err2 => { setTerrainError(err2.message); setPhase("game"); });
+              .then(data => { if (!mountedRef.current) return; setTerrainData(data.map || data); setPhase("game"); })
+              .catch(err2 => { if (!mountedRef.current) return; setTerrainError(err2.message); setPhase("game"); });
           } else {
             setTerrainError(err.message);
             setPhase("game");
@@ -111,10 +115,12 @@ export default function Simulation({ onBack, initialData, preset }) {
           return r.json();
         })
         .then(data => {
+          if (!mountedRef.current) return;
           setTerrainData(data.map || data);
           setPhase("game");
         })
         .catch(err => {
+          if (!mountedRef.current) return;
           setTerrainError(err.message);
           setPhase("game"); // still enter game — terrain summary available for LLM
         });

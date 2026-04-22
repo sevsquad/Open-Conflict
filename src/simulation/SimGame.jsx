@@ -10,6 +10,7 @@ import UnitOrderCard from "./components/UnitOrderCard.jsx";
 import OrderRoster from "./components/OrderRoster.jsx";
 import { ORDER_TYPES, canEmbark, isAirUnit } from "./orderTypes.js";
 import { parseUnitPosition } from "../mapRenderer/overlays/UnitOverlay.js";
+import { buildOrderOverlayData } from "../mapRenderer/overlays/OrderOverlay.js";
 import { positionToLabel } from "./prompts.js";
 import { hexLine, hexLineThrough } from "../mapRenderer/HexMath.js";
 import { computeMovePath, computeRange } from "./orderComputer.js";
@@ -21,7 +22,9 @@ import { auditAllNarratives } from "./narrativeAuditor.js";
 import HandoffScreen from "./components/HandoffScreen.jsx";
 import ReinforcementPanel from "./components/ReinforcementPanel.jsx";
 import { ACTOR_COLORS, FC, FL, FG, DEFAULT_FEATURES } from "../terrainColors.js";
+import { generateAIOrdersClient, captureMapForAI, isVisionModel } from "./aiOrderClient.js";
 import { computeElevationRange } from "../mapRenderer/gl/HexGPUData.js";
+import { buildEffectiveTerrain } from "./terrainMerge.js";
 
 // ═══════════════════════════════════════════════════════════════
 // SIM GAME — Active simulation UI
@@ -31,6 +34,9 @@ import { computeElevationRange } from "../mapRenderer/gl/HexGPUData.js";
 
 // Set to true to skip handoff screens for automated testing
 const SKIP_HANDOFF = false;
+
+/** Defensive check for AI-controlled actors. Handles undefined/missing controller field from old saves. */
+function isAiActor(actor) { return actor?.controller === "ai"; }
 
 const ESCALATION_COLORS = {
   "de-escalating": colors.accent.green,
@@ -94,12 +100,113 @@ const PHASE_LABELS = {
   [PHASES.RESOLVING]: "Resolving",
 };
 
+// Format AI order generation results as readable markdown for audit logs.
+function formatAITranscript({ actorId, actorName, turn, timestamp, provider, model, personality, usage, success, error, retryCount, unitOrders, actorIntent, commanderThoughts, actorUnits, idleUnits, rawPrompt, rawResponse }) {
+  const lines = [];
+  lines.push(`# AI Orders — ${actorName} — Turn ${turn}`);
+  lines.push("");
+  lines.push(`**Generated:** ${timestamp}  `);
+  lines.push(`**Model:** ${model} (${provider})  `);
+  if (usage) {
+    lines.push(`**Tokens:** ${(usage.input || 0).toLocaleString()} in / ${(usage.output || 0).toLocaleString()} out` + (usage.cache_read ? ` (${usage.cache_read.toLocaleString()} cached)` : "") + "  ");
+  }
+  lines.push(`**Result:** ${success ? "Success" : "FAILED"} · Retries: ${retryCount}` + (error ? ` · Error: ${error}` : ""));
+  lines.push("");
+
+  // Commander personality
+  if (personality) {
+    lines.push("## Commander Profile");
+    lines.push("");
+    lines.push(personality);
+    lines.push("");
+  }
+
+  // Strategic intent
+  if (actorIntent) {
+    lines.push("## Strategic Intent");
+    lines.push("");
+    lines.push(actorIntent);
+    lines.push("");
+  }
+
+  // Commander thoughts (inner monologue)
+  if (commanderThoughts) {
+    lines.push("## Commander Thoughts");
+    lines.push("");
+    lines.push(`> ${commanderThoughts.replace(/\n/g, "\n> ")}`);
+    lines.push("");
+  }
+
+  // Unit orders table
+  if (unitOrders && Object.keys(unitOrders).length > 0) {
+    lines.push("## Unit Orders");
+    lines.push("");
+    for (const [uid, o] of Object.entries(unitOrders)) {
+      const unit = actorUnits?.find(u => u.id === uid);
+      const name = unit?.name || uid;
+      const pos = unit?.position || "?";
+      lines.push(`### ${name}`);
+      lines.push(`Position: ${pos} · Type: ${unit?.type || "?"} · Strength: ${unit?.strength ?? "?"}%`);
+      lines.push("");
+      if (o.movementOrder) {
+        lines.push(`- **Movement:** ${o.movementOrder.id} → ${o.movementOrder.target}`);
+      } else {
+        lines.push("- **Movement:** Hold");
+      }
+      if (o.actionOrder) {
+        const sub = o.actionOrder.subtype ? ` (${o.actionOrder.subtype})` : "";
+        const tgt = o.actionOrder.target ? ` → ${o.actionOrder.target}` : "";
+        lines.push(`- **Action:** ${o.actionOrder.id}${sub}${tgt}`);
+      } else {
+        lines.push("- **Action:** None");
+      }
+      if (o.intent) {
+        lines.push(`- **Intent:** ${o.intent}`);
+      }
+      lines.push("");
+    }
+  }
+
+  // Idle units warned
+  if (idleUnits?.length > 0) {
+    lines.push("## Idle Units Warned");
+    lines.push("");
+    for (const u of idleUnits) {
+      lines.push(`- ${u.name} (idle ${u.idleTurns} turns at ${u.position})`);
+    }
+    lines.push("");
+  }
+
+  // Full prompt and response as collapsed sections
+  lines.push("---");
+  lines.push("");
+  lines.push("<details>");
+  lines.push(`<summary>Full Prompt (${(rawPrompt || "").length.toLocaleString()} chars)</summary>`);
+  lines.push("");
+  lines.push("```");
+  lines.push(rawPrompt || "(no prompt captured)");
+  lines.push("```");
+  lines.push("");
+  lines.push("</details>");
+  lines.push("");
+  lines.push("<details>");
+  lines.push(`<summary>Raw Response (${(rawResponse || "").length.toLocaleString()} chars)</summary>`);
+  lines.push("");
+  lines.push("```json");
+  lines.push(rawResponse || "(no response captured)");
+  lines.push("```");
+  lines.push("");
+  lines.push("</details>");
+
+  return lines.join("\n");
+}
+
 // Find next actor who needs input during challenge/rebuttal collection.
 // Skips actors that don't need input for this phase (e.g., non-challengers skip CHALLENGE_COLLECT).
 // Returns -1 if no actor needs input.
 function findNextInputActor(phase, startIndex, actors, actorDecisions) {
   for (let i = startIndex; i < actors.length; i++) {
-    if (actorNeedsInput(phase, actors[i].id, actorDecisions)) return i;
+    if (actorNeedsInput(phase, actors[i].id, actorDecisions, actors)) return i;
   }
   return -1;
 }
@@ -110,11 +217,16 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
   const _pendingRef = useRef(initialGameState.pendingOrders || {});
   const [gs, setGs] = useState(() => {
     const { pendingOrders, ...cleanGs } = initialGameState;
+    // Initialize aiState for old saves that don't have it
+    if (!cleanGs.aiState) {
+      cleanGs.aiState = { unitOrderHistory: {}, callLog: [] };
+    }
     return cleanGs;
   });
   const [providers, setProviders] = useState([]);
   const [adjudicatingLLM, setAdjudicatingLLM] = useState(false);
   const [adjPhaseLabel, setAdjPhaseLabel] = useState(null); // override loading spinner text
+  const [adjSubStatus, setAdjSubStatus] = useState(null); // live status from orchestrator (e.g. "Sending...", "Response received")
   const [currentAdjudication, setCurrentAdjudication] = useState(null);
   const [fortuneRolls, setFortuneRolls] = useState(null);
   const [frictionEvents, setFrictionEvents] = useState(null);
@@ -153,6 +265,15 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
   const adjDisplayRef = useRef(null);
   const simMapRef = useRef(null);
   const adjAbortRef = useRef(null);
+  const mountedRef = useRef(true);
+
+  // Abort any in-flight LLM call and mark unmounted
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      adjAbortRef.current?.abort();
+    };
+  }, []);
 
   // Structured order state (per-unit orders replace free-text textareas)
   // Restored from pendingOrders on load so confirmed orders survive save/reload
@@ -173,6 +294,40 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
   const [showPrompt, setShowPrompt] = useState(false);
   const [activeTab, setActiveTab] = useState("narrative");
   const [fogOfWar, setFogOfWar] = useState(true);
+
+  // ── AI player state ──
+  const [aiGenerating, setAiGenerating] = useState(false);
+  const [aiError, setAiError] = useState(null);
+  const aiAbortRef = useRef(null);
+  const aiSealPendingRef = useRef(false); // declared early so the setTimeout in AI planning can set it
+  const [aiCostDismissed, setAiCostDismissed] = useState(() => localStorage.getItem("oc_ai_cost_dismissed") === "1");
+  // Temporary FOW override for AI screenshot capture in all-AI games.
+  // When set, fowMode uses this actor's visibility instead of spectator god-view.
+  const [aiFowOverride, setAiFowOverride] = useState(null);
+  // Commander thought bubbles — AI inner monologue for spectator/debug display
+  // { actorId: "latest thought text" } — persists across turns, updated when new thoughts arrive
+  const [commanderThoughts, setCommanderThoughts] = useState(() => gs.aiState?.commanderThoughts || {});
+  const [showThoughts, setShowThoughts] = useState(false); // toggled by toolbar; auto-true for allAi
+  const [thoughtChannels, setThoughtChannels] = useState([null, null]); // [leftActorId, rightActorId]
+  // All-AI simulation mode (allAi computed after actors is defined below)
+  const [simMode, setSimMode] = useState("step"); // "step" | "auto"
+  const [simStopTurn, setSimStopTurn] = useState("");
+  const [simLoop, setSimLoop] = useState(false);
+  const [simPaused, setSimPaused] = useState(false);
+  const [simTurnLog, setSimTurnLog] = useState([]); // rolling log of turn summaries for spectator view
+  // Controls whether AI planning fires in all-AI mode. Step mode: only true after "Next Turn" click.
+  // Auto mode: true unless paused or stop condition reached. Mixed (not allAi): always true.
+  const simAutoAdvanceRef = useRef(true);
+  // Bumped by "Next Turn" / "Resume" to force AI planning useEffect to re-fire (refs alone don't trigger re-render)
+  const [simKick, setSimKick] = useState(0);
+  const prevTurnRef = useRef(null); // track turn number to detect turn advancement
+
+  // Build effective terrain with modifications (bridges, smoke, obstacles, etc.) applied.
+  // Base terrainData stays immutable — this is a lazy overlay for computation.
+  const effectiveTerrain = useMemo(
+    () => buildEffectiveTerrain(terrainData, gs.terrainMods),
+    [terrainData, gs.terrainMods]
+  );
 
   // ── Map view toggles (feature filter + elevation) ──
   const [showElevBands, setShowElevBands] = useState(false);
@@ -226,6 +381,8 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
   const activeActor = actors[activeActorIndex] || actors[0];
   const actorColor = ACTOR_COLORS[activeActorIndex % ACTOR_COLORS.length];
 
+  const allAi = actors.length > 0 && actors.every(a => isAiActor(a));
+  const aiActors = actors.filter(a => isAiActor(a));
   const isPaused = gs.game.status === "paused";
   const isEnded = gs.game.status === "ended";
   const scaleKey = gs.game?.scale || "grand_tactical";
@@ -233,7 +390,21 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
   const maxTurns = gs.game.config?.maxTurns || 20;
 
   // ── FOW mode for map: what the active actor can see ──
+  // All-AI spectator mode: FOW off (spectator sees everything),
+  // UNLESS aiFowOverride is set (temporary override during AI screenshot capture)
   const fowMode = useMemo(() => {
+    // Temporary override for AI screenshot — show only this actor's view
+    if (aiFowOverride && visibilityState) {
+      const av = visibilityState.actorVisibility?.[aiFowOverride];
+      if (av) return {
+        activeActorId: aiFowOverride,
+        detectedUnits: av.detectedUnits instanceof Set ? av.detectedUnits : new Set(av.detectedUnits || []),
+        contactUnits: av.contactUnits instanceof Set ? av.contactUnits : new Set(av.contactUnits || []),
+        visibleCells: av.visibleCells instanceof Set ? av.visibleCells : new Set(av.visibleCells || []),
+        lastKnown: av.lastKnown || {},
+      };
+    }
+    if (allAi) return null; // spectator sees everything
     if (!fogOfWar || !visibilityState) return null;
     const av = visibilityState.actorVisibility?.[activeActor.id];
     if (!av) return null;
@@ -244,7 +415,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
       visibleCells: av.visibleCells instanceof Set ? av.visibleCells : new Set(av.visibleCells || []),
       lastKnown: av.lastKnown || {},
     };
-  }, [fogOfWar, visibilityState, activeActor.id]);
+  }, [allAi, fogOfWar, visibilityState, activeActor.id, aiFowOverride]);
 
   // ── Per-actor adjudication for the active actor during REVIEW ──
   const activeActorAdj = perActorAdjudication[activeActor.id] || null;
@@ -378,6 +549,31 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
     };
   }, [gs.units, unitOrders, scaleTier, actors]);
 
+  // Build VP + CVP overlay data
+  const vpOverlayData = useMemo(() => {
+    const vc = gs.scenario?.victoryConditions;
+    const actors = gs.scenario?.actors || [];
+    const hasVP = vc?.hexVP?.length > 0;
+    // Collect per-actor CVP hexes: [{ hex, actorId }]
+    const cvpHexes = actors.flatMap(a =>
+      (a.cvpHexes || []).map(hex => ({ hex, actorId: a.id }))
+    );
+    const hasCVP = cvpHexes.length > 0;
+    if (!hasVP && !hasCVP) return null;
+    return {
+      hexVP: hasVP ? vc.hexVP : [],
+      vpControl: gs.game?.vpControl || null,
+      cvpHexes: hasCVP ? cvpHexes : null,
+    };
+  }, [gs.scenario?.victoryConditions, gs.scenario?.actors, gs.game?.vpControl]);
+
+  // Build confirmed-order overlay data (movement ghosts + hex target rings)
+  // Only shown during planning phase so the player sees their order picture
+  const orderOverlayData = useMemo(() => {
+    if (turnPhase !== PHASES.PLANNING) return null;
+    return buildOrderOverlayData(unitOrders, gs.units);
+  }, [unitOrders, gs.units, turnPhase]);
+
   // Fetch available LLM providers on mount (for mid-game model switching)
   useEffect(() => {
     getProviders().then(data => setProviders(data.providers || [])).catch(() => {});
@@ -412,11 +608,244 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
   // L3: Only run during PLANNING to avoid recomputing mid-turn
   useEffect(() => {
     if (turnPhase !== PHASES.PLANNING) return;
-    if (fogOfWar && !visibilityState && gs.units.length > 0 && terrainData) {
-      const vis = computeDetection(gs, terrainData, null, null);
+    if (fogOfWar && !visibilityState && gs.units.length > 0 && effectiveTerrain) {
+      const vis = computeDetection(gs, effectiveTerrain, null, null);
       setVisibilityState(vis);
     }
   }, [fogOfWar, turnPhase]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── AI PLANNING: auto-generate orders for AI-controlled actors ──
+  useEffect(() => {
+    if (turnPhase !== PHASES.PLANNING) return;
+    if (!isAiActor(activeActor)) return;
+    if (aiGenerating) return; // prevent re-entry
+    // All-AI mode: respect step/pause gate
+    if (allAi && !simAutoAdvanceRef.current) return;
+    // Skip if orders were already loaded from save (prevents wasted LLM call on load)
+    if (unitOrders[activeActor.id] && Object.keys(unitOrders[activeActor.id]).length > 0) return;
+
+    let cancelled = false;
+    const abortController = new AbortController();
+    aiAbortRef.current = abortController;
+
+    setAiGenerating(true);
+    setAiError(null);
+
+    // Compute idle units for this actor
+    const aiState = gs.aiState || {};
+    const history = aiState.unitOrderHistory || {};
+    const currentTurn = gs.game.turn;
+    const actorUnits = gs.units.filter(u => u.actor === activeActor.id && u.status !== "destroyed" && u.status !== "eliminated");
+    const idleUnits = actorUnits
+      .filter(u => currentTurn - (history[u.id] || 0) >= 2 && currentTurn > 1)
+      .map(u => ({ ...u, idleTurns: currentTurn - (history[u.id] || 0) }));
+
+    // Build previous turn context from turnLog (rolling 3-5 turn window for AI memory)
+    let previousTurnContext = null;
+    if (gs.turnLog && gs.turnLog.length > 0) {
+      const recentTurns = gs.turnLog.slice(-5);
+      const lastLog = recentTurns[recentTurns.length - 1];
+      previousTurnContext = {
+        // Most recent turn gets full detail
+        narrative: lastLog?.actorNarratives?.[activeActor.id] || lastLog?.adjudication?.narrative || null,
+        intent: lastLog?.actorIntents?.[activeActor.id] || null,
+        // Feed back the AI's own previous inner monologue for continuity
+        commanderThoughts: aiState.commanderThoughts?.[activeActor.id] || null,
+        // Older turns as compressed history (oldest first)
+        history: recentTurns.slice(0, -1).map(entry => ({
+          turn: entry.turn,
+          intent: entry.actorIntents?.[activeActor.id] || null,
+          narrative: entry.actorNarratives?.[activeActor.id] || entry.adjudication?.narrative || null,
+        })),
+      };
+    }
+
+    (async () => {
+      try {
+        // Capture map screenshot for vision-capable models.
+        // In all-AI games the spectator sees god-view, so temporarily apply FOW
+        // for this actor so the screenshot only shows what they'd actually see.
+        const aiModel = activeActor.aiConfig?.model || gs.game.config.llm.model;
+        let mapImageBase64 = null;
+        if (isVisionModel(aiModel)) {
+          if (allAi && visibilityState) {
+            setAiFowOverride(activeActor.id);
+            // Wait two frames: one for React to commit the state, one for canvas repaint
+            await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+          }
+          mapImageBase64 = captureMapForAI(simMapRef);
+          if (allAi) setAiFowOverride(null); // restore spectator view
+        }
+
+        // Merge AI config with adjudication config as fallback for empty provider/model
+        const adjProvider = gs.game.config.llm.provider;
+        const adjModel = gs.game.config.llm.model;
+        const effectiveAiConfig = {
+          engine: activeActor.aiConfig?.engine || "llm",
+          provider: activeActor.aiConfig?.provider || adjProvider,
+          model: activeActor.aiConfig?.model || adjModel,
+          personality: activeActor.aiConfig?.personality || "",
+          profile: activeActor.aiConfig?.profile || "balanced",
+          thinkBudget: activeActor.aiConfig?.thinkBudget || "standard",
+        };
+
+        const result = await generateAIOrdersClient(
+          gs, activeActor.id, effectiveTerrain, effectiveAiConfig,
+          { idleUnits, previousTurnContext, visibilityState, fortuneRolls, frictionEvents, abortSignal: abortController.signal, mapImageBase64 }
+        );
+        if (cancelled) return;
+
+        // Log AI call
+        const logEntry = {
+          actorId: activeActor.id,
+          turn: currentTurn,
+          timestamp: new Date().toISOString(),
+          prompt: (result.rawPrompt || "").slice(0, 2000),
+          response: (result.rawResponse || "").slice(0, 2000),
+          fullPromptLength: result.rawPrompt?.length || 0,
+          fullResponseLength: result.rawResponse?.length || 0,
+          usage: result.usage || null,
+          success: !result.error,
+          error: result.error || null,
+          retryCount: result.retryCount || 0,
+        };
+
+        // Update aiState with call log (rolling 5 entries)
+        setGs(prev => {
+          const prevAiState = prev.aiState || { unitOrderHistory: {}, callLog: [], commanderThoughts: {} };
+          const newCallLog = [...prevAiState.callLog, logEntry].slice(-5);
+          return { ...prev, aiState: { ...prevAiState, callLog: newCallLog } };
+        });
+
+        // Save readable AI transcript to game folder as markdown
+        try {
+          const gameFolder = gs.game?.folder;
+          if (gameFolder) {
+            const md = formatAITranscript({
+              actorId: activeActor.id,
+              actorName: activeActor.name,
+              turn: currentTurn,
+              timestamp: logEntry.timestamp,
+              provider: effectiveAiConfig.provider,
+              model: effectiveAiConfig.model,
+              personality: effectiveAiConfig.personality,
+              usage: result.usage,
+              success: !result.error,
+              error: result.error,
+              retryCount: result.retryCount || 0,
+              unitOrders: result.unitOrders,
+              actorIntent: result.actorIntent,
+              commanderThoughts: result.commanderThoughts,
+              actorUnits,
+              idleUnits,
+              rawPrompt: result.rawPrompt,
+              rawResponse: result.rawResponse,
+            });
+            await fetch("/api/game/save-artifact", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                folder: gameFolder,
+                filename: `ai_transcript_t${currentTurn}_${activeActor.id}.md`,
+                data: md,
+              }),
+            }).catch(() => {}); // non-fatal
+            if (result.reasoning) {
+              await fetch("/api/game/save-artifact", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  folder: gameFolder,
+                  filename: `ai_reasoning_t${currentTurn}_${activeActor.id}.json`,
+                  data: JSON.stringify(result.reasoning, null, 2),
+                }),
+              }).catch(() => {});
+            }
+          }
+        } catch { /* non-fatal */ }
+
+        if (result.error) {
+          setAiError(result.error);
+          setAiGenerating(false);
+          return;
+        }
+
+        // Populate orders and seal
+        setUnitOrders(prev => ({ ...prev, [activeActor.id]: result.unitOrders }));
+        setActorIntents(prev => ({ ...prev, [activeActor.id]: result.actorIntent }));
+
+        // Store commander thoughts for thought bubble display
+        if (result.commanderThoughts) {
+          setCommanderThoughts(prev => ({ ...prev, [activeActor.id]: result.commanderThoughts }));
+        }
+
+        // Update idle unit tracking + persist commander thoughts
+        setGs(prev => {
+          const prevAiState = prev.aiState || { unitOrderHistory: {}, callLog: [], commanderThoughts: {} };
+          const newHistory = { ...prevAiState.unitOrderHistory };
+          for (const uid in result.unitOrders) {
+            const o = result.unitOrders[uid];
+            if (o.movementOrder || o.actionOrder) {
+              newHistory[uid] = currentTurn;
+            }
+          }
+          const newThoughts = { ...(prevAiState.commanderThoughts || {}), [activeActor.id]: result.commanderThoughts || "" };
+          return { ...prev, aiState: { ...prevAiState, unitOrderHistory: newHistory, commanderThoughts: newThoughts } };
+        });
+
+        // Brief delay so state settles, then seal and advance
+        // Use a timeout to ensure React processes the setUnitOrders/setActorIntents above
+        setTimeout(() => {
+          if (!cancelled) {
+            setAiGenerating(false);
+            // Trigger seal — sealAndAdvance reads from unitOrders/actorIntents state
+            // We need to call it via a ref callback pattern since state updates are async
+            aiSealPendingRef.current = true;
+          }
+        }, 100);
+      } catch (e) {
+        if (!cancelled) {
+          setAiError(e.message || "Unknown error");
+          setAiGenerating(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      abortController.abort();
+    };
+  }, [turnPhase, activeActorIndex, simKick]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Ref-based seal trigger: after AI populates orders and state settles, call sealAndAdvance
+  useEffect(() => {
+    if (aiSealPendingRef.current && !aiGenerating && turnPhase === PHASES.PLANNING && isAiActor(activeActor)) {
+      aiSealPendingRef.current = false;
+      sealAndAdvance();
+    }
+  }); // intentionally no deps — runs every render to catch the flag
+
+  // ── AI auto-accept during review/challenge/rebuttal phases ──
+  useEffect(() => {
+    if (!isAiActor(activeActor)) return;
+    if (turnPhase === PHASES.REVIEW) {
+      const timer = setTimeout(() => handleActorAccept(), 300);
+      return () => clearTimeout(timer);
+    }
+    if (turnPhase === PHASES.CHALLENGE_COLLECT) {
+      // AI never challenges — auto-advance
+      const timer = setTimeout(() => handleActorAccept(), 300);
+      return () => clearTimeout(timer);
+    }
+    if (turnPhase === PHASES.REBUTTAL_COLLECT) {
+      // AI auto-submits empty rebuttal, then use findNextInputActor to skip other AI actors
+      const timer = setTimeout(() => {
+        setCounterRebuttals(prev => ({ ...prev, [activeActor.id]: "" }));
+        handleSubmitCounterRebuttal();
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [turnPhase, activeActorIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── MOVEMENT_AND_DETECTION phase: per-hex stepping + detection ──
   // Deferred via setTimeout(0) so the loading spinner can paint before the
@@ -425,7 +854,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
     if (turnPhase !== PHASES.MOVEMENT_AND_DETECTION && turnPhase !== PHASES.COMPUTING_DETECTION) return;
     const timerId = setTimeout(() => {
       const previousVis = visibilityState;
-      const simResult = simulateMovement(gs, terrainData, sealedOrders, previousVis);
+      const simResult = simulateMovement(gs, effectiveTerrain, sealedOrders, previousVis);
 
       setVisibilityState(simResult.finalVisibility);
       setContactEvents(simResult.contactEvents || []);
@@ -480,7 +909,8 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
         contactEvents: contactEvents || [],
       } : null;
 
-      const result = await adjudicate(gs, playerActions, terrainData, loggerRef.current, structuredOrders, detectionContext, abortController.signal);
+      setAdjSubStatus(null);
+      const result = await adjudicate(gs, playerActions, effectiveTerrain, loggerRef.current, structuredOrders, detectionContext, abortController.signal, (status) => setAdjSubStatus(status));
 
       if (cancelled) return;
 
@@ -490,6 +920,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
       if (result.error && !result.adjudication) {
         setError(result.error);
         setAdjudicatingLLM(false);
+        setAdjSubStatus(null);
         setTurnPhase(PHASES.PLANNING);
         setActiveActorIndex(0);
         return;
@@ -521,6 +952,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
       setPerActorAdjudication(perActor);
 
       setAdjudicatingLLM(false);
+      setAdjSubStatus(null);
       setChallengeCount(0);
       setActorDecisions({});
       setChallenges({});
@@ -530,8 +962,8 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
 
       // Transition to REVIEW with first actor
       setActiveActorIndex(0);
-      // Show handoff screen before first actor reviews
-      if (actors.length > 1 && fogOfWar && !SKIP_HANDOFF) {
+      // Show handoff screen before first actor reviews (skip in all-AI — no human to hand off to)
+      if (actors.length > 1 && fogOfWar && !SKIP_HANDOFF && !allAi) {
         setHandoffResumePhase(PHASES.REVIEW);
         setTurnPhase(PHASES.HANDOFF);
       } else {
@@ -735,7 +1167,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
       const result = computeMovePath(
         unit.position,
         orders.movementOrder.target,
-        terrainData,
+        effectiveTerrain,
         unit.movementType || "foot",
         orders.movementOrder.waypoints
       );
@@ -787,7 +1219,9 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
     if (next.nextActorIndex !== null) {
       // More actors to collect orders from
       setActiveActorIndex(next.nextActorIndex);
-      if (fogOfWar) {
+      const nextActor = actors[next.nextActorIndex];
+      // Skip handoff screen for AI actors — they don't need a "ready" screen
+      if (fogOfWar && !isAiActor(nextActor)) {
         setHandoffResumePhase(PHASES.PLANNING);
         setTurnPhase(PHASES.HANDOFF);
       } else {
@@ -860,7 +1294,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
     } else {
       // More actors to review
       setActiveActorIndex(nextIdx);
-      if (actors.length > 1 && fogOfWar && !SKIP_HANDOFF) {
+      if (actors.length > 1 && fogOfWar && !SKIP_HANDOFF && !isAiActor(actors[nextIdx])) {
         setHandoffResumePhase(PHASES.REVIEW);
         setTurnPhase(PHASES.HANDOFF);
       } else {
@@ -894,7 +1328,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
       }
     } else {
       setActiveActorIndex(nextIdx);
-      if (actors.length > 1 && fogOfWar && !SKIP_HANDOFF) {
+      if (actors.length > 1 && fogOfWar && !SKIP_HANDOFF && !isAiActor(actors[nextIdx])) {
         setHandoffResumePhase(PHASES.REVIEW);
         setTurnPhase(PHASES.HANDOFF);
       }
@@ -909,6 +1343,12 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
 
     let newGs = applyStateUpdates(gs, masterAdjudication, playerActions);
 
+    // Store actorIntents in turnLog entry so AI has multi-turn memory of its strategy
+    const lastTurnEntry = newGs.turnLog[newGs.turnLog.length - 1];
+    if (lastTurnEntry) {
+      lastTurnEntry.actorIntents = { ...actorIntents };
+    }
+
     // Save visibility state into game state for persistence
     if (visibilityState) {
       newGs = { ...newGs, visibilityState: serializeVisibility(visibilityState) };
@@ -917,6 +1357,43 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
     if (pendingResult?.promptLog) {
       const trimmedLog = newGs.promptLog.map(({ rawResponse, ...rest }) => rest);
       newGs = { ...newGs, promptLog: [...trimmedLog, pendingResult.promptLog] };
+    }
+
+    // Persist adjudicator accuracy score for feedback loop next turn
+    if (pendingResult?.adjudicatorScore) {
+      const prev = newGs.game.adjudicatorScore;
+      const prevCumulative = prev?.cumulative || { corrections: 0, turns: 0, totalAccuracy: 0 };
+      const last = pendingResult.adjudicatorScore.lastTurn;
+      newGs = {
+        ...newGs,
+        game: {
+          ...newGs.game,
+          adjudicatorScore: {
+            lastTurn: last,
+            cumulative: {
+              corrections: prevCumulative.corrections + last.positionCorrections + last.rangeViolations,
+              turns: prevCumulative.turns + 1,
+              avgAccuracy: Math.round(
+                (prevCumulative.totalAccuracy + last.accuracy) / (prevCumulative.turns + 1)
+              ),
+              totalAccuracy: prevCumulative.totalAccuracy + last.accuracy
+            }
+          }
+        }
+      };
+    }
+
+    // Track forgotten units across turns for escalating LLM reminders.
+    // Reset to null when the LLM covers all units; increment on failure.
+    if (pendingResult?.forgottenUnits) {
+      newGs = {
+        ...newGs,
+        game: { ...newGs.game, forgottenUnits: pendingResult.forgottenUnits }
+      };
+    } else {
+      // LLM covered all units — clear the streak
+      const { forgottenUnits: _discard, ...cleanGame } = newGs.game;
+      newGs = { ...newGs, game: cleanGame };
     }
 
     // Advance turn
@@ -964,6 +1441,67 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
     }
   }, [turnPhase, applyMasterAdjudication]);
 
+  // ── Commander thought bubbles: initialize channels and auto-show for all-AI ──
+  useEffect(() => {
+    if (aiActors.length === 0) return;
+    // Initialize thought channels to first two AI actors
+    setThoughtChannels(prev => {
+      if (prev[0] !== null) return prev; // already initialized
+      return [aiActors[0]?.id || null, aiActors[1]?.id || null];
+    });
+    // Auto-show for all-AI games
+    if (allAi) setShowThoughts(true);
+  }, [allAi, aiActors.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── All-AI simulation control: manage auto-advance after turn resolution ──
+  useEffect(() => {
+    if (!allAi) return;
+    const currentTurn = gs.game.turn;
+    const prevTurn = prevTurnRef.current;
+    prevTurnRef.current = currentTurn;
+
+    // Only act on turn advancement (prevTurn null = initial mount, skip)
+    if (prevTurn === null || currentTurn <= prevTurn) return;
+
+    // Add turn summary to log (from the turn that just completed)
+    const lastLog = gs.turnLog?.[gs.turnLog.length - 1];
+    if (lastLog) {
+      const summary = lastLog.narrative
+        ? lastLog.narrative.slice(0, 120) + (lastLog.narrative.length > 120 ? "..." : "")
+        : "Turn resolved.";
+      setSimTurnLog(prev => [...prev.slice(-49), { turn: currentTurn - 1, summary }]); // keep last 50
+    }
+
+    // Check stop conditions
+    const stopTurn = simStopTurn ? parseInt(simStopTurn, 10) : 0;
+    if (stopTurn > 0 && currentTurn > stopTurn) {
+      if (simLoop) {
+        // Loop: would need to reset game state — for now just pause (full reset is Phase 3+)
+        simAutoAdvanceRef.current = false;
+        setSimPaused(true);
+        return;
+      }
+      // Stop: switch to step mode and pause
+      simAutoAdvanceRef.current = false;
+      setSimMode("step");
+      return;
+    }
+
+    // Check game ended
+    if (gs.game.status === "ended") {
+      simAutoAdvanceRef.current = false;
+      return;
+    }
+
+    // Set auto-advance based on mode
+    if (simMode === "auto" && !simPaused) {
+      simAutoAdvanceRef.current = true;
+    } else {
+      // Step mode: block until "Next Turn" clicked
+      simAutoAdvanceRef.current = false;
+    }
+  }, [gs.game.turn]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Re-adjudicate with challenges + counter-rebuttals ──
   const handleCancelAdjudication = useCallback(() => {
     if (adjAbortRef.current) {
@@ -971,6 +1509,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
       adjAbortRef.current = null;
     }
     setAdjudicatingLLM(false);
+    setAdjSubStatus(null);
     setError("Adjudication cancelled");
 
     if (turnPhase === PHASES.RE_ADJUDICATING) {
@@ -1015,9 +1554,10 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
       };
       const detectionContextForRebuttal = visibilityState ? { actorVisibility: visibilityState.actorVisibility } : null;
 
+      setAdjSubStatus(null);
       const result = await adjudicateRebuttal(
-        gs, playerActions, terrainData, pendingResult, challenges, loggerRef.current, counterRebuttals, abortController.signal,
-        structuredOrdersForRebuttal, detectionContextForRebuttal
+        gs, playerActions, effectiveTerrain, pendingResult, challenges, loggerRef.current, counterRebuttals, abortController.signal,
+        structuredOrdersForRebuttal, detectionContextForRebuttal, (status) => setAdjSubStatus(status)
       );
 
       if (abortController.signal.aborted) return;
@@ -1077,6 +1617,7 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
       adjAbortRef.current = null;
       setAdjudicatingLLM(false);
       setAdjPhaseLabel(null);
+      setAdjSubStatus(null);
     }
   }, [gs, actors, sealedOrders, terrainData, pendingResult, challenges, counterRebuttals, visibilityState, fogOfWar]);
 
@@ -1195,8 +1736,8 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
 
   const handleExportBriefing = useCallback((actorId) => {
     const md = actorId
-      ? buildActorBriefing(gs, actorId, terrainData, { fortuneRolls, frictionEvents, visibilityState })
-      : buildFullBriefing(gs, terrainData, { fortuneRolls, frictionEvents });
+      ? buildActorBriefing(gs, actorId, effectiveTerrain, { fortuneRolls, frictionEvents, visibilityState })
+      : buildFullBriefing(gs, effectiveTerrain, { fortuneRolls, frictionEvents });
     const actorName = actorId
       ? (gs.scenario.actors.find(a => a.id === actorId)?.name || actorId).replace(/\s+/g, "_")
       : "full";
@@ -1274,14 +1815,16 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
       pendingOrders: { unitOrders, actorIntents, sealedOrders, activeActorIndex },
     };
     saveGameState(toSave).then(r => {
+      if (!mountedRef.current) return;
       if (r.ok) {
         setSaveStatus("saved");
         setError(null);
-        setTimeout(() => setSaveStatus(null), 2000);
+        setTimeout(() => { if (mountedRef.current) setSaveStatus(null); }, 2000);
       } else {
         setSaveStatus("error");
       }
     }).catch(e => {
+      if (!mountedRef.current) return;
       setSaveStatus("error");
       setError("Save failed: " + e.message);
     });
@@ -1399,14 +1942,20 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
             {isPaused && <Button variant="success" onClick={handleResume} size="sm">Resume</Button>}
             <Button variant="danger" onClick={handleEnd} size="sm">End</Button>
           </>}
+          {aiActors.length > 0 && (
+            <Button variant={showThoughts ? "primary" : "secondary"} onClick={() => setShowThoughts(v => !v)} size="sm" title="Toggle AI commander thoughts">
+              💭 {showThoughts ? "Thoughts: ON" : "Thoughts: Off"}
+            </Button>
+          )}
         </div>
       </div>
 
       {/* Main split layout */}
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
 
-        {/* Left: Map */}
-        <div style={{ flex: "0 0 45%", borderRight: `1px solid ${colors.border.subtle}`, position: "relative" }}>
+        {/* Left: Map + thought bubbles */}
+        <div style={{ flex: "0 0 45%", borderRight: `1px solid ${colors.border.subtle}`, display: "flex", flexDirection: "column" }}>
+          <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
           <SimMap
             ref={simMapRef}
             terrainData={terrainData}
@@ -1423,6 +1972,9 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
             movePath={movePath}
             proposedMoves={proposedMoves}
             airOverlayData={airOverlayData}
+            orderOverlayData={orderOverlayData}
+            terrainModsData={gs.terrainMods}
+            vpOverlayData={vpOverlayData}
             activeFeatures={activeFeatures}
             showElevBands={showElevBands}
           />
@@ -1572,6 +2124,69 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
           })()}
         </div>
 
+        {/* Commander Thought Bubbles — AI inner monologue display */}
+        {showThoughts && aiActors.length > 0 && (
+          <div style={{
+            display: "flex", gap: 12, padding: "8px 12px",
+            borderTop: `1px solid ${colors.border.subtle}`,
+            background: colors.bg.surface, flexShrink: 0,
+          }}>
+            {(aiActors.length === 1 ? [0] : [0, 1]).map(i => {
+              const actorId = thoughtChannels[i];
+              const actor = actors.find(a => a.id === actorId);
+              const actorIdx = actors.indexOf(actor);
+              const color = actorIdx >= 0 ? ACTOR_COLORS[actorIdx % ACTOR_COLORS.length] : "#888";
+              const text = commanderThoughts[actorId] || "";
+              return (
+                <div key={i} style={{
+                  flex: 1, border: `2px solid ${color}`, borderRadius: radius.md,
+                  background: colors.bg.input, display: "flex", flexDirection: "column",
+                  maxHeight: 160, minHeight: 80,
+                }}>
+                  {/* Header: actor name or dropdown for 3+ actors */}
+                  <div style={{
+                    padding: "4px 8px", background: color + "22",
+                    borderBottom: `1px solid ${color}40`,
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    flexShrink: 0,
+                  }}>
+                    {aiActors.length <= 2 ? (
+                      <span style={{ fontWeight: typography.weight.semibold, color, fontSize: typography.body.sm }}>{actor?.name || "—"}</span>
+                    ) : (
+                      <select value={actorId || ""} onChange={e => {
+                        setThoughtChannels(prev => {
+                          const next = [...prev];
+                          next[i] = e.target.value;
+                          return next;
+                        });
+                      }} style={{
+                        background: "transparent", border: "none", color,
+                        fontWeight: typography.weight.semibold, fontSize: typography.body.sm,
+                        fontFamily: typography.fontFamily, cursor: "pointer",
+                      }}>
+                        {aiActors.map(a => (
+                          <option key={a.id} value={a.id}>{a.name}</option>
+                        ))}
+                      </select>
+                    )}
+                    <span style={{ fontSize: 11, opacity: 0.6 }}>💭</span>
+                  </div>
+                  {/* Scrollable thought text */}
+                  <div style={{
+                    padding: "6px 10px", flex: 1, overflowY: "auto",
+                    fontSize: typography.body.sm, lineHeight: 1.4, whiteSpace: "pre-wrap",
+                    fontStyle: text ? "normal" : "italic",
+                    opacity: text ? 1 : 0.5, color: colors.text.secondary,
+                  }}>
+                    {text || "Awaiting commander thoughts..."}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        </div>
+
         {/* Right: Turn panel */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           <div style={{ flex: 1, overflowY: "auto", padding: space[4] }}>
@@ -1636,8 +2251,158 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
               </div>
             )}
 
-            {/* Structured Order Input (Planning Phase) — filtered to active actor */}
-            {!isEnded && turnPhase === PHASES.PLANNING && (
+            {/* AI Cost Notice — one-time per session, shown before first AI generation */}
+            {!isEnded && turnPhase === PHASES.PLANNING && isAiActor(activeActor) && aiGenerating && !aiCostDismissed && (
+              <Card style={{ marginBottom: space[3], padding: space[3], border: `1px solid ${colors.accent.amber}40`, background: `${colors.accent.amber}08` }}>
+                <div style={{ fontSize: typography.body.sm, color: colors.text.secondary, marginBottom: space[2] }}>
+                  AI players make LLM API calls each turn using your configured provider/model.
+                  Estimated ~5,000-10,000 tokens per AI actor per turn.
+                </div>
+                <Button variant="secondary" size="sm" onClick={() => { localStorage.setItem("oc_ai_cost_dismissed", "1"); setAiCostDismissed(true); }}>
+                  Got it
+                </Button>
+              </Card>
+            )}
+
+            {/* AI Splash Screen — shown during AI order generation (non-spectator mode) */}
+            {!isEnded && turnPhase === PHASES.PLANNING && isAiActor(activeActor) && !allAi && (
+              <div style={{ textAlign: "center", padding: space[6], animation: "fadeIn 0.3s ease-out" }}>
+                <div style={{ width: 40, height: 40, border: `3px solid ${colors.border.subtle}`, borderTop: `3px solid ${colors.accent.purple}`, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 16px" }} />
+                <div style={{ fontSize: typography.heading.md, color: colors.accent.purple, marginBottom: space[2], animation: "pulse 2s infinite" }}>
+                  Getting orders from {activeActor.name || activeActor.id}...
+                </div>
+                {activeActor.aiConfig?.personality && (
+                  <div style={{ fontSize: typography.body.sm, color: colors.text.muted, marginBottom: space[3], fontStyle: "italic", maxWidth: 400, margin: "0 auto" }}>
+                    "{activeActor.aiConfig.personality.slice(0, 120)}{activeActor.aiConfig.personality.length > 120 ? "..." : ""}"
+                  </div>
+                )}
+                {/* Token usage from last call */}
+                {(() => {
+                  const lastCall = (gs.aiState?.callLog || []).filter(c => c.actorId === activeActor.id).slice(-1)[0];
+                  return lastCall?.usage ? (
+                    <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: space[3] }}>
+                      Last call: {lastCall.usage.input_tokens?.toLocaleString() || "?"} tokens in / {lastCall.usage.output_tokens?.toLocaleString() || "?"} tokens out
+                    </div>
+                  ) : null;
+                })()}
+                {aiError && (
+                  <div style={{ marginBottom: space[3] }}>
+                    <div style={{ fontSize: typography.body.sm, color: colors.accent.red, marginBottom: space[2], padding: space[2], background: colors.glow.red, borderRadius: radius.md }}>
+                      {aiError}
+                    </div>
+                    <div style={{ display: "flex", gap: space[2], justifyContent: "center" }}>
+                      <Button variant="secondary" onClick={() => { setAiError(null); setAiGenerating(false); setSimKick(k => k + 1); }}>
+                        Retry
+                      </Button>
+                      <Button variant="ghost" onClick={() => {
+                        // Skip — HOLD all units
+                        const fallbackOrders = {};
+                        gs.units.filter(u => u.actor === activeActor.id && u.status !== "destroyed" && u.status !== "eliminated")
+                          .forEach(u => { fallbackOrders[u.id] = { movementOrder: null, actionOrder: null, intent: "" }; });
+                        setUnitOrders(prev => ({ ...prev, [activeActor.id]: fallbackOrders }));
+                        setActorIntents(prev => ({ ...prev, [activeActor.id]: "AI skipped — HOLD all units" }));
+                        setAiError(null);
+                        setAiGenerating(false);
+                        setTimeout(() => { aiSealPendingRef.current = true; }, 50);
+                      }}>
+                        Skip (HOLD All)
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                {!aiError && (
+                  <Button variant="ghost" size="sm" onClick={() => {
+                    if (aiAbortRef.current) aiAbortRef.current.abort();
+                    const fallbackOrders = {};
+                    gs.units.filter(u => u.actor === activeActor.id && u.status !== "destroyed" && u.status !== "eliminated")
+                      .forEach(u => { fallbackOrders[u.id] = { movementOrder: null, actionOrder: null, intent: "" }; });
+                    setUnitOrders(prev => ({ ...prev, [activeActor.id]: fallbackOrders }));
+                    setActorIntents(prev => ({ ...prev, [activeActor.id]: "AI cancelled — HOLD all units" }));
+                    setAiGenerating(false);
+                    setTimeout(() => { aiSealPendingRef.current = true; }, 50);
+                  }}>
+                    Cancel
+                  </Button>
+                )}
+              </div>
+            )}
+
+            {/* All-AI Spectator Status Bar — shown instead of splash when all actors are AI */}
+            {!isEnded && allAi && (aiGenerating || adjudicatingLLM) && (
+              <div style={{ padding: `${space[2]}px ${space[3]}px`, background: `${colors.accent.purple}10`, border: `1px solid ${colors.accent.purple}30`, borderRadius: radius.md, marginBottom: space[3], display: "flex", alignItems: "center", gap: space[2] }}>
+                <div style={{ width: 16, height: 16, border: `2px solid ${colors.border.subtle}`, borderTop: `2px solid ${colors.accent.purple}`, borderRadius: "50%", animation: "spin 0.8s linear infinite", flexShrink: 0 }} />
+                <div style={{ fontSize: typography.body.sm, color: colors.accent.purple }}>
+                  {aiGenerating ? `Getting orders from ${activeActor.name}...` : `Adjudicating Turn ${gs.game.turn}...`}
+                </div>
+                <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginLeft: "auto" }}>
+                  Turn {gs.game.turn}{simStopTurn ? ` / ${simStopTurn}` : ""}
+                </div>
+              </div>
+            )}
+
+            {/* All-AI Simulation Controls */}
+            {!isEnded && allAi && (
+              <Card style={{ marginBottom: space[3], padding: space[2] }}>
+                <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: space[2], letterSpacing: 1, textTransform: "uppercase", fontWeight: typography.weight.semibold }}>Simulation Controls</div>
+                <div style={{ display: "flex", gap: space[2], alignItems: "center", marginBottom: space[2], flexWrap: "wrap" }}>
+                  <select value={simMode} onChange={e => setSimMode(e.target.value)}
+                    style={{ padding: "4px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.xs, fontFamily: typography.fontFamily }}>
+                    <option value="step">Step-by-Step</option>
+                    <option value="auto">Auto-Play</option>
+                  </select>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <label style={{ fontSize: typography.body.xs, color: colors.text.muted }}>Stop at:</label>
+                    <input type="number" min="1" value={simStopTurn} onChange={e => setSimStopTurn(e.target.value)}
+                      placeholder="—"
+                      style={{ width: 48, padding: "3px 6px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.xs, fontFamily: typography.monoFamily }} />
+                  </div>
+                  <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: typography.body.xs, color: colors.text.secondary, cursor: "pointer" }}>
+                    <input type="checkbox" checked={simLoop} onChange={e => setSimLoop(e.target.checked)} style={{ accentColor: colors.accent.purple }} />
+                    Loop
+                  </label>
+                </div>
+                <div style={{ display: "flex", gap: space[2] }}>
+                  {simMode === "step" ? (
+                    <Button variant="secondary" size="sm" onClick={() => { simAutoAdvanceRef.current = true; setSimPaused(false); setSimKick(k => k + 1); }}
+                      disabled={aiGenerating || adjudicatingLLM}>
+                      Next Turn
+                    </Button>
+                  ) : (
+                    <Button variant="secondary" size="sm" onClick={() => {
+                      const next = !simPaused;
+                      setSimPaused(next);
+                      if (!next) { simAutoAdvanceRef.current = true; setSimKick(k => k + 1); } // resume
+                      else { simAutoAdvanceRef.current = false; } // pause
+                    }}>
+                      {simPaused ? "Resume" : "Pause"}
+                    </Button>
+                  )}
+                </div>
+                {/* All-AI error display */}
+                {aiError && (
+                  <div style={{ padding: `${space[2]}px`, background: `${colors.accent.red}10`, border: `1px solid ${colors.accent.red}30`, borderRadius: radius.sm, marginTop: space[2], fontSize: typography.body.xs, color: colors.accent.red }}>
+                    <div style={{ marginBottom: space[1] }}>AI Error: {aiError}</div>
+                    <div style={{ display: "flex", gap: space[2] }}>
+                      <Button variant="secondary" size="sm" onClick={() => { setAiError(null); setAiGenerating(false); setSimKick(k => k + 1); }}>Retry</Button>
+                      <Button variant="ghost" size="sm" onClick={() => { setAiError(null); setAiGenerating(false); setTimeout(() => { aiSealPendingRef.current = true; }, 50); }}>Skip (HOLD All)</Button>
+                    </div>
+                  </div>
+                )}
+                {/* Turn summary log */}
+                {simTurnLog.length > 0 && (
+                  <div style={{ marginTop: space[2], maxHeight: 150, overflowY: "auto", fontSize: typography.body.xs, color: colors.text.muted }}>
+                    {simTurnLog.map((entry, i) => (
+                      <div key={i} style={{ padding: "2px 0", borderBottom: `1px solid ${colors.border.subtle}` }}>
+                        <span style={{ color: colors.text.secondary, fontFamily: typography.monoFamily }}>T{entry.turn}</span> {entry.summary}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Card>
+            )}
+
+            {/* Structured Order Input (Planning Phase) — filtered to active actor, hidden for AI actors */}
+            {!isEnded && turnPhase === PHASES.PLANNING && !isAiActor(activeActor) && (
               <OrderRoster
                 units={gs.units.filter(u => u.status !== "destroyed" && u.status !== "eliminated")}
                 actors={gs.scenario.actors}
@@ -1654,8 +2419,8 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
               />
             )}
 
-            {/* Reinforcement Panel (Planning Phase) */}
-            {!isEnded && turnPhase === PHASES.PLANNING && (
+            {/* Reinforcement Panel (Planning Phase) — hidden for AI actors */}
+            {!isEnded && turnPhase === PHASES.PLANNING && !isAiActor(activeActor) && (
               <ReinforcementPanel
                 gameState={gs}
                 terrainData={terrainData}
@@ -1788,11 +2553,11 @@ export default function SimGame({ onBack, gameState: initialGameState, terrainDa
                    turnPhase === PHASES.RE_ADJUDICATING ? "Re-adjudicating with challenges..." :
                    `Adjudicating Turn ${gs.game.turn}...`}
                 </div>
-                <div style={{ fontSize: typography.body.sm, color: colors.text.muted }}>
+                <div style={{ fontSize: typography.body.sm, color: adjSubStatus?.startsWith("Error") || adjSubStatus?.startsWith("API error") ? colors.accent.red : colors.text.muted, transition: "color 0.3s" }}>
                   {adjPhaseLabel ? "Checking for fog-of-war leaks in narrative" :
                    turnPhase === PHASES.COMPUTING_DETECTION
                     ? "Calculating line of sight and detection probabilities"
-                    : `Sending to ${gs.game.config.llm.provider} (${gs.game.config.llm.model})`}
+                    : adjSubStatus || `Sending to ${gs.game.config.llm.provider} (${gs.game.config.llm.model})`}
                 </div>
                 {adjudicatingLLM && (
                   <Button

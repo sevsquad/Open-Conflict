@@ -13,6 +13,7 @@
 
 import { positionToLabel } from "./prompts.js";
 import { fetchWithTimeout } from "./orchestrator.js";
+import { getTurnBudgetKey } from "./llmBudget.js";
 
 // Rolling log of the last 6 audit exchanges, saved to server for debugging.
 // Fire-and-forget — never blocks adjudication.
@@ -223,6 +224,7 @@ export async function auditActorNarrative(masterAdjudication, actorId, visibilit
   );
 
   const auditModel = getAuditModel(llmConfig.provider) || llmConfig.model;
+  const budgetKey = getTurnBudgetKey(gameState);
 
   // Audit calls use fast/small models (haiku-class) — 90s is generous
   const AUDIT_TIMEOUT_MS = 90_000;
@@ -237,6 +239,7 @@ export async function auditActorNarrative(masterAdjudication, actorId, visibilit
         temperature: 0,
         messages: [{ role: "user", content: prompt }],
         max_tokens: 4096,
+        budget_key: budgetKey,
       }),
     }, AUDIT_TIMEOUT_MS, abortSignal);
 

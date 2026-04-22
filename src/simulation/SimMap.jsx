@@ -25,6 +25,9 @@ const SimMap = forwardRef(function SimMap({
   strategicGrid = null,       // from buildStrategicGrid() — enables strategic rendering
   strategicMode = false,      // true = render strategic hexes
   airOverlayData = null,      // { adUnits, flightPaths, casSectors } for air viz
+  orderOverlayData = null,    // { ghosts, rings } — confirmed order visualization
+  terrainModsData = null,     // gameState.terrainMods — smoke, fortifications, obstacles, bridge status
+  vpOverlayData = null,       // { hexVP, vpControl } — VP hex markers
   activeFeatures = null,      // Set of feature names to show (null = all)
   showElevBands = false,      // true = hypsometric elevation view
 }, ref) {
@@ -55,8 +58,9 @@ const SimMap = forwardRef(function SimMap({
   }, [onCellHover]);
 
   // Measure mode: local toggle overrides default "navigate" but not external modes like "place_unit"
-  // "target_hex" is our order-targeting mode — MapView uses "place_unit" for click-to-select behavior
-  const effectiveMode = interactionMode === "target_hex" ? "place_unit"
+  // "target_hex", "place_vp", "place_cvp" all use MapView's "place_unit" click behavior
+  const effectiveMode = (interactionMode === "target_hex" || interactionMode === "place_vp" || interactionMode === "place_cvp")
+    ? "place_unit"
     : measuring && interactionMode === "navigate" ? "measure"
     : interactionMode;
 
@@ -106,6 +110,9 @@ const SimMap = forwardRef(function SimMap({
         strategicGrid={strategicGrid}
         strategicMode={strategicMode}
         airOverlayData={airOverlayData}
+        orderOverlayData={orderOverlayData}
+        terrainModsData={terrainModsData}
+        vpOverlayData={vpOverlayData}
         activeFeatures={activeFeatures}
         showElevBands={showElevBands}
       />
@@ -203,6 +210,16 @@ const SimMap = forwardRef(function SimMap({
           zIndex: 20,
         }}>
           Select target hex for {targetingMode.orderType} — click hex, Esc to cancel
+        </div>
+      )}
+      {/* CVP placement mode indicator */}
+      {interactionMode === "place_cvp" && (
+        <div style={{
+          position: "absolute", top: 4, left: 4, fontSize: 10, color: "#EF4444",
+          fontFamily: "monospace", background: "rgba(0,0,0,0.7)", padding: "2px 8px", borderRadius: 3,
+          border: "1px solid rgba(239,68,68,0.3)", pointerEvents: "none",
+        }}>
+          Placing CVP hex — click to place, Esc to cancel
         </div>
       )}
     </div>
