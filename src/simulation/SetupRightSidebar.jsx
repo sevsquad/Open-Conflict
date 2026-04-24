@@ -10,6 +10,7 @@ import {
   POSTURES, SCALE_TIERS, isSystemActive, MOVEMENT_TYPES,
 } from "./schemas.js";
 import { ERA_DEFINITIONS, getTemplatesForScale } from "./eraTemplates.js";
+import { getRtsTemplateOptions } from "../rts/rtsStart.js";
 
 // ═══════════════════════════════════════════════════════════════
 // SETUP RIGHT SIDEBAR — Unit Palette, Placed Units, Properties
@@ -50,14 +51,25 @@ function positionDisplay(pos) {
   return pos;
 }
 
-export default function SetupRightSidebar({ state, dispatch, terrainData, onUpdateCell, open, onToggle }) {
+function canCarryPassengersInSetup(unit) {
+  return unit?.movementType === "helicopter" && (unit.type === "transport" || (unit.transportCapacity || 0) > 0);
+}
+
+function canEmbarkInSetup(unit) {
+  return (unit?.movementType || "foot") === "foot";
+}
+
+export default function SetupRightSidebar({ state, dispatch, terrainData, onUpdateCell, open, onToggle, modeVariant = "turn" }) {
   const {
     actors, units, scale, eraSelections,
     interactionMode, placementPayload, selectedUnitId,
   } = state;
+  const isRtsMode = modeVariant === "rts";
 
   const scaleTier = SCALE_TIERS[scale]?.tier || 3;
-  const branches = getBranchesForScale(scale);
+  const branches = isRtsMode
+    ? Array.from(new Set(getRtsTemplateOptions(scale, "cold_war").map((template) => template.baseType)))
+    : getBranchesForScale(scale);
   const echelons = getEchelonsForScale(scale);
 
   const selectedUnit = selectedUnitId ? units.find(u => u.id === selectedUnitId) : null;
@@ -132,8 +144,10 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
           <CollapsibleSection title="Unit Palette" accent={colors.accent.amber}>
             {actors.map((actor, ai) => {
               const actorColor = ACTOR_COLORS[ai % ACTOR_COLORS.length];
-              const selectedEra = eraSelections?.[actor.id] || "default";
-              const templates = getTemplatesForScale(selectedEra, scale);
+              const selectedEra = isRtsMode ? "cold_war" : (eraSelections?.[actor.id] || "default");
+              const templates = isRtsMode
+                ? getRtsTemplateOptions(scale, "cold_war")
+                : getTemplatesForScale(selectedEra, scale);
               return (
                 <div key={actor.id} style={{ marginBottom: space[3] }}>
                   <div style={{
@@ -143,21 +157,31 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
                     <div style={{ width: 8, height: 8, borderRadius: "50%", background: actorColor }} />
                     {actor.name}
                   </div>
-                  {/* Era dropdown */}
-                  <select
-                    value={selectedEra}
-                    onChange={e => dispatch({ type: "SET_ACTOR_ERA", actorId: actor.id, eraId: e.target.value })}
-                    style={{
+                  {isRtsMode ? (
+                    <div style={{
                       width: "100%", padding: "4px 6px", marginBottom: space[1],
                       background: colors.bg.input, border: `1px solid ${colors.border.subtle}`,
-                      borderRadius: radius.sm, color: colors.text.primary,
+                      borderRadius: radius.sm, color: colors.text.muted,
                       fontSize: typography.body.xs, fontFamily: typography.fontFamily,
-                    }}
-                  >
-                    {ERA_DEFINITIONS.map(era => (
-                      <option key={era.id} value={era.id}>{era.label}</option>
-                    ))}
-                  </select>
+                    }}>
+                      Cold War RTS roster
+                    </div>
+                  ) : (
+                    <select
+                      value={selectedEra}
+                      onChange={e => dispatch({ type: "SET_ACTOR_ERA", actorId: actor.id, eraId: e.target.value })}
+                      style={{
+                        width: "100%", padding: "4px 6px", marginBottom: space[1],
+                        background: colors.bg.input, border: `1px solid ${colors.border.subtle}`,
+                        borderRadius: radius.sm, color: colors.text.primary,
+                        fontSize: typography.body.xs, fontFamily: typography.fontFamily,
+                      }}
+                    >
+                      {ERA_DEFINITIONS.map(era => (
+                        <option key={era.id} value={era.id}>{era.label}</option>
+                      ))}
+                    </select>
+                  )}
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
                     {templates.map(tpl => {
                       const isActive = interactionMode === "place_unit" &&
@@ -250,15 +274,41 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
           {/* Unit Properties (when selected) */}
           {selectedUnit && (
             <CollapsibleSection title="Unit Properties" accent={ACTOR_COLORS[actors.findIndex(a => a.id === selectedUnit.actor) % ACTOR_COLORS.length]}>
-              <div style={{ marginBottom: space[2] }}>
-                <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Name</div>
-                <input
-                  value={selectedUnit.name}
+	              <div style={{ marginBottom: space[2] }}>
+	                <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Name</div>
+	                <input
+	                  value={selectedUnit.name}
                   onChange={e => dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "name", value: e.target.value })}
                   placeholder="Unit name"
-                  style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily, outline: "none", boxSizing: "border-box" }}
-                />
-              </div>
+	                  style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily, outline: "none", boxSizing: "border-box" }}
+	                />
+	              </div>
+
+	              <div style={{ display: "flex", gap: space[1], marginBottom: space[2] }}>
+	                <div style={{ flex: 1 }}>
+	                  <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Side</div>
+	                  <select
+	                    value={selectedUnit.actor}
+	                    onChange={e => dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "actor", value: e.target.value })}
+	                    style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}
+	                  >
+	                    {actors.map(actor => <option key={actor.id} value={actor.id}>{actor.name}</option>)}
+	                  </select>
+	                </div>
+	                <div style={{ flex: 1 }}>
+	                  <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Status</div>
+	                  <select
+	                    value={selectedUnit.status || "ready"}
+	                    onChange={e => dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "status", value: e.target.value })}
+	                    style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}
+	                  >
+	                    <option value="ready">Ready</option>
+	                    <option value="damaged">Damaged</option>
+	                    <option value="engaged">Engaged</option>
+	                    <option value="exhausted">Exhausted</option>
+	                  </select>
+	                </div>
+	              </div>
 
               {/* Branch + Echelon side by side */}
               <div style={{ display: "flex", gap: space[1], marginBottom: space[2] }}>
@@ -371,18 +421,58 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
                 </div>
               )}
 
-              {/* Fuel — Tiers 2-4 */}
-              {isSystemActive("fuel_tracking", scaleTier) && selectedUnit.fuel !== undefined && (
-                <div style={{ marginBottom: space[2] }}>
-                  <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2, display: "flex", justifyContent: "space-between" }}>
-                    <span>Fuel</span>
+	              {/* Fuel — Tiers 2-4 */}
+	              {isSystemActive("fuel_tracking", scaleTier) && selectedUnit.fuel !== undefined && (
+	                <div style={{ marginBottom: space[2] }}>
+	                  <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2, display: "flex", justifyContent: "space-between" }}>
+	                    <span>Fuel</span>
                     <span style={{ color: selectedUnit.fuel > 50 ? colors.accent.green : selectedUnit.fuel > 25 ? colors.accent.amber : colors.accent.red, fontFamily: typography.monoFamily, fontWeight: typography.weight.semibold }}>{selectedUnit.fuel}%</span>
                   </div>
-                  <input type="range" min="0" max="100" step="5" value={selectedUnit.fuel}
-                    onChange={e => dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "fuel", value: parseInt(e.target.value) })}
-                    style={{ width: "100%", accentColor: selectedUnit.fuel > 50 ? colors.accent.green : selectedUnit.fuel > 25 ? colors.accent.amber : colors.accent.red }} />
-                </div>
-              )}
+	                  <input type="range" min="0" max="100" step="5" value={selectedUnit.fuel}
+	                    onChange={e => dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "fuel", value: parseInt(e.target.value) })}
+	                    style={{ width: "100%", accentColor: selectedUnit.fuel > 50 ? colors.accent.green : selectedUnit.fuel > 25 ? colors.accent.amber : colors.accent.red }} />
+	                </div>
+	              )}
+
+	              {isRtsMode && (
+	                <div style={{ marginBottom: space[2] }}>
+	                  <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2, display: "flex", justifyContent: "space-between" }}>
+	                    <span>Readiness</span>
+	                    <span style={{ color: (selectedUnit.readiness ?? 100) > 50 ? colors.accent.green : (selectedUnit.readiness ?? 100) > 25 ? colors.accent.amber : colors.accent.red, fontFamily: typography.monoFamily, fontWeight: typography.weight.semibold }}>
+	                      {selectedUnit.readiness ?? 100}%
+	                    </span>
+	                  </div>
+	                  <input
+	                    type="range"
+	                    min="0"
+	                    max="100"
+	                    step="5"
+	                    value={selectedUnit.readiness ?? 100}
+	                    onChange={e => dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "readiness", value: parseInt(e.target.value) })}
+	                    style={{ width: "100%", accentColor: (selectedUnit.readiness ?? 100) > 50 ? colors.accent.green : (selectedUnit.readiness ?? 100) > 25 ? colors.accent.amber : colors.accent.red }}
+	                  />
+	                </div>
+	              )}
+
+	              {isRtsMode && (
+	                <div style={{ marginBottom: space[2] }}>
+	                  <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2, display: "flex", justifyContent: "space-between" }}>
+	                    <span>Munitions</span>
+	                    <span style={{ color: (selectedUnit.munitions ?? 100) > 50 ? colors.accent.green : (selectedUnit.munitions ?? 100) > 25 ? colors.accent.amber : colors.accent.red, fontFamily: typography.monoFamily, fontWeight: typography.weight.semibold }}>
+	                      {selectedUnit.munitions ?? 100}%
+	                    </span>
+	                  </div>
+	                  <input
+	                    type="range"
+	                    min="0"
+	                    max="100"
+	                    step="5"
+	                    value={selectedUnit.munitions ?? 100}
+	                    onChange={e => dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "munitions", value: parseInt(e.target.value) })}
+	                    style={{ width: "100%", accentColor: (selectedUnit.munitions ?? 100) > 50 ? colors.accent.green : (selectedUnit.munitions ?? 100) > 25 ? colors.accent.amber : colors.accent.red }}
+	                  />
+	                </div>
+	              )}
 
               {/* Fatigue — Tiers 1-2 */}
               {isSystemActive("fatigue", scaleTier) && selectedUnit.fatigue !== undefined && (
@@ -411,15 +501,17 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
               )}
 
               {/* Movement Type + Parent HQ side by side */}
-              <div style={{ display: "flex", gap: space[1], marginBottom: space[2] }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Movement</div>
-                  <select
+	              <div style={{ display: "flex", gap: space[1], marginBottom: space[2] }}>
+	                <div style={{ flex: 1 }}>
+	                  <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Movement</div>
+	                  <select
                     value={selectedUnit.movementType || "foot"}
                     onChange={e => dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "movementType", value: e.target.value })}
                     style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}
                   >
-                    {MOVEMENT_TYPES.map(mt => <option key={mt} value={mt}>{formatType(mt)}</option>)}
+                    {(isRtsMode ? MOVEMENT_TYPES.filter((mt) => mt !== "air" && mt !== "naval") : MOVEMENT_TYPES).map(mt => (
+                      <option key={mt} value={mt}>{formatType(mt)}</option>
+                    ))}
                   </select>
                 </div>
                 {scaleTier >= 3 && (
@@ -435,12 +527,78 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
                         <option key={hq.id} value={hq.id}>{hq.name || hq.id}</option>
                       ))}
                     </select>
-                  </div>
-                )}
-              </div>
+	                  </div>
+	                )}
+	              </div>
 
-              {/* Task Organization — Grand Tactical (Tier 3) only */}
-              {scaleTier === 3 && (
+	              {isRtsMode && (
+	                <>
+	                  <div style={{ display: "flex", gap: space[1], marginBottom: space[2] }}>
+	                    <div style={{ flex: 1 }}>
+	                      <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Initial Reserve</div>
+	                      <select
+	                        value={selectedUnit.initialReserveState || ""}
+	                        onChange={e => dispatch({
+	                          type: "UPDATE_UNIT",
+	                          unitId: selectedUnit?.id,
+	                          field: "initialReserveState",
+	                          value: e.target.value || null,
+	                        })}
+	                        style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}
+	                      >
+	                        <option value="">None</option>
+	                        <option value="held">Held</option>
+	                        <option value="released">Released</option>
+	                      </select>
+	                    </div>
+	                    <div style={{ flex: 1 }}>
+	                      <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Release Delay (sec)</div>
+	                      <input
+	                        type="number"
+	                        min="0"
+	                        step="15"
+	                        value={selectedUnit.releaseDelaySeconds ?? 0}
+	                        onChange={e => dispatch({
+	                          type: "UPDATE_UNIT",
+	                          unitId: selectedUnit?.id,
+	                          field: "releaseDelaySeconds",
+	                          value: Math.max(0, parseInt(e.target.value, 10) || 0),
+	                        })}
+	                        style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily, outline: "none", boxSizing: "border-box" }}
+	                      />
+	                    </div>
+	                  </div>
+
+	                  <div style={{ marginBottom: space[2] }}>
+	                    <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Embarked In</div>
+	                    <select
+	                      value={selectedUnit.embarkedIn || ""}
+	                      onChange={e => {
+	                        const transportId = e.target.value || null;
+	                        dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "embarkedIn", value: transportId });
+	                        if (transportId) {
+	                          const transport = units.find(u => u.id === transportId);
+	                          if (transport?.position) {
+	                            dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "position", value: transport.position });
+	                          }
+	                        }
+	                      }}
+	                      disabled={!canEmbarkInSetup(selectedUnit)}
+	                      style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}
+	                    >
+	                      <option value="">Not embarked</option>
+	                      {units
+	                        .filter(u => u.id !== selectedUnit.id && u.actor === selectedUnit.actor && canCarryPassengersInSetup(u))
+	                        .map(transport => (
+	                          <option key={transport.id} value={transport.id}>{transport.name || transport.id}</option>
+	                        ))}
+	                    </select>
+	                  </div>
+	                </>
+	              )}
+
+	              {/* Task Organization — Grand Tactical (Tier 3) only */}
+	              {scaleTier === 3 && (
                 <div style={{ marginBottom: space[2] }}>
                   <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Task Organization</div>
                   <textarea
@@ -448,12 +606,30 @@ export default function SetupRightSidebar({ state, dispatch, terrainData, onUpda
                     onChange={e => dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "taskOrg", value: e.target.value })}
                     placeholder="e.g., 1x armor co, 2x mech inf co, 1x eng plt"
                     style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.xs, fontFamily: typography.fontFamily, outline: "none", minHeight: 36, resize: "vertical", boxSizing: "border-box" }}
-                  />
-                </div>
-              )}
+	                  />
+	                </div>
+	              )}
 
-              <div style={{ marginBottom: space[2] }}>
-                <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Notes</div>
+	              <div style={{ marginBottom: space[2] }}>
+	                <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Special Capabilities</div>
+	                <input
+	                  value={(selectedUnit.specialCapabilities || []).join(", ")}
+	                  onChange={e => dispatch({
+	                    type: "UPDATE_UNIT",
+	                    unitId: selectedUnit?.id,
+	                    field: "specialCapabilities",
+	                    value: e.target.value
+	                      .split(",")
+	                      .map(value => value.trim())
+	                      .filter(Boolean),
+	                  })}
+	                  placeholder="e.g., airmobile, command_relay"
+	                  style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.xs, fontFamily: typography.fontFamily, outline: "none", boxSizing: "border-box" }}
+	                />
+	              </div>
+
+	              <div style={{ marginBottom: space[2] }}>
+	                <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Notes</div>
                 <textarea
                   value={selectedUnit.notes || ""}
                   onChange={e => dispatch({ type: "UPDATE_UNIT", unitId: selectedUnit?.id, field: "notes", value: e.target.value })}

@@ -10,6 +10,14 @@ import SimMap from "./SimMap.jsx";
 import SetupLeftSidebar from "./SetupLeftSidebar.jsx";
 import SetupRightSidebar from "./SetupRightSidebar.jsx";
 import { buildStrategicGrid } from "../mapRenderer/StrategicGrid.js";
+import {
+  buildRtsMatch,
+  countsTowardRtsHexOccupation,
+  isRtsSupportedScale,
+  isRtsSupportedUnit,
+  normalizeRtsParentHqAssignments,
+  RTS_MAX_UNITS_PER_HEX,
+} from "../rts/rtsStart.js";
 
 // ═══════════════════════════════════════════════════════════════
 // SIM SETUP CONFIGURE — Step 2: Map-centric sandbox setup
@@ -18,8 +26,10 @@ import { buildStrategicGrid } from "../mapRenderer/StrategicGrid.js";
 
 // ── Reducer ──────────────────────────────────────────────────
 
-function createInitialState(terrainData, selectedMap) {
+function createInitialState(terrainData, selectedMap, modeVariant = "turn") {
+  const isRtsMode = modeVariant === "rts";
   return {
+    modeVariant,
     // Scale (determines what systems, unit types, and prompt sections are active)
     scale: "grand_tactical",
 
@@ -34,7 +44,24 @@ function createInitialState(terrainData, selectedMap) {
     // Actors
     actors: [
       { id: "actor_1", name: "Side A", controller: "player", objectives: [""], constraints: [""], cvpHexes: [] },
-      { id: "actor_2", name: "Side B", controller: "player", objectives: [""], constraints: [""], cvpHexes: [] },
+      {
+        id: "actor_2",
+        name: "Side B",
+        controller: isRtsMode ? "ai" : "player",
+        objectives: [""],
+        constraints: [""],
+        cvpHexes: [],
+        ...(isRtsMode ? {
+          aiConfig: {
+            engine: "algorithmic",
+            profile: "balanced",
+            thinkBudget: "standard",
+            reservePolicy: "balanced",
+            directorEnabled: true,
+            releasePolicy: "staged",
+          },
+        } : {}),
+      },
     ],
 
     // Victory Conditions
@@ -56,6 +83,17 @@ function createInitialState(terrainData, selectedMap) {
 
     // Era selections (per-actor dropdown state, keyed by actorId → eraId)
     eraSelections: {},
+    rtsOptions: {
+      startPaused: true,
+      startingSpeed: 1,
+      seed: String(Date.now()),
+      durationLimitMinutes: "",
+      objectiveHoldSeconds: 15,
+      debugVisibility: "player",
+      aiVsAi: false,
+      directorEnabled: true,
+      aiLogMode: "standard",
+    },
 
     // Interaction
     interactionMode: "navigate",
@@ -90,10 +128,20 @@ function setupReducer(state, action) {
         actors: [...state.actors, {
           id: newId,
           name: `Side ${String.fromCharCode(64 + num)}`,
-          controller: "player",
+          controller: state.modeVariant === "rts" && num > 1 ? "ai" : "player",
           objectives: [""],
           constraints: [""],
           cvpHexes: [],
+          ...(state.modeVariant === "rts" ? {
+            aiConfig: {
+              engine: "algorithmic",
+              profile: "balanced",
+              thinkBudget: "standard",
+              reservePolicy: "balanced",
+              directorEnabled: true,
+              releasePolicy: "staged",
+            },
+          } : {}),
         }],
       };
     }
@@ -152,6 +200,12 @@ function setupReducer(state, action) {
 
     case "SET_ACTOR_ERA":
       return { ...state, eraSelections: { ...state.eraSelections, [action.actorId]: action.eraId } };
+
+    case "UPDATE_RTS_OPTION":
+      return {
+        ...state,
+        rtsOptions: { ...state.rtsOptions, [action.field]: action.value },
+      };
 
     case "ADD_UNIT": {
       const tierNum = SCALE_TIERS[state.scale]?.tier || 3;
@@ -409,12 +463,13 @@ function setupReducer(state, action) {
 
 // ── Component ────────────────────────────────────────────────
 
-export default function SimSetupConfigure({ terrainData, selectedMap, onBack, onStart, initialPresetId }) {
-  const [state, dispatch] = useReducer(setupReducer, createInitialState(terrainData, selectedMap));
+export default function SimSetupConfigure({ terrainData, selectedMap, onBack, onStart, initialPresetId, modeVariant = "turn" }) {
+  const [state, dispatch] = useReducer(setupReducer, createInitialState(terrainData, selectedMap, modeVariant));
   const [providers, setProviders] = useState([]);
   const [showNameModal, setShowNameModal] = useState(false);
   const [gameName, setGameName] = useState("");
   const [creating, setCreating] = useState(false);
+  const isRtsMode = modeVariant === "rts";
 
   // Auto-apply preset if launched from quick-start
   const presetApplied = useRef(false);
@@ -459,6 +514,7 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
 
   // Load LLM providers
   useEffect(() => {
+    if (isRtsMode) return;
     getProviders().then(data => {
       const provs = data.providers || [];
       setProviders(provs);
@@ -469,7 +525,7 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
         dispatch({ type: "SET_FIELD", field: "temperature", value: firstModel?.temperature ?? 0.4 });
       }
     }).catch(() => {});
-  }, []);
+  }, [isRtsMode]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -560,7 +616,7 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
   // Validate before showing naming modal
   const handleStartClick = () => {
     if (!state.title.trim()) { alert("Please enter a scenario title."); return; }
-    if (!state.provider || !state.model) { alert("No LLM provider configured. Check your .env file."); return; }
+    if (!isRtsMode && (!state.provider || !state.model)) { alert("No LLM provider configured. Check your .env file."); return; }
 
     // M12: Warn about unnamed units that will be excluded
     const unnamedCount = state.units.filter(u => !u.name.trim()).length;
@@ -578,6 +634,53 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
       if (!confirm("No actor has objectives set. Start anyway?")) return;
     }
 
+    if (isRtsMode) {
+      if (!isRtsSupportedScale(state.scale)) {
+        alert("RTS alpha only supports Tactical and Grand Tactical scales.");
+        return;
+      }
+
+	      const invalidUnits = state.units.filter(u => u.name.trim() && !isRtsSupportedUnit(u));
+	      if (invalidUnits.length > 0) {
+	        alert(`RTS alpha doesn't support ${invalidUnits.length} placed unit(s). Remove fixed-wing or naval units before starting.`);
+	        return;
+	      }
+
+	      const seenPositions = new Map();
+	      for (const unit of state.units.filter((u) => u.name.trim() && u.position && countsTowardRtsHexOccupation(u))) {
+	        const stack = seenPositions.get(unit.position) || [];
+	        if (stack.length >= RTS_MAX_UNITS_PER_HEX) {
+	          alert(`RTS alpha allows up to ${RTS_MAX_UNITS_PER_HEX} settled units per hex. ${[...stack, unit.name].join(", ")} all start in ${unit.position}.`);
+	          return;
+	        }
+	        stack.push(unit.name);
+	        seenPositions.set(unit.position, stack);
+	      }
+
+	      const unitById = new Map(state.units.map((unit) => [unit.id, unit]));
+	      for (const unit of state.units.filter((u) => u.name.trim() && u.embarkedIn)) {
+	        const transport = unitById.get(unit.embarkedIn);
+	        const embarkable = (unit.movementType || "foot") === "foot";
+	        const validTransport = transport
+	          && transport.actor === unit.actor
+	          && transport.id !== unit.id
+	          && transport.movementType === "helicopter"
+	          && (transport.type === "transport" || (transport.transportCapacity || 0) > 0);
+	        if (!validTransport || !embarkable) {
+	          alert(`Unit ${unit.name} has an invalid RTS embark start.`);
+	          return;
+	        }
+	      }
+
+	      const actorIds = new Set(state.actors.map((actor) => actor.id));
+	      for (const objective of state.victoryConditions.hexVP || []) {
+	        if (objective.initialController && !actorIds.has(objective.initialController)) {
+	          alert(`Objective ${objective.name || objective.hex} has an invalid initial controller.`);
+	          return;
+	        }
+	      }
+	    }
+
     // Show naming modal with scenario title as default
     setGameName(state.title.trim());
     setShowNameModal(true);
@@ -591,11 +694,12 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
       // Create game folder and copy terrain into it
       const folder = await createGameFolder(gameName.trim(), editableTerrainData);
 
-      const namedUnits = state.units.filter(u => u.name.trim());
-      const scenario = {
-        scale: state.scale,
-        title: state.title.trim(),
-        description: state.description.trim(),
+        const namedUnits = state.units.filter(u => u.name.trim());
+        const scenarioUnits = isRtsMode ? normalizeRtsParentHqAssignments(namedUnits) : namedUnits;
+        const scenario = {
+          scale: state.scale,
+          title: state.title.trim(),
+          description: state.description.trim(),
         turnDuration: state.turnDuration,
         startDate: state.startDate,
         actors: state.actors.map(a => ({
@@ -604,21 +708,52 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
           objectives: a.objectives.filter(o => o.trim()),
           constraints: a.constraints.filter(c => c.trim()),
         })),
-        initialConditions: state.initialConditions,
-        specialRules: state.specialRules,
-        units: namedUnits,
-        environment: state.environment,
-        eraSelections: state.eraSelections,
-        ...(state.victoryConditions.hexVP.length > 0 ? { victoryConditions: state.victoryConditions } : {}),
-      };
+          initialConditions: state.initialConditions,
+          specialRules: state.specialRules,
+          units: scenarioUnits,
+          environment: state.environment,
+          eraSelections: state.eraSelections,
+          terrainRef: selectedMap,
+          ...(state.victoryConditions.hexVP.length > 0 ? { victoryConditions: state.victoryConditions } : {}),
+        };
 
-      const gameState = createGame({
-        scenario,
-        terrainRef: selectedMap,
-        terrainData: editableTerrainData,
-        llmConfig: { provider: state.provider, model: state.model, temperature: state.temperature },
-        folder,
-      });
+      const gameState = isRtsMode
+        ? buildRtsMatch({
+          scenarioDraft: {
+            ...scenario,
+            actors: scenario.actors.map((actor, index) => ({
+              ...actor,
+              controller: state.rtsOptions.aiVsAi ? "ai" : actor.controller,
+              sideIndex: index,
+              aiConfig: {
+                engine: "algorithmic",
+                profile: actor.aiConfig?.profile || "balanced",
+                thinkBudget: actor.aiConfig?.thinkBudget || "standard",
+                reservePolicy: actor.aiConfig?.reservePolicy || "balanced",
+                directorEnabled: actor.aiConfig?.directorEnabled ?? state.rtsOptions.directorEnabled,
+                releasePolicy: actor.aiConfig?.releasePolicy || "staged",
+              },
+            })),
+            rtsOptions: {
+              ...state.rtsOptions,
+              seed: Number.parseInt(String(state.rtsOptions.seed || Date.now()), 10) || Date.now(),
+              durationLimitMinutes: state.rtsOptions.durationLimitMinutes
+                ? Number.parseInt(String(state.rtsOptions.durationLimitMinutes), 10) || null
+                : null,
+              objectiveHoldSeconds: Number.parseInt(String(state.rtsOptions.objectiveHoldSeconds || 15), 10) || 0,
+            },
+          },
+          terrainData: editableTerrainData,
+          folder,
+          seed: Number.parseInt(String(state.rtsOptions.seed || Date.now()), 10) || Date.now(),
+        })
+        : createGame({
+          scenario,
+          terrainRef: selectedMap,
+          terrainData: editableTerrainData,
+          llmConfig: { provider: state.provider, model: state.model, temperature: state.temperature },
+          folder,
+        });
 
       setShowNameModal(false);
       onStart(gameState, editableTerrainData);
@@ -654,6 +789,9 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
         <Badge color={colors.accent.cyan}>
           {SCALE_TIERS[state.scale]?.label || "Grand Tactical"}
         </Badge>
+        {isRtsMode && (
+          <Badge color={colors.accent.red}>RTS Alpha</Badge>
+        )}
         <div style={{ flex: 1 }} />
         <select
           value=""
@@ -671,34 +809,36 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
             fontFamily: typography.monoFamily,
             cursor: "pointer",
           }}
-        >
-          <option value="" disabled>Load Preset…</option>
-          {getPresetsForMap(selectedMap).map(p => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
-        <Button
-          variant="secondary"
-          onClick={() => dispatch({
-            type: state.interactionMode === "edit_terrain" ? "EXIT_EDIT_TERRAIN_MODE" : "ENTER_EDIT_TERRAIN_MODE"
-          })}
-          size="sm"
-          style={state.interactionMode === "edit_terrain" ? {
-            borderColor: colors.accent.green, color: colors.accent.green,
-            background: `${colors.accent.green}15`,
-          } : undefined}
-        >
-          {state.interactionMode === "edit_terrain" ? "Exit Edit Mode" : "Edit Terrain"}
-        </Button>
+          >
+            <option value="" disabled>Load Preset…</option>
+            {getPresetsForMap(selectedMap, { modeVariant }).map(p => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        {!isRtsMode && (
+          <Button
+            variant="secondary"
+            onClick={() => dispatch({
+              type: state.interactionMode === "edit_terrain" ? "EXIT_EDIT_TERRAIN_MODE" : "ENTER_EDIT_TERRAIN_MODE"
+            })}
+            size="sm"
+            style={state.interactionMode === "edit_terrain" ? {
+              borderColor: colors.accent.green, color: colors.accent.green,
+              background: `${colors.accent.green}15`,
+            } : undefined}
+          >
+            {state.interactionMode === "edit_terrain" ? "Exit Edit Mode" : "Edit Terrain"}
+          </Button>
+        )}
         {state.units.length > 0 && (
           <Badge color={colors.accent.blue}>{state.units.length} units</Badge>
         )}
         <Button
           onClick={handleStartClick}
-          disabled={!state.title.trim() || !state.provider}
+          disabled={!state.title.trim() || (!isRtsMode && !state.provider)}
           size="sm"
         >
-          Start Simulation &rarr;
+          {isRtsMode ? "Start RTS Match →" : "Start Simulation →"}
         </Button>
       </div>
 
@@ -712,6 +852,7 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
           open={state.leftSidebarOpen}
           onToggle={() => dispatch({ type: "TOGGLE_LEFT_SIDEBAR" })}
           cellSizeKm={editableTerrainData?.cellSizeKm || null}
+          modeVariant={modeVariant}
         />
 
         {/* Map (center) */}
@@ -751,6 +892,7 @@ export default function SimSetupConfigure({ terrainData, selectedMap, onBack, on
           onUpdateCell={updateCell}
           open={state.rightSidebarOpen}
           onToggle={() => dispatch({ type: "TOGGLE_RIGHT_SIDEBAR" })}
+          modeVariant={modeVariant}
         />
       </div>
 

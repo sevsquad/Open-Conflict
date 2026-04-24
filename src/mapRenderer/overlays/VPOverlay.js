@@ -11,6 +11,7 @@ import { cellPixelsToHexSize } from "../HexMath.js";
 
 const VP_NEUTRAL = "#F59E0B";
 const VP_CONTESTED = "#9CA3AF";
+const VP_ZONE_OUTLINE = "rgba(12, 16, 24, 0.95)";
 
 /**
  * Draw VP and CVP hex markers on the map.
@@ -25,8 +26,10 @@ const VP_CONTESTED = "#9CA3AF";
  * @param {number} cols - grid columns
  * @param {number} rows - grid rows
  * @param {Array|null} cvpHexes - [{ hex, actorId }] — per-actor critical hexes
+ * @param {Object|null} holdProgress - { "col,row": { progress, controller, heldMs, requiredMs } } for RTS hold-to-capture
+ * @param {Array|null} vpZoneOutlines - [{ zoneId, objectiveHexes, centroidHex, segments: [{ hex, edge }] }]
  */
-export function drawVPHexes(ctx, hexVP, vpControl, actorColorMap, viewport, w, h, cols, rows, cvpHexes) {
+export function drawVPHexes(ctx, hexVP, vpControl, actorColorMap, viewport, w, h, cols, rows, cvpHexes, holdProgress, vpZoneOutlines = null) {
   const cp = viewport.cellPixels;
   if (cp < 4) return;
   const hasVP = hexVP && hexVP.length > 0;
@@ -55,6 +58,9 @@ export function drawVPHexes(ctx, hexVP, vpControl, actorColorMap, viewport, w, h
   if (hasVP) hexVP.forEach(v => { vpByHex[v.hex] = v; });
 
   ctx.save();
+  if (Array.isArray(vpZoneOutlines) && vpZoneOutlines.length > 0) {
+    drawZoneOutlines(ctx, vpZoneOutlines, viewport, w, h, cols, rows, cp, hexSize, visRange);
+  }
 
   for (const hexKey of allHexes) {
     const parts = hexKey.split(",");
@@ -84,6 +90,16 @@ export function drawVPHexes(ctx, hexVP, vpControl, actorColorMap, viewport, w, h
     // Draw hex border
     drawHexBorder(ctx, x, y, hexSize, cp, borderColor, !!vp);
 
+    // Hold-to-capture progress arc (RTS mode only — holdProgress is null otherwise).
+    // Rendered OUTSIDE the border so it remains visible regardless of label density.
+    const holdEntry = holdProgress?.[hexKey];
+    if (holdEntry && holdEntry.progress > 0.001) {
+      const arcColor = holdEntry.controller
+        ? (actorColorMap?.[holdEntry.controller] || VP_NEUTRAL)
+        : VP_NEUTRAL;
+      drawHoldProgressArc(ctx, x, y, hexSize, cp, holdEntry.progress, arcColor);
+    }
+
     // Labels at moderate zoom
     if (cp >= 15) {
       drawLabels(ctx, x, y, hexSize, cp, vp, cvpActors, borderColor, actorColorMap);
@@ -95,6 +111,36 @@ export function drawVPHexes(ctx, hexVP, vpControl, actorColorMap, viewport, w, h
 
 
 // ── Drawing Helpers ──────────────────────────────────────────
+
+function drawZoneOutlines(ctx, vpZoneOutlines, viewport, w, h, cols, rows, cp, hexSize, visRange) {
+  ctx.save();
+  ctx.strokeStyle = VP_ZONE_OUTLINE;
+  ctx.lineWidth = Math.max(2, cp * 0.05);
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.globalAlpha = cp >= 12 ? 0.88 : 0.72;
+  for (const outline of vpZoneOutlines) {
+    if (!Array.isArray(outline?.segments) || outline.segments.length === 0) continue;
+    ctx.beginPath();
+    let drewSegment = false;
+    for (const segment of outline.segments) {
+      const [colRaw, rowRaw] = String(segment.hex || "").split(",");
+      const col = Number(colRaw);
+      const row = Number(rowRaw);
+      if (!Number.isFinite(col) || !Number.isFinite(row)) continue;
+      if (col < visRange.colMin - 1 || col > visRange.colMax + 1) continue;
+      if (row < visRange.rowMin - 1 || row > visRange.rowMax + 1) continue;
+      const { x, y } = gridToScreen(col, row, viewport, w, h);
+      const { from, to } = getHexEdgePoints(x, y, hexSize * 1.02, segment.edge);
+      if (!from || !to) continue;
+      ctx.moveTo(from.x, from.y);
+      ctx.lineTo(to.x, to.y);
+      drewSegment = true;
+    }
+    if (drewSegment) ctx.stroke();
+  }
+  ctx.restore();
+}
 
 function drawHexBorder(ctx, x, y, hexSize, cp, color, isVP) {
   const inset = hexSize * 0.88;
@@ -124,6 +170,77 @@ function drawHexBorder(ctx, x, y, hexSize, cp, color, isVP) {
   ctx.globalAlpha = 0.06;
   ctx.fill();
   ctx.globalAlpha = 1;
+}
+
+function getHexEdgePoints(x, y, radius, edgeIndex) {
+  const vertices = [];
+  for (let v = 0; v < 6; v += 1) {
+    const angle = (Math.PI / 3) * v - Math.PI / 6;
+    vertices.push({
+      x: x + radius * Math.cos(angle),
+      y: y + radius * Math.sin(angle),
+    });
+  }
+  const edgeVertexMap = [
+    [0, 1],
+    [5, 0],
+    [4, 5],
+    [3, 4],
+    [2, 3],
+    [1, 2],
+  ];
+  const pair = edgeVertexMap[edgeIndex];
+  if (!pair) return { from: null, to: null };
+  return {
+    from: vertices[pair[0]],
+    to: vertices[pair[1]],
+  };
+}
+
+
+/**
+ * Draw a progress arc around the VP hex indicating hold-to-capture accumulation.
+ * The arc grows clockwise from the top (12 o'clock) and is color-matched to the
+ * current controller. Near completion (>= 90%) it pulses faintly for emphasis.
+ */
+function drawHoldProgressArc(ctx, x, y, hexSize, cp, progress, color) {
+  const p = Math.max(0, Math.min(1, progress));
+  // Radius sits just outside the dashed VP border (border inset is 0.88).
+  const radius = hexSize * 0.95;
+  const startAngle = -Math.PI / 2;
+  const endAngle = startAngle + p * Math.PI * 2;
+
+  ctx.save();
+
+  // Background track — thin, faint ring showing the full "path" to capture.
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = 0.18;
+  ctx.lineWidth = Math.max(1.5, cp * 0.035);
+  ctx.stroke();
+
+  // Progress arc — bright, thicker.
+  ctx.beginPath();
+  ctx.arc(x, y, radius, startAngle, endAngle);
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = p >= 0.9 ? 0.95 : 0.8;
+  ctx.lineWidth = Math.max(2.5, cp * 0.06);
+  ctx.lineCap = "round";
+  ctx.stroke();
+
+  // Near-complete indicator: inner pulse dot at 12 o'clock.
+  if (p >= 0.9) {
+    ctx.beginPath();
+    ctx.arc(x, y - radius, Math.max(1.5, cp * 0.05), 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 1;
+    ctx.fill();
+  }
+
+  ctx.globalAlpha = 1;
+  ctx.lineCap = "butt";
+  ctx.restore();
 }
 
 

@@ -9,13 +9,17 @@ import { getAllPresets } from "./presets.js";
 // Focused screen to pick a terrain map before entering the sandbox
 // ═══════════════════════════════════════════════════════════════
 
-export default function SimSetupMapSelect({ maps, loadingMap, selectedMap, terrainData, onSelectMap, onContinue, onBack, onLoadGame, onLoadTestFixture, onLoadPreset }) {
+export default function SimSetupMapSelect({ maps, loadingMap, selectedMap, terrainData, onSelectMap, onContinue, onBack, onLoadGame, onLoadTestFixture, onLoadPreset, modeVariant = "turn" }) {
   const [savedGames, setSavedGames] = useState([]);
   const [showSaved, setShowSaved] = useState(false);
 
   useEffect(() => {
     listSavedGames().then(setSavedGames).catch(() => {});
   }, []);
+
+  const isRtsMode = modeVariant === "rts";
+  const filteredSavedGames = savedGames.filter((game) => (game.mode || "turn") === modeVariant);
+  const presetList = getAllPresets({ modeVariant });
 
   return (
     <div style={{
@@ -31,32 +35,49 @@ export default function SimSetupMapSelect({ maps, loadingMap, selectedMap, terra
         <Button variant="ghost" onClick={onBack} size="sm">
           <span style={{ marginRight: 4 }}>&larr;</span> Back
         </Button>
-        <div style={{ fontSize: typography.heading.md, fontWeight: typography.weight.bold }}>New Simulation</div>
+        <div style={{ fontSize: typography.heading.md, fontWeight: typography.weight.bold }}>
+          {isRtsMode ? "New RTS Match" : "New Simulation"}
+        </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: space[2] }}>
-          {savedGames.length > 0 && (
-            <Button variant="secondary" onClick={() => setShowSaved(!showSaved)} size="sm">Load Saved Game</Button>
+          {filteredSavedGames.length > 0 && (
+            <Button variant="secondary" onClick={() => setShowSaved(!showSaved)} size="sm">
+              {isRtsMode ? "Load RTS Save" : "Load Saved Game"}
+            </Button>
           )}
         </div>
       </div>
 
       {/* Saved games dropdown */}
-      {showSaved && savedGames.length > 0 && (
+      {showSaved && filteredSavedGames.length > 0 && (
         <div style={{
           padding: `${space[3]}px ${space[6]}px`, background: colors.bg.raised,
           borderBottom: `1px solid ${colors.border.subtle}`,
         }}>
-          <div style={{ fontSize: typography.body.sm, color: colors.text.secondary, marginBottom: space[2] }}>Saved Games:</div>
+          <div style={{ fontSize: typography.body.sm, color: colors.text.secondary, marginBottom: space[2] }}>
+            {isRtsMode ? "Saved RTS Matches:" : "Saved Games:"}
+          </div>
           <div style={{ display: "flex", gap: space[2], flexWrap: "wrap" }}>
-            {savedGames.map(g => (
-              <Button key={g.file} variant="secondary" onClick={() => onLoadGame(g.file, g.folder)} size="sm"
+            {filteredSavedGames.map(g => (
+              <Button key={g.file} variant="secondary" onClick={() => onLoadGame(g)} size="sm"
                 style={{ display: "flex", alignItems: "center", gap: space[1] }}
               >
                 {g.isAutosave && (
                   <Badge color={colors.accent.cyan} style={{ fontSize: 9, padding: "1px 4px" }}>AUTO</Badge>
                 )}
                 <span>{g.name}</span>
-                {g.turn != null && (
+                {!isRtsMode && g.turn != null && (
                   <Badge color={colors.accent.amber} style={{ fontSize: 9, padding: "1px 4px" }}>T{g.turn}</Badge>
+                )}
+                {isRtsMode && g.elapsedMs != null && (
+                  <Badge color={colors.accent.red} style={{ fontSize: 9, padding: "1px 4px" }}>
+                    {(g.elapsedMs / 1000).toFixed(0)}s
+                  </Badge>
+                )}
+                {isRtsMode && g.paused && (
+                  <Badge color={colors.accent.blue} style={{ fontSize: 9, padding: "1px 4px" }}>PAUSED</Badge>
+                )}
+                {isRtsMode && g.winner && (
+                  <Badge color={colors.accent.green} style={{ fontSize: 9, padding: "1px 4px" }}>WINNER</Badge>
                 )}
                 {g.actorCount > 0 && (
                   <span style={{ fontSize: typography.body.xs, color: colors.text.muted }}>
@@ -74,10 +95,14 @@ export default function SimSetupMapSelect({ maps, loadingMap, selectedMap, terra
 
       {/* Centered content */}
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: space[6] }}>
-        <Card accent={colors.accent.amber} style={{ width: 480, maxWidth: "100%" }}>
-          <SectionHeader accent={colors.accent.amber}>Select Terrain Map</SectionHeader>
+        <Card accent={isRtsMode ? colors.accent.red : colors.accent.amber} style={{ width: 480, maxWidth: "100%" }}>
+          <SectionHeader accent={isRtsMode ? colors.accent.red : colors.accent.amber}>
+            {isRtsMode ? "Select RTS Terrain" : "Select Terrain Map"}
+          </SectionHeader>
           <p style={{ fontSize: typography.body.md, color: colors.text.secondary, marginBottom: space[4], lineHeight: 1.6 }}>
-            Choose a terrain map to build your scenario on. You'll be able to place units and configure the simulation on the map.
+            {isRtsMode
+              ? "Choose a terrain map for a Cold War RTS battle. RTS alpha is limited to tactical and grand tactical scales, with ground units and helicopters only."
+              : "Choose a terrain map to build your scenario on. You'll be able to place units and configure the simulation on the map."}
           </p>
 
           <Select
@@ -96,7 +121,7 @@ export default function SimSetupMapSelect({ maps, loadingMap, selectedMap, terra
               maxHeight: 220, overflowY: "auto", display: "flex", flexDirection: "column", gap: space[1],
               paddingRight: space[1],
             }}>
-              {getAllPresets().map(p => (
+              {presetList.map(p => (
                 <button
                   key={p.id}
                   onClick={() => onLoadPreset(p.id, p.requiredMap, p.mapType)}
@@ -167,7 +192,7 @@ export default function SimSetupMapSelect({ maps, loadingMap, selectedMap, terra
               disabled={!selectedMap || !terrainData || loadingMap}
               size="md"
             >
-              Continue to Setup &rarr;
+              {isRtsMode ? "Continue to RTS Setup →" : "Continue to Setup →"}
             </Button>
           </div>
         </Card>

@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import Parser from "./Parser.jsx";
 import Viewer from "./Viewer.jsx";
 import Simulation from "./simulation/Simulation.jsx";
+import RtsSimulation from "./rts/RtsSimulation.jsx";
 import WorldScanner from "./WorldScanner.jsx";
 import Dashboard from "./Dashboard.jsx";
 import { colors, typography, radius, shadows, animation, space } from "./theme.js";
@@ -10,7 +11,7 @@ import AppHeader from "./components/AppHeader.jsx";
 import { getTestFixture } from "./testFixture.js";
 
 export default function App() {
-  const [mode, setMode] = useState("menu"); // "menu" | "parser" | "viewer" | "simulation" | "worldscan" | "dashboard"
+  const [mode, setMode] = useState("menu"); // "menu" | "parser" | "viewer" | "simulation" | "rts" | "worldscan" | "dashboard"
   const [viewerData, setViewerData] = useState(null);
   const [simPreset, setSimPreset] = useState(null);
   const [recentMaps, setRecentMaps] = useState([]);
@@ -32,7 +33,7 @@ export default function App() {
 
     if (!urlMode) return;
 
-    const validModes = ["viewer", "simulation", "parser", "worldscan", "dashboard"];
+    const validModes = ["viewer", "simulation", "rts", "parser", "worldscan", "dashboard"];
     if (!validModes.includes(urlMode)) {
       console.warn(`[URL] Invalid mode: ${urlMode}. Valid: ${validModes.join(", ")}`);
       return;
@@ -143,6 +144,7 @@ export default function App() {
       if (e.key === "3" || e.key === "s") setMode("simulation");
       if (e.key === "4" || e.key === "d") setMode("dashboard");
       if (e.key === "5" || e.key === "w") setMode("worldscan");
+      if (e.key === "6" || e.key === "r") setMode("rts");
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -161,6 +163,7 @@ export default function App() {
           )}
           {mode === "viewer" && <Viewer onBack={goMenu} onParser={goParser} initialData={viewerData} initialFineData={viewerFineData} initialStratGrid={viewerStratGrid} />}
           {mode === "simulation" && <Simulation onBack={goMenu} initialData={viewerData} preset={simPreset} />}
+          {mode === "rts" && <RtsSimulation onBack={goMenu} initialData={viewerData} preset={simPreset} />}
           {mode === "worldscan" && <WorldScanner onBack={goMenu} />}
           {mode === "dashboard" && <Dashboard onBack={goMenu} />}
         </div>
@@ -241,6 +244,18 @@ export default function App() {
           <circle cx="12" cy="12" r="10" />
           <path d="M2 12h20" />
           <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+        </svg>
+      ),
+    },
+    {
+      id: "rts", label: "RTS Alpha", accent: colors.accent.red, key: "6",
+      desc: "Run local real-time Cold War battles on the hex map with per-unit control, layered AI, fog of war, and deterministic replay-friendly state.",
+      tags: ["Real-Time", "Cold War", "Local AI", "Replay"],
+      icon: (
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M4 19l8-14 8 14" />
+          <path d="M7 14h10" />
+          <path d="M12 5v14" />
         </svg>
       ),
     },
@@ -336,6 +351,8 @@ export default function App() {
         opacity: 0.6, animation: "fadeIn 1s ease-out 0.4s both",
       }}>
         Press <kbd style={{ padding: "1px 5px", borderRadius: 3, background: colors.bg.surface, border: `1px solid ${colors.border.subtle}`, fontSize: 9 }}>1</kbd>-<kbd style={{ padding: "1px 5px", borderRadius: 3, background: colors.bg.surface, border: `1px solid ${colors.border.subtle}`, fontSize: 9 }}>5</kbd> to navigate
+        {" · "}
+        <kbd style={{ padding: "1px 5px", borderRadius: 3, background: colors.bg.surface, border: `1px solid ${colors.border.subtle}`, fontSize: 9 }}>R</kbd> for RTS
       </div>
     </div>
   );
