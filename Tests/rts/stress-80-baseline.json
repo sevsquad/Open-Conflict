@@ -1,0 +1,170 @@
+{
+  "id": "stress-80",
+  "label": "80 Total Units",
+  "generatedAt": "2026-04-23T19:32:58.766Z",
+  "config": {
+    "hqPerSide": 8,
+    "infantryPerHq": 4,
+    "totalUnits": 80,
+    "totalTicks": 120,
+    "seed": 9080
+  },
+  "parity": {
+    "seed": 9080,
+    "totalTicks": 120,
+    "stateHash": "1136410e9926012ff279a1b0bb070cea1567954a1881d6ed9c266910a4c3471a",
+    "replayHash": "bfb8fa8f9780e83a87058f025177ae56adf96a210b8611c89dcf4781428b42d8",
+    "provenanceHash": "2c3b799006ff40577305e385d9be7ea4a9be183a13f9b4d075d2611811894852",
+    "tickStats": {
+      "tickCount": 120,
+      "totalMs": 5404.2,
+      "averageMs": 45.035,
+      "p95Ms": 53.741,
+      "maxMs": 438.222
+    },
+    "outcome": {
+      "winner": null,
+      "victoryReason": null,
+      "elapsedMs": 30000,
+      "livingByActor": {
+        "actor_1": 40,
+        "actor_2": 40
+      },
+      "vpByActor": {
+        "actor_1": 0,
+        "actor_2": 0
+      },
+      "objectiveControl": {
+        "3,4": null,
+        "5,5": null,
+        "1,6": null
+      },
+      "eventCount": 169,
+      "commandCount": 80,
+      "aiDecisionCount": 200
+    }
+  },
+  "benchmarkBaseline": {
+    "id": "stress-80",
+    "label": "80 Total Units",
+    "config": {
+      "hqPerSide": 8,
+      "infantryPerHq": 4,
+      "totalUnits": 80,
+      "totalTicks": 120,
+      "seed": 9080
+    },
+    "iterations": 3,
+    "totalTicks": 120,
+    "averageTickMs": 44.275,
+    "averageP95Ms": 49.805,
+    "peakTickMs": 327.083,
+    "runs": [
+      {
+        "seed": 9080,
+        "ticksExecuted": 120,
+        "tickStats": {
+          "tickCount": 120,
+          "totalMs": 5340.11,
+          "averageMs": 44.501,
+          "p95Ms": 50.034,
+          "maxMs": 327.083
+        },
+        "outcome": {
+          "winner": null,
+          "victoryReason": null,
+          "elapsedMs": 30000,
+          "livingByActor": {
+            "actor_1": 40,
+            "actor_2": 40
+          },
+          "vpByActor": {
+            "actor_1": 0,
+            "actor_2": 0
+          },
+          "objectiveControl": {
+            "3,4": null,
+            "5,5": null,
+            "1,6": null
+          },
+          "eventCount": 169,
+          "commandCount": 80,
+          "aiDecisionCount": 200
+        },
+        "stateHash": "1136410e9926012ff279a1b0bb070cea1567954a1881d6ed9c266910a4c3471a",
+        "replayHash": "bfb8fa8f9780e83a87058f025177ae56adf96a210b8611c89dcf4781428b42d8",
+        "provenanceHash": "2c3b799006ff40577305e385d9be7ea4a9be183a13f9b4d075d2611811894852"
+      },
+      {
+        "seed": 9081,
+        "ticksExecuted": 120,
+        "tickStats": {
+          "tickCount": 120,
+          "totalMs": 5319.956,
+          "averageMs": 44.333,
+          "p95Ms": 49.312,
+          "maxMs": 314.067
+        },
+        "outcome": {
+          "winner": null,
+          "victoryReason": null,
+          "elapsedMs": 30000,
+          "livingByActor": {
+            "actor_1": 40,
+            "actor_2": 40
+          },
+          "vpByActor": {
+            "actor_1": 0,
+            "actor_2": 0
+          },
+          "objectiveControl": {
+            "3,4": null,
+            "5,5": null,
+            "1,6": null
+          },
+          "eventCount": 169,
+          "commandCount": 80,
+          "aiDecisionCount": 200
+        },
+        "stateHash": "cb1b76ea4756828fd3375972b87bed33c0da93c5c1d2c53cd078948d184bfe30",
+        "replayHash": "6492caa739b7f4a0809f486fbc35e712e1d84b8c79becc6c62cefe578f32d17d",
+        "provenanceHash": "2c3b799006ff40577305e385d9be7ea4a9be183a13f9b4d075d2611811894852"
+      },
+      {
+        "seed": 9082,
+        "ticksExecuted": 120,
+        "tickStats": {
+          "tickCount": 120,
+          "totalMs": 5278.852,
+          "averageMs": 43.99,
+          "p95Ms": 50.068,
+          "maxMs": 303.909
+        },
+        "outcome": {
+          "winner": null,
+          "victoryReason": null,
+          "elapsedMs": 30000,
+          "livingByActor": {
+            "actor_1": 40,
+            "actor_2": 40
+          },
+          "vpByActor": {
+            "actor_1": 0,
+            "actor_2": 0
+          },
+          "objectiveControl": {
+            "3,4": null,
+            "5,5": null,
+            "1,6": null
+          },
+          "eventCount": 169,
+          "commandCount": 80,
+          "aiDecisionCount": 200
+        },
+        "stateHash": "e6835f722653750e5e66e9fd6c08980b22ae289ba6efd6708391206033d9be85",
+        "replayHash": "3627b6785c8c05fac84fedbf8bd900c966ca52c8df69943c2c75d476214cb447",
+        "provenanceHash": "2c3b799006ff40577305e385d9be7ea4a9be183a13f9b4d075d2611811894852"
+      }
+    ]
+  }
+}

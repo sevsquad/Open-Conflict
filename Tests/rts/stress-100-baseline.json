@@ -1,0 +1,170 @@
+{
+  "id": "stress-100",
+  "label": "100 Total Units",
+  "generatedAt": "2026-04-23T19:33:26.659Z",
+  "config": {
+    "hqPerSide": 10,
+    "infantryPerHq": 4,
+    "totalUnits": 100,
+    "totalTicks": 120,
+    "seed": 9100
+  },
+  "parity": {
+    "seed": 9100,
+    "totalTicks": 120,
+    "stateHash": "0e8cfdfa183012aec53fd7fd7b580d15f881459b8cffe38fcf89364be782df60",
+    "replayHash": "6551b93f989b6b3e0cf07cd988a02c318a50a931013d7f96af6ce4e54b6ff59b",
+    "provenanceHash": "86d944cb3cfea6402c3b22dfe3fbd8cd017ece6f081c8bf7250427232b368822",
+    "tickStats": {
+      "tickCount": 120,
+      "totalMs": 6760.991,
+      "averageMs": 56.342,
+      "p95Ms": 59.029,
+      "maxMs": 466.679
+    },
+    "outcome": {
+      "winner": null,
+      "victoryReason": null,
+      "elapsedMs": 30000,
+      "livingByActor": {
+        "actor_1": 50,
+        "actor_2": 50
+      },
+      "vpByActor": {
+        "actor_1": 0,
+        "actor_2": 0
+      },
+      "objectiveControl": {
+        "3,4": null,
+        "5,5": null,
+        "1,6": null
+      },
+      "eventCount": 200,
+      "commandCount": 100,
+      "aiDecisionCount": 200
+    }
+  },
+  "benchmarkBaseline": {
+    "id": "stress-100",
+    "label": "100 Total Units",
+    "config": {
+      "hqPerSide": 10,
+      "infantryPerHq": 4,
+      "totalUnits": 100,
+      "totalTicks": 120,
+      "seed": 9100
+    },
+    "iterations": 3,
+    "totalTicks": 120,
+    "averageTickMs": 56.923,
+    "averageP95Ms": 66.041,
+    "peakTickMs": 426.162,
+    "runs": [
+      {
+        "seed": 9100,
+        "ticksExecuted": 120,
+        "tickStats": {
+          "tickCount": 120,
+          "totalMs": 6710.004,
+          "averageMs": 55.917,
+          "p95Ms": 65.646,
+          "maxMs": 380.37
+        },
+        "outcome": {
+          "winner": null,
+          "victoryReason": null,
+          "elapsedMs": 30000,
+          "livingByActor": {
+            "actor_1": 50,
+            "actor_2": 50
+          },
+          "vpByActor": {
+            "actor_1": 0,
+            "actor_2": 0
+          },
+          "objectiveControl": {
+            "3,4": null,
+            "5,5": null,
+            "1,6": null
+          },
+          "eventCount": 200,
+          "commandCount": 100,
+          "aiDecisionCount": 200
+        },
+        "stateHash": "0e8cfdfa183012aec53fd7fd7b580d15f881459b8cffe38fcf89364be782df60",
+        "replayHash": "6551b93f989b6b3e0cf07cd988a02c318a50a931013d7f96af6ce4e54b6ff59b",
+        "provenanceHash": "86d944cb3cfea6402c3b22dfe3fbd8cd017ece6f081c8bf7250427232b368822"
+      },
+      {
+        "seed": 9101,
+        "ticksExecuted": 120,
+        "tickStats": {
+          "tickCount": 120,
+          "totalMs": 6948.85,
+          "averageMs": 57.907,
+          "p95Ms": 64.609,
+          "maxMs": 397.99
+        },
+        "outcome": {
+          "winner": null,
+          "victoryReason": null,
+          "elapsedMs": 30000,
+          "livingByActor": {
+            "actor_1": 50,
+            "actor_2": 50
+          },
+          "vpByActor": {
+            "actor_1": 0,
+            "actor_2": 0
+          },
+          "objectiveControl": {
+            "3,4": null,
+            "5,5": null,
+            "1,6": null
+          },
+          "eventCount": 200,
+          "commandCount": 100,
+          "aiDecisionCount": 200
+        },
+        "stateHash": "26df0cb841216c6dc91033ad236d2f2a51ecfd4ba691de63450c1a51eb2a47b3",
+        "replayHash": "24ea0b60cdc3b4d9c30b3cf54d400dc3ea688421ca549260d63f1e795dfcfaba",
+        "provenanceHash": "86d944cb3cfea6402c3b22dfe3fbd8cd017ece6f081c8bf7250427232b368822"
+      },
+      {
+        "seed": 9102,
+        "ticksExecuted": 120,
+        "tickStats": {
+          "tickCount": 120,
+          "totalMs": 6833.461,
+          "averageMs": 56.946,
+          "p95Ms": 67.867,
+          "maxMs": 426.162
+        },
+        "outcome": {
+          "winner": null,
+          "victoryReason": null,
+          "elapsedMs": 30000,
+          "livingByActor": {
+            "actor_1": 50,
+            "actor_2": 50
+          },
+          "vpByActor": {
+            "actor_1": 0,
+            "actor_2": 0
+          },
+          "objectiveControl": {
+            "3,4": null,
+            "5,5": null,
+            "1,6": null
+          },
+          "eventCount": 200,
+          "commandCount": 100,
+          "aiDecisionCount": 200
+        },
+        "stateHash": "37d073a39b43e4a27945003cab7ac77cc4580ed28a8558203d8e7368e84743f6",
+        "replayHash": "a3591144a53b3f2d43a86c6a5a290078f0c2686164006ec69ab66205e1715d33",
+        "provenanceHash": "86d944cb3cfea6402c3b22dfe3fbd8cd017ece6f081c8bf7250427232b368822"
+      }
+    ]
+  }
+}

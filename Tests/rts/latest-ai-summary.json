@@ -1,0 +1,1252 @@
+{
+  "ok": true,
+  "status": "passed",
+  "runId": "rts-ai-2026-04-23T19-43-19-901Z-84e5a6",
+  "timestamp": "2026-04-23T19:43:30.879Z",
+  "tickStats": {
+    "tickCount": 160,
+    "totalMs": 827.682,
+    "averageMs": 5.173,
+    "p95Ms": 6.282,
+    "maxMs": 30.346
+  },
+  "outcome": {
+    "winner": null,
+    "victoryReason": null,
+    "elapsedMs": 40000,
+    "livingByActor": {
+      "actor_1": 6,
+      "actor_2": 6
+    },
+    "vpByActor": {
+      "actor_1": 0,
+      "actor_2": 0
+    },
+    "objectiveControl": {
+      "3,4": null,
+      "5,5": null,
+      "1,6": null
+    },
+    "eventCount": 25,
+    "commandCount": 13,
+    "aiDecisionCount": 81
+  },
+  "hashes": {
+    "stateHash": "2e64a05496172a5178f1fe9da01052bc1fde5d87a230589f2050114544c35be3",
+    "replayHash": "8349a79f1a81b08c3b1560c90189d2894879bdad35563e650bb7849cc5e2294b",
+    "provenanceHash": "fefedd15a7f22ded5564e865e61c51acac60fb0fa4c24d9a1350980853098c04"
+  },
+  "provenanceValues": [
+    "directorHint",
+    "doctrine",
+    "lastKnown"
+  ],
+  "decisionSources": [
+    "director",
+    "commander",
+    "subordinates"
+  ],
+  "executorSources": [
+    "director",
+    "commander",
+    "subordinates",
+    "executors"
+  ],
+  "invalidProvenance": [],
+  "checks": [
+    {
+      "name": "Same-seed AI-vs-AI runs produced identical normalized state hashes",
+      "pass": true
+    },
+    {
+      "name": "Same-seed AI-vs-AI runs produced identical replay hashes",
+      "pass": true
+    },
+    {
+      "name": "Same-seed AI-vs-AI runs produced identical AI provenance hashes",
+      "pass": true
+    },
+    {
+      "name": "AI produced director, subordinate, commander, and executor decision traces",
+      "pass": true
+    },
+    {
+      "name": "Standard mode kept extended AI summaries and diaries disabled",
+      "pass": true
+    },
+    {
+      "name": "LLM Summary mode produced prompt-ready per-actor summaries without enabling the full diary",
+      "pass": true
+    },
+    {
+      "name": "Full Diary mode captured decision, order, thought, and perception events together",
+      "pass": true
+    },
+    {
+      "name": "All AI provenance tags stayed within the legal fog-of-war set",
+      "pass": true
+    },
+    {
+      "name": "AI run emitted perception snapshots for later replay/debug inspection",
+      "pass": true
+    },
+    {
+      "name": "AI run persisted subordinate task queues and status reports",
+      "pass": true
+    },
+    {
+      "name": "AI run persisted subordinate local group plans in live state and replay snapshots",
+      "pass": true
+    },
+    {
+      "name": "Director telemetry captured bounded packet state for replay/debug review",
+      "pass": true
+    },
+    {
+      "name": "Replay snapshots retained perception and director summaries",
+      "pass": true
+    },
+    {
+      "name": "Multi-zone director packets carried primary, secondary, and supporting zone intents",
+      "pass": true
+    },
+    {
+      "name": "Lower-VP support zones were chosen to shape a higher-VP assault when the terrain warranted it",
+      "pass": true
+    },
+    {
+      "name": "Commander replay snapshots retained zone-role plans with edge or lane metadata",
+      "pass": true
+    },
+    {
+      "name": "Multi-zone AI plans spread tasking across more than one zone instead of one pure dogpile",
+      "pass": true
+    },
+    {
+      "name": "No side kept more than 60% of maneuver owners on one zone for over 90 continuous seconds while multiple non-friendly zones remained",
+      "pass": true
+    },
+    {
+      "name": "Cross-zone maneuver plans never dropped lane assignment and never double-booked a narrow lane",
+      "pass": true
+    },
+    {
+      "name": "Staging hexes stayed on the correct side of the chosen lane",
+      "pass": true
+    },
+    {
+      "name": "RTS AI generated plain-English commander and director thoughts",
+      "pass": true
+    },
+    {
+      "name": "RTS AI thoughts refreshed on a 15-second cadence and landed in telemetry/replay",
+      "pass": true
+    },
+    {
+      "name": "AI run generated command and event telemetry",
+      "pass": true
+    },
+    {
+      "name": "Stock AI duel formed fires owners and issued ammo-typed fire missions for artillery actors",
+      "pass": true
+    },
+    {
+      "name": "Support units spent at least 80% of sampled time in rear, transition, or staging zones",
+      "pass": true
+    },
+    {
+      "name": "Mixed owners containing artillery were treated as support owners and never assigned reserve release roles",
+      "pass": true
+    },
+    {
+      "name": "Mixed support owners stamped fire-mission metadata only onto indirect-fire units while maneuver elements held the support anchor",
+      "pass": true
+    },
+    {
+      "name": "Counter-battery artillery targeted enemy guns ahead of armor when both were visible in the tasked zone",
+      "pass": true
+    },
+    {
+      "name": "Artillery could queue area fire from spotter memory without a direct unit lock or live visual contact",
+      "pass": true
+    },
+    {
+      "name": "Artillery could launch preparatory area fire on a planned assault hex even with no spotter history or live contact",
+      "pass": true
+    },
+    {
+      "name": "Artillery held fire while moving and resumed only after emplacement",
+      "pass": true
+    },
+    {
+      "name": "Main-effort and supporting-attack plans stayed anchored to real objective hexes or bounded approach rings",
+      "pass": true
+    },
+    {
+      "name": "HQs stayed out of contested or overexposed frontline zones for at least 85% of sampled time",
+      "pass": true
+    },
+    {
+      "name": "No single hex accumulated more than six stack-limit collisions in the long multi-zone run",
+      "pass": true
+    },
+    {
+      "name": "Zone-role tasks can complete on zone control recovery without literal VP-hex stacking",
+      "pass": true
+    },
+    {
+      "name": "Neutral objectives accumulate candidate hold progress and promote to awarded control once the hold window completes",
+      "pass": true
+    },
+    {
+      "name": "Opening bootstrap seeds uncontested anchor zones before the first AI plan",
+      "pass": true
+    },
+    {
+      "name": "Live VP wins require every critical objective, while timeout wins only require crossing the VP threshold at 30 minutes",
+      "pass": true
+    },
+    {
+      "name": "Blind commanders still formed a bounded screen package while scout flights stayed off dedicated screen ownership",
+      "pass": true
+    },
+    {
+      "name": "Commander operations persist across adjacent reviews, capture deep-review timestamps, and can spawn support operations",
+      "pass": true
+    },
+    {
+      "name": "Commander state records whether director advice was accepted, deferred, or rejected",
+      "pass": true
+    },
+    {
+      "name": "VP zone outline geometry is stable and produces perimeter segments for both single and merged objective zones",
+      "pass": true
+    },
+    {
+      "name": "Profile, reserve, and think-budget tuning changed the AI behavior",
+      "pass": true
+    },
+    {
+      "name": "High reserve-patience profiles held back more reserves than low-patience profiles",
+      "pass": true
+    },
+    {
+      "name": "High rear-security bias preserved at least as much rear-security tasking as low-bias profiles",
+      "pass": true
+    },
+    {
+      "name": "High neutral-zone opportunism preserved at least as much early multi-zone breadth as cautious profiles",
+      "pass": true
+    },
+    {
+      "name": "High support-by-fire bias preserved artillery support tasking, fire missions, and ammo assignment volume against the aggressive baseline",
+      "pass": true
+    },
+    {
+      "name": "High pocket-relief bias favored relief plans more strongly in the encirclement scenario",
+      "pass": true
+    },
+    {
+      "name": "RTS spectator/debug UI references zone-based hypotheses instead of stale point targets",
+      "pass": true
+    }
+  ],
+  "perceptionSnapshots": [
+    {
+      "atMs": 2000,
+      "actors": {
+        "actor_1": {
+          "visibleCells": 140,
+          "detectedUnits": 1,
+          "contactUnits": 0,
+          "lastKnownUnits": 1
+        },
+        "actor_2": {
+          "visibleCells": 151,
+          "detectedUnits": 3,
+          "contactUnits": 1,
+          "lastKnownUnits": 4
+        }
+      }
+    },
+    {
+      "atMs": 4000,
+      "actors": {
+        "actor_1": {
+          "visibleCells": 140,
+          "detectedUnits": 1,
+          "contactUnits": 0,
+          "lastKnownUnits": 1
+        },
+        "actor_2": {
+          "visibleCells": 151,
+          "detectedUnits": 3,
+          "contactUnits": 1,
+          "lastKnownUnits": 4
+        }
+      }
+    },
+    {
+      "atMs": 6000,
+      "actors": {
+        "actor_1": {
+          "visibleCells": 140,
+          "detectedUnits": 1,
+          "contactUnits": 0,
+          "lastKnownUnits": 1
+        },
+        "actor_2": {
+          "visibleCells": 151,
+          "detectedUnits": 3,
+          "contactUnits": 1,
+          "lastKnownUnits": 4
+        }
+      }
+    },
+    {
+      "atMs": 8000,
+      "actors": {
+        "actor_1": {
+          "visibleCells": 140,
+          "detectedUnits": 1,
+          "contactUnits": 0,
+          "lastKnownUnits": 1
+        },
+        "actor_2": {
+          "visibleCells": 145,
+          "detectedUnits": 2,
+          "contactUnits": 2,
+          "lastKnownUnits": 4
+        }
+      }
+    },
+    {
+      "atMs": 10000,
+      "actors": {
+        "actor_1": {
+          "visibleCells": 150,
+          "detectedUnits": 0,
+          "contactUnits": 1,
+          "lastKnownUnits": 1
+        },
+        "actor_2": {
+          "visibleCells": 140,
+          "detectedUnits": 0,
+          "contactUnits": 3,
+          "lastKnownUnits": 4
+        }
+      }
+    },
+    {
+      "atMs": 12000,
+      "actors": {
+        "actor_1": {
+          "visibleCells": 150,
+          "detectedUnits": 0,
+          "contactUnits": 1,
+          "lastKnownUnits": 1
+        },
+        "actor_2": {
+          "visibleCells": 145,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        }
+      }
+    },
+    {
+      "atMs": 14000,
+      "actors": {
+        "actor_1": {
+          "visibleCells": 142,
+          "detectedUnits": 0,
+          "contactUnits": 3,
+          "lastKnownUnits": 3
+        },
+        "actor_2": {
+          "visibleCells": 135,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        }
+      }
+    },
+    {
+      "atMs": 16000,
+      "actors": {
+        "actor_1": {
+          "visibleCells": 142,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        },
+        "actor_2": {
+          "visibleCells": 138,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        }
+      }
+    },
+    {
+      "atMs": 18000,
+      "actors": {
+        "actor_1": {
+          "visibleCells": 151,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        },
+        "actor_2": {
+          "visibleCells": 138,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        }
+      }
+    },
+    {
+      "atMs": 20000,
+      "actors": {
+        "actor_1": {
+          "visibleCells": 151,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        },
+        "actor_2": {
+          "visibleCells": 138,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        }
+      }
+    },
+    {
+      "atMs": 22000,
+      "actors": {
+        "actor_1": {
+          "visibleCells": 151,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        },
+        "actor_2": {
+          "visibleCells": 138,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        }
+      }
+    },
+    {
+      "atMs": 24000,
+      "actors": {
+        "actor_1": {
+          "visibleCells": 151,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        },
+        "actor_2": {
+          "visibleCells": 138,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        }
+      }
+    },
+    {
+      "atMs": 26000,
+      "actors": {
+        "actor_1": {
+          "visibleCells": 146,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        },
+        "actor_2": {
+          "visibleCells": 138,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        }
+      }
+    },
+    {
+      "atMs": 28000,
+      "actors": {
+        "actor_1": {
+          "visibleCells": 151,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        },
+        "actor_2": {
+          "visibleCells": 138,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        }
+      }
+    },
+    {
+      "atMs": 30000,
+      "actors": {
+        "actor_1": {
+          "visibleCells": 151,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        },
+        "actor_2": {
+          "visibleCells": 138,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        }
+      }
+    },
+    {
+      "atMs": 32000,
+      "actors": {
+        "actor_1": {
+          "visibleCells": 136,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        },
+        "actor_2": {
+          "visibleCells": 138,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        }
+      }
+    },
+    {
+      "atMs": 34000,
+      "actors": {
+        "actor_1": {
+          "visibleCells": 140,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        },
+        "actor_2": {
+          "visibleCells": 139,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        }
+      }
+    },
+    {
+      "atMs": 36000,
+      "actors": {
+        "actor_1": {
+          "visibleCells": 140,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        },
+        "actor_2": {
+          "visibleCells": 139,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        }
+      }
+    },
+    {
+      "atMs": 38000,
+      "actors": {
+        "actor_1": {
+          "visibleCells": 131,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        },
+        "actor_2": {
+          "visibleCells": 138,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        }
+      }
+    },
+    {
+      "atMs": 40000,
+      "actors": {
+        "actor_1": {
+          "visibleCells": 131,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        },
+        "actor_2": {
+          "visibleCells": 138,
+          "detectedUnits": 0,
+          "contactUnits": 4,
+          "lastKnownUnits": 4
+        }
+      }
+    }
+  ],
+  "thoughtSnapshots": [
+    {
+      "atMs": 250,
+      "actorId": "actor_1",
+      "commander": "I am directing Blue HQ (Citadel) east maneuver group execute screen toward G10, while Blue HQ (Citadel) fires execute fire mission toward L14. I do not have a clean enemy picture yet, so I am leaning on doctrine, terrain, and objective pressure. I have released the reserve and I am feeding it into the fight. I am maintaining the consolidate operation around Stonebrook Bridge. I am coordinating 3 subordinate groups. My doctrine is aggressive breakthrough. The director is recommending Stonebrook Bridge as the near axis toward Stonebrook Bridge, with shaping pressure around the adjacent front.",
+      "director": "I am trying to keep steady pressure across Stonebrook Bridge. No side has locked down an objective yet and our visible strength ratio is 1.00. I am not seeing a distinct supporting zone that outweighs the main effort yet. I am staying on the baseline package because the battle picture is still broadly stable. The current commander profile is aggressive breakthrough."
+    },
+    {
+      "atMs": 250,
+      "actorId": "actor_2",
+      "commander": "I am directing Red HQ (Bastion) east maneuver group execute contain toward Stonebrook Bridge, while Red HQ (Bastion) fires execute fire mission toward L14. I do not have a clean enemy picture yet, so I am leaning on doctrine, terrain, and objective pressure. I have released the reserve and I am feeding it into the fight. I am maintaining the consolidate operation around Stonebrook Bridge. I am coordinating 3 subordinate groups. My doctrine is cautious defender. The director is recommending Stonebrook Bridge as the near axis toward Stonebrook Bridge, with shaping pressure around the adjacent front.",
+      "director": "I am trying to keep steady pressure across Stonebrook Bridge. No side has locked down an objective yet and our visible strength ratio is 1.00. I am not seeing a distinct supporting zone that outweighs the main effort yet. I am staying on the baseline package because the battle picture is still broadly stable. The current commander profile is cautious defender."
+    },
+    {
+      "atMs": 15250,
+      "actorId": "actor_1",
+      "commander": "I am directing Blue HQ (Citadel) east maneuver group execute screen toward G10, while Blue HQ (Citadel) fires execute fire mission toward L14. I have 1 confirmed contact in view, plus 1 fading report. I have released the reserve and I am feeding it into the fight. I am maintaining the secure_objective operation around Stonebrook Bridge. I am coordinating 3 subordinate groups. My doctrine is aggressive breakthrough. The director is recommending Stonebrook Bridge as the near axis toward Stonebrook Bridge, with shaping pressure around the adjacent front.",
+      "director": "I am trying to keep steady pressure across Stonebrook Bridge. No side has locked down an objective yet and our visible strength ratio is 1.00. I am not seeing a distinct supporting zone that outweighs the main effort yet. I am staying on the baseline package because the battle picture is still broadly stable. The current commander profile is aggressive breakthrough."
+    },
+    {
+      "atMs": 15250,
+      "actorId": "actor_2",
+      "commander": "I am directing Red HQ (Bastion) east maneuver group execute relief toward Stonebrook Bridge, while Red HQ (Bastion) fires execute fire mission toward L14. I have 4 confirmed contacts in view, plus 4 fading reports. I have released the reserve and I am feeding it into the fight. I am maintaining the fight_through operation around Stonebrook Bridge. I am coordinating 3 subordinate groups. My doctrine is cautious defender. The director is recommending Stonebrook Bridge as the near axis toward Stonebrook Bridge, with shaping pressure around the adjacent front.",
+      "director": "I am trying to keep steady pressure across Stonebrook Bridge. No side has locked down an objective yet and our visible strength ratio is 1.00. I am not seeing a distinct supporting zone that outweighs the main effort yet. I am staying on the baseline package because the battle picture is still broadly stable. The current commander profile is cautious defender."
+    },
+    {
+      "atMs": 30250,
+      "actorId": "actor_1",
+      "commander": "I am directing Blue HQ (Citadel) east maneuver group execute screen toward G10, while Blue HQ (Citadel) fires execute fire mission toward L14. I have 4 confirmed contacts in view, plus 4 fading reports. Everything available is already committed forward. I am maintaining the fight_through operation around Stonebrook Bridge. I am coordinating 3 subordinate groups. My doctrine is aggressive breakthrough. The director is recommending Stonebrook Bridge as the near axis toward Stonebrook Bridge, with shaping pressure around the adjacent front.",
+      "director": "I am trying to keep steady pressure across Stonebrook Bridge. No side has locked down an objective yet and our visible strength ratio is 1.00. I am not seeing a distinct supporting zone that outweighs the main effort yet. I am staying on the baseline package because the battle picture is still broadly stable. The current commander profile is aggressive breakthrough."
+    },
+    {
+      "atMs": 30250,
+      "actorId": "actor_2",
+      "commander": "I am directing Red HQ (Bastion) east maneuver group execute main effort toward Stonebrook Bridge, while Red HQ (Bastion) fires execute fire mission toward L14. I have 4 confirmed contacts in view, plus 4 fading reports. I am still keeping 2 reserve units back for a sharper trigger. I am maintaining the fight_through operation around Stonebrook Bridge. I am coordinating 3 subordinate groups. My doctrine is cautious defender. The director is recommending Stonebrook Bridge as the near axis toward Stonebrook Bridge, with shaping pressure around the adjacent front.",
+      "director": "I am trying to keep steady pressure across Stonebrook Bridge. No side has locked down an objective yet and our visible strength ratio is 1.00. I am not seeing a distinct supporting zone that outweighs the main effort yet. I am staying on the baseline package because the battle picture is still broadly stable. The current commander profile is cautious defender."
+    }
+  ],
+  "concentrationViolations": [],
+  "supportResidency": {
+    "actor_1": {
+      "actorId": "actor_1",
+      "totalSamples": 100,
+      "safeSamples": 100,
+      "ratio": 1,
+      "unitCount": 2
+    },
+    "actor_2": {
+      "actorId": "actor_2",
+      "totalSamples": 100,
+      "safeSamples": 100,
+      "ratio": 1,
+      "unitCount": 2
+    }
+  },
+  "supportResidencyViolations": [],
+  "defaultArtilleryDoctrine": {
+    "actor_1": {
+      "actorId": "actor_1",
+      "artilleryUnitCount": 1,
+      "firesOwnerCount": 1,
+      "fireMissionTaskCount": 20,
+      "ammoTypedFireMissionCount": 20,
+      "ammoStampedSamples": 18,
+      "missionZoneStampedSamples": 18
+    },
+    "actor_2": {
+      "actorId": "actor_2",
+      "artilleryUnitCount": 1,
+      "firesOwnerCount": 1,
+      "fireMissionTaskCount": 20,
+      "ammoTypedFireMissionCount": 20,
+      "ammoStampedSamples": 18,
+      "missionZoneStampedSamples": 18
+    }
+  },
+  "urbanArtilleryDoctrine": {
+    "actor_1": {
+      "actorId": "actor_1",
+      "artilleryUnitCount": 1,
+      "firesOwnerCount": 1,
+      "fireMissionTaskCount": 15,
+      "ammoTypedFireMissionCount": 15,
+      "ammoStampedSamples": 13,
+      "missionZoneStampedSamples": 13
+    },
+    "actor_2": {
+      "actorId": "actor_2",
+      "artilleryUnitCount": 1,
+      "firesOwnerCount": 1,
+      "fireMissionTaskCount": 15,
+      "ammoTypedFireMissionCount": 15,
+      "ammoStampedSamples": 13,
+      "missionZoneStampedSamples": 13
+    }
+  },
+  "aggressiveSupportDoctrine": {
+    "actor_1": {
+      "actorId": "actor_1",
+      "artilleryUnitCount": 1,
+      "firesOwnerCount": 1,
+      "fireMissionTaskCount": 15,
+      "ammoTypedFireMissionCount": 15,
+      "ammoStampedSamples": 13,
+      "missionZoneStampedSamples": 13
+    },
+    "actor_2": {
+      "actorId": "actor_2",
+      "artilleryUnitCount": 1,
+      "firesOwnerCount": 1,
+      "fireMissionTaskCount": 15,
+      "ammoTypedFireMissionCount": 15,
+      "ammoStampedSamples": 13,
+      "missionZoneStampedSamples": 13
+    }
+  },
+  "mixedSupportOwnerRegression": {
+    "passed": true,
+    "role": "rear_security",
+    "kind": "rear_security"
+  },
+  "mixedFireMissionRegression": {
+    "passed": true,
+    "artilleryMission": {
+      "taskId": "mixed-fire-mission-task",
+      "ammoType": "destroy",
+      "zoneId": "zone_1",
+      "targetHex": "1,4",
+      "targetUnitIds": [
+        "unit_preset_7"
+      ],
+      "missionRadius": 1
+    },
+    "infantryCommandHex": "2,6"
+  },
+  "counterBatteryRegression": {
+    "passed": true,
+    "queuedImpact": true,
+    "targetId": "unit_preset_11",
+    "targetType": "artillery",
+    "preferredTargetId": "unit_preset_11",
+    "alternateTargetId": "unit_preset_7",
+    "zoneId": "zone_1"
+  },
+  "overHorizonAreaFireRegression": {
+    "passed": true,
+    "queuedImpact": true,
+    "targetHex": "0,10",
+    "detectedCount": 0,
+    "contactCount": 0,
+    "lastKnownCount": 1
+  },
+  "preparatoryAreaFireRegression": {
+    "passed": true,
+    "queuedImpact": true,
+    "targetHex": "0,10",
+    "targetId": null,
+    "detectedCount": 0,
+    "contactCount": 0,
+    "lastKnownCount": 0
+  },
+  "artilleryEmplacementRegression": {
+    "passed": true,
+    "movingFireObserved": false,
+    "arrived": true,
+    "emplacedFireObserved": true,
+    "moveHex": "2,3",
+    "zoneId": "zone_1"
+  },
+  "objectiveApproachCoverage": {},
+  "objectiveApproachViolations": [],
+  "headquartersExposure": {
+    "actor_1": {
+      "actorId": "actor_1",
+      "totalSamples": 50,
+      "exposedSamples": 0,
+      "exposureRatio": 0
+    },
+    "actor_2": {
+      "actorId": "actor_2",
+      "totalSamples": 50,
+      "exposedSamples": 0,
+      "exposureRatio": 0
+    }
+  },
+  "headquartersExposureViolations": [],
+  "stackCollisionHotspots": {
+    "totalEvents": 2,
+    "maxEventsPerHex": 1,
+    "hotspots": [
+      {
+        "hex": "8,5",
+        "count": 1
+      },
+      {
+        "hex": "7,6",
+        "count": 1
+      }
+    ]
+  },
+  "zoneTaskCompletionRegression": {
+    "passed": true,
+    "completed": false,
+    "commanderInvalidated": true,
+    "invalidationReason": "zone_already_secure",
+    "nextRole": "screen",
+    "nextTaskId": "task_250_completion-owner::maneuver::east_screen_zone_2",
+    "objectiveController": "actor_1",
+    "zoneController": "actor_1",
+    "activeQueueLength": 1
+  },
+  "criticalVpVictoryRegression": {
+    "defaultDurationLimitMinutes": 30,
+    "liveWinnerWithoutAllCritical": null,
+    "timeoutWinner": "actor_1",
+    "timeoutVictoryReason": "time_limit",
+    "liveWinnerWithAllCritical": "actor_1"
+  },
+  "blindContactAcquisitionRegression": {
+    "blindAtStart": true,
+    "screenTaskCount": 1,
+    "scoutFlightCount": 2,
+    "scoutOwnerCount": 1,
+    "scoutOwnersStayForward": true,
+    "scoutOwnersStayOnManeuverTasks": true,
+    "scoutOwnerRoles": [
+      "contain"
+    ],
+    "scoutOwnerZones": [
+      "zone_5"
+    ]
+  },
+  "recentAiDecisions": [
+    {
+      "atMs": 36250,
+      "actorId": "actor_1",
+      "unitId": null,
+      "provenance": "doctrine",
+      "source": "commander",
+      "summary": "unit_preset_6::command -> Secure the rear and support belt around Stonebrook Bridge.",
+      "details": {
+        "owner": "unit_preset_6::command",
+        "task": {
+          "id": "task_36250_unit_preset_6::command_rear_security_zone_1",
+          "owner": "unit_preset_6::command",
+          "kind": "rear_security",
+          "role": "rear_security",
+          "originZoneId": "zone_1",
+          "zoneId": "zone_1",
+          "nextZoneId": "zone_1",
+          "edgeId": null,
+          "laneId": null,
+          "targetHex": "6,9",
+          "stagingHex": "10,7",
+          "supportHexes": [],
+          "fallbackHex": "10,7",
+          "objectiveStyle": "rear_security",
+          "commandKind": "hold",
+          "provenance": "doctrine",
+          "summary": "Secure the rear and support belt around Stonebrook Bridge.",
+          "reason": "rear_security",
+          "assignedAtMs": 36250
+        }
+      }
+    },
+    {
+      "atMs": 36250,
+      "actorId": "actor_1",
+      "unitId": null,
+      "provenance": "lastKnown",
+      "source": "subordinates",
+      "summary": "unit_preset_6::maneuver::east accepted screen orders.",
+      "details": {
+        "owner": "unit_preset_6::maneuver::east",
+        "task": {
+          "id": "task_36250_unit_preset_6::maneuver::east_screen_zone_1",
+          "owner": "unit_preset_6::maneuver::east",
+          "kind": "screen",
+          "role": "screen",
+          "originZoneId": "zone_1",
+          "zoneId": "zone_1",
+          "nextZoneId": "zone_1",
+          "edgeId": null,
+          "laneId": null,
+          "targetHex": "6,9",
+          "stagingHex": "7,7",
+          "supportHexes": [],
+          "fallbackHex": "10,7",
+          "objectiveStyle": "screen",
+          "commandKind": "screen",
+          "provenance": "lastKnown",
+          "summary": "Screen and probe through Stonebrook Bridge.",
+          "reason": "screen",
+          "assignedAtMs": 36250
+        }
+      }
+    },
+    {
+      "atMs": 36250,
+      "actorId": "actor_1",
+      "unitId": null,
+      "provenance": "directorHint",
+      "source": "subordinates",
+      "summary": "unit_preset_6::fires accepted fire mission orders.",
+      "details": {
+        "owner": "unit_preset_6::fires",
+        "task": {
+          "id": "task_36250_unit_preset_6::fires_fire_mission_zone_1",
+          "owner": "unit_preset_6::fires",
+          "kind": "fire_mission",
+          "role": "support_by_fire",
+          "originZoneId": "zone_1",
+          "zoneId": "zone_1",
+          "nextZoneId": "zone_1",
+          "edgeId": null,
+          "laneId": null,
+          "targetHex": "11,13",
+          "stagingHex": "11,6",
+          "supportHexes": [
+            "0,9"
+          ],
+          "fallbackHex": "10,7",
+          "objectiveStyle": "support_by_fire",
+          "commandKind": "hold",
+          "provenance": "directorHint",
+          "summary": "Fire mission on Stonebrook Bridge.",
+          "reason": "support_by_fire",
+          "fireMissionAmmoFloor": 20,
+          "ammoType": "destroy",
+          "missionRadius": 1,
+          "targetUnitIds": [],
+          "assignedAtMs": 36250
+        }
+      }
+    },
+    {
+      "atMs": 36250,
+      "actorId": "actor_1",
+      "unitId": null,
+      "provenance": "doctrine",
+      "source": "subordinates",
+      "summary": "unit_preset_6::command accepted rear security orders.",
+      "details": {
+        "owner": "unit_preset_6::command",
+        "task": {
+          "id": "task_36250_unit_preset_6::command_rear_security_zone_1",
+          "owner": "unit_preset_6::command",
+          "kind": "rear_security",
+          "role": "rear_security",
+          "originZoneId": "zone_1",
+          "zoneId": "zone_1",
+          "nextZoneId": "zone_1",
+          "edgeId": null,
+          "laneId": null,
+          "targetHex": "6,9",
+          "stagingHex": "10,7",
+          "supportHexes": [],
+          "fallbackHex": "10,7",
+          "objectiveStyle": "rear_security",
+          "commandKind": "hold",
+          "provenance": "doctrine",
+          "summary": "Secure the rear and support belt around Stonebrook Bridge.",
+          "reason": "rear_security",
+          "assignedAtMs": 36250
+        }
+      }
+    },
+    {
+      "atMs": 36250,
+      "actorId": "actor_2",
+      "unitId": "unit_preset_10",
+      "provenance": "doctrine",
+      "source": "commander",
+      "summary": "Releasing reserve unit to the main fight.",
+      "details": null
+    },
+    {
+      "atMs": 36250,
+      "actorId": "actor_2",
+      "unitId": null,
+      "provenance": "doctrine",
+      "source": "commander",
+      "summary": "accepted director advice; continue phase toward zone_1.",
+      "details": {
+        "reviewAction": "continue_phase",
+        "reviewReasons": [],
+        "directorAdvice": {
+          "atMs": 36250,
+          "kind": "accepted_director_advice",
+          "reasons": [
+            "aligned_with_current_operation"
+          ],
+          "suggestedZoneId": "zone_1",
+          "chosenZoneId": "zone_1"
+        },
+        "operation": {
+          "id": "op_main_zone_1_250",
+          "kind": "main",
+          "goalZoneId": "zone_1",
+          "goalObjectiveHex": "3,4",
+          "phase": "fight_through",
+          "approachZoneIds": [
+            "zone_1"
+          ],
+          "supportZoneIds": [],
+          "startedAtMs": 250,
+          "phaseStartedAtMs": 250,
+          "lastMeaningfulProgressAtMs": 36250,
+          "commitmentUntilAtMs": 30250,
+          "viabilityScore": 0.72,
+          "viabilityTrend": 0.08,
+          "obstacleSummary": {
+            "blockedReasons": {},
+            "underFireCount": 0,
+            "lowCohesionCount": 0,
+            "casualtyDelta": 0
+          },
+          "branchCandidates": [],
+          "status": "active"
+        }
+      }
+    },
+    {
+      "atMs": 36250,
+      "actorId": "actor_2",
+      "unitId": null,
+      "provenance": "directorHint",
+      "source": "commander",
+      "summary": "unit_preset_12::maneuver::east -> Main effort toward Stonebrook Bridge.",
+      "details": {
+        "owner": "unit_preset_12::maneuver::east",
+        "task": {
+          "id": "task_36250_unit_preset_12::maneuver::east_main_effort_zone_1",
+          "owner": "unit_preset_12::maneuver::east",
+          "kind": "main_effort",
+          "role": "main_effort",
+          "originZoneId": "zone_1",
+          "zoneId": "zone_1",
+          "nextZoneId": "zone_1",
+          "edgeId": null,
+          "laneId": null,
+          "targetHex": "3,4",
+          "stagingHex": "2,4",
+          "supportHexes": [],
+          "fallbackHex": "1,7",
+          "objectiveStyle": "main_effort",
+          "commandKind": "move",
+          "provenance": "directorHint",
+          "summary": "Main effort toward Stonebrook Bridge.",
+          "reason": "main_effort",
+          "assignedAtMs": 36250
+        }
+      }
+    },
+    {
+      "atMs": 36250,
+      "actorId": "actor_2",
+      "unitId": null,
+      "provenance": "directorHint",
+      "source": "commander",
+      "summary": "unit_preset_12::fires -> Fire mission on Stonebrook Bridge.",
+      "details": {
+        "owner": "unit_preset_12::fires",
+        "task": {
+          "id": "task_36250_unit_preset_12::fires_fire_mission_zone_1",
+          "owner": "unit_preset_12::fires",
+          "kind": "fire_mission",
+          "role": "support_by_fire",
+          "originZoneId": "zone_1",
+          "zoneId": "zone_1",
+          "nextZoneId": "zone_1",
+          "edgeId": null,
+          "laneId": null,
+          "targetHex": "11,13",
+          "stagingHex": "0,8",
+          "supportHexes": [
+            "0,9"
+          ],
+          "fallbackHex": "1,7",
+          "objectiveStyle": "support_by_fire",
+          "commandKind": "hold",
+          "provenance": "directorHint",
+          "summary": "Fire mission on Stonebrook Bridge.",
+          "reason": "support_by_fire",
+          "fireMissionAmmoFloor": 20,
+          "ammoType": "destroy",
+          "missionRadius": 1,
+          "targetUnitIds": [],
+          "assignedAtMs": 36250
+        }
+      }
+    },
+    {
+      "atMs": 36250,
+      "actorId": "actor_2",
+      "unitId": null,
+      "provenance": "doctrine",
+      "source": "commander",
+      "summary": "unit_preset_12::command -> Secure the rear and support belt around Stonebrook Bridge.",
+      "details": {
+        "owner": "unit_preset_12::command",
+        "task": {
+          "id": "task_36250_unit_preset_12::command_rear_security_zone_1",
+          "owner": "unit_preset_12::command",
+          "kind": "rear_security",
+          "role": "rear_security",
+          "originZoneId": "zone_1",
+          "zoneId": "zone_1",
+          "nextZoneId": "zone_1",
+          "edgeId": null,
+          "laneId": null,
+          "targetHex": "6,9",
+          "stagingHex": "1,7",
+          "supportHexes": [],
+          "fallbackHex": "1,7",
+          "objectiveStyle": "rear_security",
+          "commandKind": "hold",
+          "provenance": "doctrine",
+          "summary": "Secure the rear and support belt around Stonebrook Bridge.",
+          "reason": "rear_security",
+          "assignedAtMs": 36250
+        }
+      }
+    },
+    {
+      "atMs": 36250,
+      "actorId": "actor_2",
+      "unitId": null,
+      "provenance": "directorHint",
+      "source": "subordinates",
+      "summary": "unit_preset_12::maneuver::east accepted main effort orders.",
+      "details": {
+        "owner": "unit_preset_12::maneuver::east",
+        "task": {
+          "id": "task_36250_unit_preset_12::maneuver::east_main_effort_zone_1",
+          "owner": "unit_preset_12::maneuver::east",
+          "kind": "main_effort",
+          "role": "main_effort",
+          "originZoneId": "zone_1",
+          "zoneId": "zone_1",
+          "nextZoneId": "zone_1",
+          "edgeId": null,
+          "laneId": null,
+          "targetHex": "3,4",
+          "stagingHex": "2,4",
+          "supportHexes": [],
+          "fallbackHex": "1,7",
+          "objectiveStyle": "main_effort",
+          "commandKind": "move",
+          "provenance": "directorHint",
+          "summary": "Main effort toward Stonebrook Bridge.",
+          "reason": "main_effort",
+          "assignedAtMs": 36250
+        }
+      }
+    },
+    {
+      "atMs": 36250,
+      "actorId": "actor_2",
+      "unitId": null,
+      "provenance": "directorHint",
+      "source": "subordinates",
+      "summary": "unit_preset_12::fires accepted fire mission orders.",
+      "details": {
+        "owner": "unit_preset_12::fires",
+        "task": {
+          "id": "task_36250_unit_preset_12::fires_fire_mission_zone_1",
+          "owner": "unit_preset_12::fires",
+          "kind": "fire_mission",
+          "role": "support_by_fire",
+          "originZoneId": "zone_1",
+          "zoneId": "zone_1",
+          "nextZoneId": "zone_1",
+          "edgeId": null,
+          "laneId": null,
+          "targetHex": "11,13",
+          "stagingHex": "0,8",
+          "supportHexes": [
+            "0,9"
+          ],
+          "fallbackHex": "1,7",
+          "objectiveStyle": "support_by_fire",
+          "commandKind": "hold",
+          "provenance": "directorHint",
+          "summary": "Fire mission on Stonebrook Bridge.",
+          "reason": "support_by_fire",
+          "fireMissionAmmoFloor": 20,
+          "ammoType": "destroy",
+          "missionRadius": 1,
+          "targetUnitIds": [],
+          "assignedAtMs": 36250
+        }
+      }
+    },
+    {
+      "atMs": 36250,
+      "actorId": "actor_2",
+      "unitId": null,
+      "provenance": "doctrine",
+      "source": "subordinates",
+      "summary": "unit_preset_12::command accepted rear security orders.",
+      "details": {
+        "owner": "unit_preset_12::command",
+        "task": {
+          "id": "task_36250_unit_preset_12::command_rear_security_zone_1",
+          "owner": "unit_preset_12::command",
+          "kind": "rear_security",
+          "role": "rear_security",
+          "originZoneId": "zone_1",
+          "zoneId": "zone_1",
+          "nextZoneId": "zone_1",
+          "edgeId": null,
+          "laneId": null,
+          "targetHex": "6,9",
+          "stagingHex": "1,7",
+          "supportHexes": [],
+          "fallbackHex": "1,7",
+          "objectiveStyle": "rear_security",
+          "commandKind": "hold",
+          "provenance": "doctrine",
+          "summary": "Secure the rear and support belt around Stonebrook Bridge.",
+          "reason": "rear_security",
+          "assignedAtMs": 36250
+        }
+      }
+    }
+  ],
+  "logModes": {
+    "standard": {
+      "summaryActors": 0,
+      "diaryEntries": 0
+    },
+    "llmSummary": {
+      "summaryActors": 2,
+      "historyDepth": 4,
+      "diaryEntries": 0
+    },
+    "fullDiary": {
+      "summaryActors": 2,
+      "diaryEntries": 136,
+      "diaryKinds": [
+        "combat_event",
+        "command_event",
+        "decision",
+        "order_issue",
+        "perception_delta",
+        "thought_snapshot"
+      ]
+    }
+  },
+  "tuningComparison": {
+    "cautiousStateHash": "f81d7fd76dfc83cf7a879dfd8e675e62368dee0acf5c0337bf23e41c2d1af996",
+    "aggressiveStateHash": "6f4beb163579630f57c91eecd0e43bc35e98d24289442a02b99651ad60616b22",
+    "cautiousProvenanceHash": "5b15ae18dca30e978b51bc1b87ed76b23d7ce981f5a40e7db81a4291d1c36b9d",
+    "aggressiveProvenanceHash": "3284b06634d10b13f6934be7c38a18848db791c166d1effcbeaedcc6e16490d6"
+  }
+}

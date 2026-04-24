@@ -1,0 +1,713 @@
+{
+  "ok": true,
+  "status": "passed",
+  "timestamp": "2026-03-11T09:30:52.917Z",
+  "mode": "live-parse-live-llm",
+  "terrainSource": {
+    "file": "C:\\Users\\Ryan\\Documents\\open-conflict-v0.10\\open-conflict\\Tests\\smoke\\cache\\llanddeusant_0.5km_2026-03-11T09-26-07-899Z.json",
+    "location": "Llanddeusant, Wales",
+    "sourceType": "live-parse",
+    "cellSizeKm": 0.5,
+    "cols": 20,
+    "rows": 23,
+    "bbox": {
+      "south": 51.83508444125045,
+      "north": 51.924915558749554,
+      "west": -3.8227600722644546,
+      "east": -3.6772399277355454
+    }
+  },
+  "scenario": {
+    "title": "Llanddeusant Dam Crossing Smoke",
+    "scale": "grand_tactical",
+    "folder": "llanddeusant-dam-crossing-smoke-2026-03-11t09-26-07-912z",
+    "turnStarted": 1,
+    "turnEnded": 2
+  },
+  "llm": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-6",
+    "temperature": 0.4
+  },
+  "objectives": {
+    "primary": {
+      "key": "11,10",
+      "label": "L11",
+      "name": "L11 (light_veg, trail)",
+      "elevation": 498,
+      "features": [
+        "trail",
+        "dam",
+        "cliffs",
+        "slope_steep",
+        "rough_terrain"
+      ]
+    },
+    "support": {
+      "key": "10,7",
+      "label": "K8",
+      "name": "K8 (light_veg, trail)",
+      "elevation": 381,
+      "features": [
+        "trail",
+        "rough_terrain"
+      ]
+    },
+    "town": {
+      "key": "6,4",
+      "label": "G5",
+      "name": "G5 (light_veg, trail)",
+      "elevation": 268,
+      "features": [
+        "trail",
+        "town"
+      ]
+    },
+    "highGround": {
+      "key": "15,10",
+      "label": "P11",
+      "name": "P11 (wetland, none)",
+      "elevation": 769,
+      "features": [
+        "cliffs",
+        "slope_steep",
+        "elevation_advantage",
+        "rough_terrain"
+      ]
+    }
+  },
+  "checks": [
+    {
+      "name": "Terrain round-trip dims match",
+      "pass": true
+    },
+    {
+      "name": "Terrain round-trip cell count matches",
+      "pass": true
+    },
+    {
+      "name": "Initial state persisted and reloaded",
+      "pass": true
+    },
+    {
+      "name": "Adjudication returned structured data",
+      "pass": true
+    },
+    {
+      "name": "Live adjudication updated a broad slice of the roster",
+      "pass": true
+    },
+    {
+      "name": "Turn log entry recorded",
+      "pass": true
+    },
+    {
+      "name": "Turn advanced to 2",
+      "pass": true
+    },
+    {
+      "name": "Final state saved and reloaded",
+      "pass": true
+    },
+    {
+      "name": "Primary objective control resolved",
+      "pass": true
+    }
+  ],
+  "contactEvents": 5,
+  "orders": [
+    {
+      "actorId": "actor_1",
+      "unit": "1st Recon (Shadow)",
+      "movement": {
+        "id": "MOVE",
+        "target": "10,7"
+      },
+      "action": {
+        "id": "RECON",
+        "target": "11,10"
+      },
+      "intent": "Probe the dam approaches and confirm the defender layout."
+    },
+    {
+      "actorId": "actor_1",
+      "unit": "Alpha Company",
+      "movement": {
+        "id": "MOVE",
+        "target": "11,10"
+      },
+      "action": {
+        "id": "ATTACK",
+        "target": "11,10"
+      },
+      "intent": "Close on the dam and force Red Guard off the objective."
+    },
+    {
+      "actorId": "actor_1",
+      "unit": "Bravo Company",
+      "movement": {
+        "id": "MOVE",
+        "target": "10,7"
+      },
+      "action": {
+        "id": "SUPPORT_FIRE",
+        "target": "11,10"
+      },
+      "intent": "Support Alpha's push with suppressive fires from the western ridge."
+    },
+    {
+      "actorId": "actor_1",
+      "unit": "1st Armor (Steel)",
+      "movement": {
+        "id": "MOVE",
+        "target": "10,7"
+      },
+      "action": {
+        "id": "ATTACK",
+        "target": "15,10"
+      },
+      "intent": "Threaten the eastern high ground and pin Iron Fist in place."
+    },
+    {
+      "actorId": "actor_1",
+      "unit": "Thunder Battery",
+      "movement": null,
+      "action": {
+        "id": "FIRE_MISSION",
+        "target": "15,10"
+      },
+      "intent": "Drop artillery onto the eastern crest to break Red overwatch."
+    },
+    {
+      "actorId": "actor_1",
+      "unit": "Blue HQ (Citadel)",
+      "movement": null,
+      "action": {
+        "id": "DEFEND",
+        "target": "6,4"
+      },
+      "intent": "Hold the western trail junction and keep the assault organized."
+    },
+    {
+      "actorId": "actor_2",
+      "unit": "Viper Recon",
+      "movement": {
+        "id": "MOVE",
+        "target": "15,10"
+      },
+      "action": {
+        "id": "RECON",
+        "target": "10,7"
+      },
+      "intent": "Screen the eastern slope and keep eyes on the western approach."
+    },
+    {
+      "actorId": "actor_2",
+      "unit": "Red Guard Platoon",
+      "movement": {
+        "id": "MOVE",
+        "target": "11,10"
+      },
+      "action": {
+        "id": "DEFEND",
+        "target": "11,10"
+      },
+      "intent": "Anchor the dam complex and absorb Blue's first assault wave."
+    },
+    {
+      "actorId": "actor_2",
+      "unit": "Sentinel Platoon",
+      "movement": {
+        "id": "MOVE",
+        "target": "15,10"
+      },
+      "action": {
+        "id": "DIG_IN",
+        "target": "15,10"
+      },
+      "intent": "Deepen defensive works on the eastern crest and hold the observation line."
+    },
+    {
+      "actorId": "actor_2",
+      "unit": "Iron Fist Troop",
+      "movement": {
+        "id": "MOVE",
+        "target": "10,7"
+      },
+      "action": {
+        "id": "ATTACK",
+        "target": "10,7"
+      },
+      "intent": "Counterattack toward the western support-by-fire position if Blue overextends."
+    },
+    {
+      "actorId": "actor_2",
+      "unit": "Hammer Battery",
+      "movement": null,
+      "action": {
+        "id": "FIRE_MISSION",
+        "target": "10,7"
+      },
+      "intent": "Break up Blue's assault support before it can mass on the dam."
+    },
+    {
+      "actorId": "actor_2",
+      "unit": "Red HQ (Bastion)",
+      "movement": null,
+      "action": {
+        "id": "DEFEND",
+        "target": "15,10"
+      },
+      "intent": "Maintain control of the eastern high ground and preserve cohesion."
+    }
+  ],
+  "adjudication": {
+    "outcomeType": "mixed",
+    "narrative": "The morning mist still clings to the Black Mountain's flanks as both forces set into motion, and the first sounds of war echo across the highland bogs.\n\nAt K8, 1st Recon (Shadow) holds its position in the rough scrub, scanning east toward the dam complex. The recon company's optics can pick out the general shape of the terrain around L11 — the dark cleft of the dam structure, the cliff faces dropping away to the south — but at three hexes through broken highland, formal reconnaissance is impossible. The dam's occupancy status remains unconfirmed. Then, without warning, the air splits open above them. Hammer Battery's HE rounds, registered by Red Guard's observers at M12 before they stepped off, walk across K8 in a tight pattern. The light vegetation offers no protection. 1st Recon's vehicles scatter into hull-down positions behind the rough terrain folds, but two vehicles are caught in the open. The company loses approximately 15% of its strength — one vehicle burning, crews scrambling through the heather — and the survivors hunker down, shaken. Cohesion drops sharply as the battery's second salvo forces the recon element into suppressed positions. The fire mission is textbook: effective range, clear observer, neutral fortune. 1st Recon at K8 survives but is badly disrupted.\n\nAlpha Company pushes out of K7 with purpose, the infantry companies moving in extended order through the forested hills. The terrain immediately punishes them. The path through K8 and into L9's forested hills is wet, the ground sucking at boots, the slope steeper than the maps suggested. Fortune is unkind — a navigation error at the K8 junction costs thirty minutes as the lead platoon discovers a false trail through the treeline. By the time the company reaches L9, the movement budget is exhausted. Alpha halts in the forested hills at L9, approximately two kilometers short of the dam. The assault on L11 cannot proceed this turn. From L9, the company's forward observers can hear the distant crack of artillery to the east and the rumble of Hammer Battery's rounds impacting near K8, but they press on into their hasty defensive perimeter among the trees, waiting for the next bound.\n\nBravo Company's advance from J11 is equally punishing. The highland rough terrain between J11 and K9 — steep, boulder-strewn, with the wet ground making every step treacherous — slows the battalion to a crawl. Fortune is neutral but the terrain is unforgiving. Bravo reaches J10 after grinding through the highland slopes, halting one hex short of K9. The support fire mission against L11 cannot be executed — Bravo is out of range and out of position. From J10, the company can hear the artillery exchange to the east and observe the smoke rising from K8 where Hammer Battery's rounds have landed. Bravo digs in at J10, securing the highland approach.\n\n1st Armor (Steel) has the best morning of any Blue unit. The tracked battalion rolls out of I6 and follows the trail network through J7's forested hills and up through K7, the engines growling in low gear on the wet slopes. Fortune is favorable — the trail is firmer than expected, the lead tank troop finding a solid track through the trees. By mid-morning, the armor battalion is at K8, its tanks fanning out across the rough terrain. The battalion commander surveys the eastern ridgeline and immediately understands the problem: the ridgeline at O10 rises to 697 meters, a solid wall of highland that physically blocks any direct fire engagement toward P11. The attack order cannot be executed. The armor holds at K8, its presence a threat-in-being, but unable to engage the eastern heights directly. The arrival of the armor at K8 coincides with the tail end of Hammer Battery's fire mission — the tanks roll through the smoke of 1st Recon's burning vehicle, the crews grim-faced.\n\nThunder Battery opens fire from its concealed position in the treeline at C11. The battery's guns arc shells over the Black Mountain toward P11, where Viper Recon holds the eastern crest. Bravo Company was the designated observer, but Bravo has moved from J11 to J10 — the fire control handoff is imperfect. Fortune is unfavorable (22), and the rounds land in the general vicinity of P11 but scatter across the wetland terrain. Viper Recon, already suffering from a radio malfunction (fortune 4), takes light casualties — approximately 10% strength loss — as shells burst across the exposed hilltop. The wetland absorbs some of the blast, and Viper's vehicles disperse into hull-down positions on the reverse slope. The radio malfunction means Viper cannot immediately relay the impact to Red HQ. Blue HQ holds at B12, its command functions running smoothly (fortune 85), maintaining coordination across the brigade's dispersed elements.\n\nOn the Red side, Red Guard Platoon executes the turn's most consequential action. The infantry battalion steps off from M12 in good order, moving northwest through M11's rough highland and arriving at L11 — the dam complex — before Blue's assault elements can close. The platoon's partial field works (30% entrenchment) transfer to the new position, and the defenders immediately begin improving their positions among the cliff faces and rough terrain of the dam. L11 is now held. Red Guard's commander surveys the approaches: the forested hills to the west (L9) are empty for now, but the sound of movement and the distant crack of small arms suggests Blue is coming. The dam is anchored.\n\nSentinel Platoon's attempt to reinforce P11 ends in disaster at the Afon Twrch. The platoon steps off from M13 in good order, but the river crossing at N13 — swollen with March rain, the banks churned to mud — proves catastrophic. Fortune is merciless (2). The lead section attempts the crossing at a shallow ford, but the current is stronger than anticipated; two soldiers lose their footing and are swept downstream before being recovered. Equipment is lost in the water. The platoon's cohesion shatters as the crossing attempt collapses into chaos. Sentinel halts at N13, having lost 15% of its strength and much of its organizational integrity. The 60% entrenchment at M13 is abandoned. P11 will not be reinforced this turn.\n\nIron Fist Troop's counterattack is ambitious but falls well short. The armor battalion pushes out of O12 and immediately confronts the Afon Twrch at O11. The river crossing in tracked vehicles, without a bridge, in wet conditions, is brutal work. Fortune is neutral (54), and the battalion's lead troop manages to force a crossing — the exceptional initiative of a junior troop commander, who identifies a shallow gravel bar and pushes his vehicles across before the water rises further (global friction: positive). Iron Fist reaches N11, three hexes short of K8. The counterattack cannot materialize this turn. The battalion holds at N11, having expended significant fuel and mechanical wear on the crossing, but having established a bridgehead across the Afon Twrch that could be exploited next turn.\n\nRed HQ holds at Q13, its communications running smoothly (fortune 73). The favorable conditions allow Red HQ to maintain clear contact with all subordinate units, and the commander's steady hand provides a stabilizing influence on the force — a +5 morale bonus radiates to Red units within range. The DEFEND order toward P11 cannot be executed through the terrain blocking LOS, but the HQ's command function is intact.\n\nAs the morning matures, the situation crystallizes: Red Guard holds the dam at L11 with partial entrenchment. Blue's assault elements are stalled in the forested hills and highland approaches, short of their objectives. The armor is at K8 but cannot engage the eastern heights. Viper Recon is battered but holding P11. Sentinel is wrecked at N13. Iron Fist has crossed the Afon Twrch and sits at N11, a potential threat that Blue does not yet know about. The first turn belongs narrowly to Red — the dam is held — but Blue's forces are intact and positioned for a second-turn push.",
+    "updateCount": 28,
+    "changedUnits": [
+      {
+        "id": "unit_preset_4",
+        "name": "1st Armor (Steel)",
+        "actor": "actor_1",
+        "changes": [
+          {
+            "attribute": "position",
+            "oldValue": "I6",
+            "newValue": "K8"
+          },
+          {
+            "attribute": "posture",
+            "oldValue": "reserve",
+            "newValue": "defending"
+          }
+        ]
+      },
+      {
+        "id": "unit_preset_1",
+        "name": "1st Recon (Shadow)",
+        "actor": "actor_1",
+        "changes": [
+          {
+            "attribute": "strength",
+            "oldValue": 100,
+            "newValue": 85
+          },
+          {
+            "attribute": "morale",
+            "oldValue": 100,
+            "newValue": 80
+          },
+          {
+            "attribute": "cohesion",
+            "oldValue": 100,
+            "newValue": 75
+          },
+          {
+            "attribute": "posture",
+            "oldValue": "moving",
+            "newValue": "defending"
+          }
+        ]
+      },
+      {
+        "id": "unit_preset_2",
+        "name": "Alpha Company",
+        "actor": "actor_1",
+        "changes": [
+          {
+            "attribute": "position",
+            "oldValue": "K7",
+            "newValue": "L9"
+          },
+          {
+            "attribute": "posture",
+            "oldValue": "attacking",
+            "newValue": "moving"
+          }
+        ]
+      },
+      {
+        "id": "unit_preset_3",
+        "name": "Bravo Company",
+        "actor": "actor_1",
+        "changes": [
+          {
+            "attribute": "position",
+            "oldValue": "J11",
+            "newValue": "J10"
+          },
+          {
+            "attribute": "posture",
+            "oldValue": "attacking",
+            "newValue": "defending"
+          }
+        ]
+      },
+      {
+        "id": "unit_preset_11",
+        "name": "Hammer Battery",
+        "actor": "actor_2",
+        "changes": [
+          {
+            "attribute": "ammo",
+            "oldValue": 100,
+            "newValue": 75
+          },
+          {
+            "attribute": "morale",
+            "oldValue": 100,
+            "newValue": 105
+          },
+          {
+            "attribute": "morale",
+            "oldValue": 100,
+            "newValue": 100
+          }
+        ]
+      },
+      {
+        "id": "unit_preset_10",
+        "name": "Iron Fist Troop",
+        "actor": "actor_2",
+        "changes": [
+          {
+            "attribute": "position",
+            "oldValue": "O12",
+            "newValue": "N11"
+          },
+          {
+            "attribute": "posture",
+            "oldValue": "reserve",
+            "newValue": "moving"
+          }
+        ]
+      },
+      {
+        "id": "unit_preset_8",
+        "name": "Red Guard Platoon",
+        "actor": "actor_2",
+        "changes": [
+          {
+            "attribute": "position",
+            "oldValue": "M12",
+            "newValue": "L11"
+          },
+          {
+            "attribute": "posture",
+            "oldValue": "defending",
+            "newValue": "defending"
+          }
+        ]
+      },
+      {
+        "id": "unit_preset_12",
+        "name": "Red HQ (Bastion)",
+        "actor": "actor_2",
+        "changes": [
+          {
+            "attribute": "morale",
+            "oldValue": 100,
+            "newValue": 100
+          }
+        ]
+      },
+      {
+        "id": "unit_preset_9",
+        "name": "Sentinel Platoon",
+        "actor": "actor_2",
+        "changes": [
+          {
+            "attribute": "position",
+            "oldValue": "M13",
+            "newValue": "N13"
+          },
+          {
+            "attribute": "strength",
+            "oldValue": 100,
+            "newValue": 85
+          },
+          {
+            "attribute": "cohesion",
+            "oldValue": 100,
+            "newValue": 70
+          },
+          {
+            "attribute": "morale",
+            "oldValue": 100,
+            "newValue": 80
+          },
+          {
+            "attribute": "posture",
+            "oldValue": "dug_in",
+            "newValue": "moving"
+          },
+          {
+            "attribute": "entrenchment",
+            "oldValue": 60,
+            "newValue": 0
+          }
+        ]
+      },
+      {
+        "id": "unit_preset_5",
+        "name": "Thunder Battery",
+        "actor": "actor_1",
+        "changes": [
+          {
+            "attribute": "ammo",
+            "oldValue": 100,
+            "newValue": 75
+          }
+        ]
+      },
+      {
+        "id": "unit_preset_7",
+        "name": "Viper Recon",
+        "actor": "actor_2",
+        "changes": [
+          {
+            "attribute": "strength",
+            "oldValue": 100,
+            "newValue": 90
+          },
+          {
+            "attribute": "cohesion",
+            "oldValue": 100,
+            "newValue": 95
+          },
+          {
+            "attribute": "morale",
+            "oldValue": 100,
+            "newValue": 95
+          }
+        ]
+      }
+    ]
+  },
+  "finalState": {
+    "turn": 2,
+    "currentDate": "2026-03-11T04:00:00.000Z",
+    "turnLogEntries": 1,
+    "terrainMods": {},
+    "changedUnits": [
+      {
+        "id": "unit_preset_4",
+        "name": "1st Armor (Steel)",
+        "actor": "actor_1",
+        "changes": [
+          {
+            "attribute": "position",
+            "oldValue": "I6",
+            "newValue": "K8"
+          },
+          {
+            "attribute": "posture",
+            "oldValue": "reserve",
+            "newValue": "defending"
+          }
+        ]
+      },
+      {
+        "id": "unit_preset_1",
+        "name": "1st Recon (Shadow)",
+        "actor": "actor_1",
+        "changes": [
+          {
+            "attribute": "strength",
+            "oldValue": 100,
+            "newValue": 85
+          },
+          {
+            "attribute": "morale",
+            "oldValue": 100,
+            "newValue": 80
+          },
+          {
+            "attribute": "cohesion",
+            "oldValue": 100,
+            "newValue": 75
+          },
+          {
+            "attribute": "posture",
+            "oldValue": "moving",
+            "newValue": "defending"
+          }
+        ]
+      },
+      {
+        "id": "unit_preset_2",
+        "name": "Alpha Company",
+        "actor": "actor_1",
+        "changes": [
+          {
+            "attribute": "position",
+            "oldValue": "K7",
+            "newValue": "L9"
+          },
+          {
+            "attribute": "posture",
+            "oldValue": "attacking",
+            "newValue": "moving"
+          }
+        ]
+      },
+      {
+        "id": "unit_preset_3",
+        "name": "Bravo Company",
+        "actor": "actor_1",
+        "changes": [
+          {
+            "attribute": "position",
+            "oldValue": "J11",
+            "newValue": "J10"
+          },
+          {
+            "attribute": "posture",
+            "oldValue": "attacking",
+            "newValue": "defending"
+          }
+        ]
+      },
+      {
+        "id": "unit_preset_11",
+        "name": "Hammer Battery",
+        "actor": "actor_2",
+        "changes": [
+          {
+            "attribute": "ammo",
+            "oldValue": 100,
+            "newValue": 75
+          },
+          {
+            "attribute": "morale",
+            "oldValue": 100,
+            "newValue": 105
+          },
+          {
+            "attribute": "morale",
+            "oldValue": 100,
+            "newValue": 100
+          }
+        ]
+      },
+      {
+        "id": "unit_preset_10",
+        "name": "Iron Fist Troop",
+        "actor": "actor_2",
+        "changes": [
+          {
+            "attribute": "position",
+            "oldValue": "O12",
+            "newValue": "N11"
+          },
+          {
+            "attribute": "posture",
+            "oldValue": "reserve",
+            "newValue": "moving"
+          }
+        ]
+      },
+      {
+        "id": "unit_preset_8",
+        "name": "Red Guard Platoon",
+        "actor": "actor_2",
+        "changes": [
+          {
+            "attribute": "position",
+            "oldValue": "M12",
+            "newValue": "L11"
+          },
+          {
+            "attribute": "posture",
+            "oldValue": "defending",
+            "newValue": "defending"
+          }
+        ]
+      },
+      {
+        "id": "unit_preset_12",
+        "name": "Red HQ (Bastion)",
+        "actor": "actor_2",
+        "changes": [
+          {
+            "attribute": "morale",
+            "oldValue": 100,
+            "newValue": 100
+          }
+        ]
+      },
+      {
+        "id": "unit_preset_9",
+        "name": "Sentinel Platoon",
+        "actor": "actor_2",
+        "changes": [
+          {
+            "attribute": "position",
+            "oldValue": "M13",
+            "newValue": "N13"
+          },
+          {
+            "attribute": "strength",
+            "oldValue": 100,
+            "newValue": 85
+          },
+          {
+            "attribute": "cohesion",
+            "oldValue": 100,
+            "newValue": 70
+          },
+          {
+            "attribute": "morale",
+            "oldValue": 100,
+            "newValue": 80
+          },
+          {
+            "attribute": "posture",
+            "oldValue": "dug_in",
+            "newValue": "moving"
+          },
+          {
+            "attribute": "entrenchment",
+            "oldValue": 60,
+            "newValue": 0
+          }
+        ]
+      },
+      {
+        "id": "unit_preset_5",
+        "name": "Thunder Battery",
+        "actor": "actor_1",
+        "changes": [
+          {
+            "attribute": "ammo",
+            "oldValue": 100,
+            "newValue": 75
+          }
+        ]
+      },
+      {
+        "id": "unit_preset_7",
+        "name": "Viper Recon",
+        "actor": "actor_2",
+        "changes": [
+          {
+            "attribute": "strength",
+            "oldValue": 100,
+            "newValue": 90
+          },
+          {
+            "attribute": "cohesion",
+            "oldValue": 100,
+            "newValue": 95
+          },
+          {
+            "attribute": "morale",
+            "oldValue": 100,
+            "newValue": 95
+          }
+        ]
+      }
+    ]
+  }
+}

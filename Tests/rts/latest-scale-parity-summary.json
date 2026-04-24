@@ -1,0 +1,186 @@
+{
+  "ok": true,
+  "status": "passed",
+  "runId": "rts-scale-parity-2026-04-23T19-42-41-409Z-87ec98",
+  "timestamp": "2026-04-23T19:42:46.534Z",
+  "checks": [
+    {
+      "name": "80 Total Units hash parity",
+      "pass": true
+    },
+    {
+      "name": "100 Total Units hash parity",
+      "pass": true
+    },
+    {
+      "name": "Equal-quality spotter tie preserved the later global-order spotter",
+      "pass": true
+    },
+    {
+      "name": "Equal-score combat tie preserved the earlier global-order target",
+      "pass": true
+    }
+  ],
+  "results": [
+    {
+      "id": "stress-80",
+      "label": "80 Total Units",
+      "seed": 9080,
+      "pass": true,
+      "expected": {
+        "seed": 9080,
+        "totalTicks": 120,
+        "stateHash": "1136410e9926012ff279a1b0bb070cea1567954a1881d6ed9c266910a4c3471a",
+        "replayHash": "bfb8fa8f9780e83a87058f025177ae56adf96a210b8611c89dcf4781428b42d8",
+        "provenanceHash": "2c3b799006ff40577305e385d9be7ea4a9be183a13f9b4d075d2611811894852",
+        "tickStats": {
+          "tickCount": 120,
+          "totalMs": 5404.2,
+          "averageMs": 45.035,
+          "p95Ms": 53.741,
+          "maxMs": 438.222
+        },
+        "outcome": {
+          "winner": null,
+          "victoryReason": null,
+          "elapsedMs": 30000,
+          "livingByActor": {
+            "actor_1": 40,
+            "actor_2": 40
+          },
+          "vpByActor": {
+            "actor_1": 0,
+            "actor_2": 0
+          },
+          "objectiveControl": {
+            "3,4": null,
+            "5,5": null,
+            "1,6": null
+          },
+          "eventCount": 169,
+          "commandCount": 80,
+          "aiDecisionCount": 200
+        }
+      },
+      "observed": {
+        "stateHash": "1136410e9926012ff279a1b0bb070cea1567954a1881d6ed9c266910a4c3471a",
+        "replayHash": "bfb8fa8f9780e83a87058f025177ae56adf96a210b8611c89dcf4781428b42d8",
+        "provenanceHash": "2c3b799006ff40577305e385d9be7ea4a9be183a13f9b4d075d2611811894852",
+        "tickStats": {
+          "tickCount": 120,
+          "totalMs": 5404.2,
+          "averageMs": 45.035,
+          "p95Ms": 53.741,
+          "maxMs": 438.222
+        },
+        "outcome": {
+          "winner": null,
+          "victoryReason": null,
+          "elapsedMs": 30000,
+          "livingByActor": {
+            "actor_1": 40,
+            "actor_2": 40
+          },
+          "vpByActor": {
+            "actor_1": 0,
+            "actor_2": 0
+          },
+          "objectiveControl": {
+            "3,4": null,
+            "5,5": null,
+            "1,6": null
+          },
+          "eventCount": 169,
+          "commandCount": 80,
+          "aiDecisionCount": 200
+        }
+      },
+      "baselinePath": "C:\\Users\\Ryan\\Documents\\open-conflict-v0.10\\open-conflict\\Tests\\rts\\stress-80-baseline.json"
+    },
+    {
+      "id": "stress-100",
+      "label": "100 Total Units",
+      "seed": 9100,
+      "pass": true,
+      "expected": {
+        "seed": 9100,
+        "totalTicks": 120,
+        "stateHash": "0e8cfdfa183012aec53fd7fd7b580d15f881459b8cffe38fcf89364be782df60",
+        "replayHash": "6551b93f989b6b3e0cf07cd988a02c318a50a931013d7f96af6ce4e54b6ff59b",
+        "provenanceHash": "86d944cb3cfea6402c3b22dfe3fbd8cd017ece6f081c8bf7250427232b368822",
+        "tickStats": {
+          "tickCount": 120,
+          "totalMs": 6760.991,
+          "averageMs": 56.342,
+          "p95Ms": 59.029,
+          "maxMs": 466.679
+        },
+        "outcome": {
+          "winner": null,
+          "victoryReason": null,
+          "elapsedMs": 30000,
+          "livingByActor": {
+            "actor_1": 50,
+            "actor_2": 50
+          },
+          "vpByActor": {
+            "actor_1": 0,
+            "actor_2": 0
+          },
+          "objectiveControl": {
+            "3,4": null,
+            "5,5": null,
+            "1,6": null
+          },
+          "eventCount": 200,
+          "commandCount": 100,
+          "aiDecisionCount": 200
+        }
+      },
+      "observed": {
+        "stateHash": "0e8cfdfa183012aec53fd7fd7b580d15f881459b8cffe38fcf89364be782df60",
+        "replayHash": "6551b93f989b6b3e0cf07cd988a02c318a50a931013d7f96af6ce4e54b6ff59b",
+        "provenanceHash": "86d944cb3cfea6402c3b22dfe3fbd8cd017ece6f081c8bf7250427232b368822",
+        "tickStats": {
+          "tickCount": 120,
+          "totalMs": 6760.991,
+          "averageMs": 56.342,
+          "p95Ms": 59.029,
+          "maxMs": 466.679
+        },
+        "outcome": {
+          "winner": null,
+          "victoryReason": null,
+          "elapsedMs": 30000,
+          "livingByActor": {
+            "actor_1": 50,
+            "actor_2": 50
+          },
+          "vpByActor": {
+            "actor_1": 0,
+            "actor_2": 0
+          },
+          "objectiveControl": {
+            "3,4": null,
+            "5,5": null,
+            "1,6": null
+          },
+          "eventCount": 200,
+          "commandCount": 100,
+          "aiDecisionCount": 200
+        }
+      },
+      "baselinePath": "C:\\Users\\Ryan\\Documents\\open-conflict-v0.10\\open-conflict\\Tests\\rts\\stress-100-baseline.json"
+    }
+  ],
+  "spotterTie": {
+    "expectedSpotterId": "blue_spotter_b",
+    "observedSpotterId": "blue_spotter_b",
+    "passed": true
+  },
+  "combatTie": {
+    "expectedTargetId": "red_alpha",
+    "observedTargetId": "red_alpha",
+    "passed": true
+  }
+}

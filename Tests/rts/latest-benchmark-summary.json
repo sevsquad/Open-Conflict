@@ -1,0 +1,377 @@
+{
+  "ok": true,
+  "status": "passed",
+  "runId": "rts-benchmark-2026-04-23T19-35-35-993Z-1d566d",
+  "timestamp": "2026-04-23T19:38:18.316Z",
+  "results": [
+    {
+      "id": "ai-duel",
+      "label": "AI Duel",
+      "totalTicks": 160,
+      "iterations": 3,
+      "stopOnWinner": false,
+      "note": null,
+      "averageTickMs": 8.425,
+      "averageWallMs": 1386.216,
+      "averageTicksExecuted": 160,
+      "averageSimSpeed": 29.256,
+      "peakTickMs": 56.785,
+      "runs": [
+        {
+          "seed": 2468,
+          "wallMs": 1388.561,
+          "outcome": {
+            "winner": null,
+            "victoryReason": null,
+            "elapsedMs": 40000,
+            "livingByActor": {
+              "actor_1": 6,
+              "actor_2": 6
+            },
+            "vpByActor": {
+              "actor_1": 0,
+              "actor_2": 0
+            },
+            "objectiveControl": {
+              "3,4": null,
+              "5,5": null,
+              "1,6": null
+            },
+            "eventCount": 25,
+            "commandCount": 13,
+            "aiDecisionCount": 80
+          },
+          "stateHash": "4f1595fc7e71993f344b0cc21a3daf354abb3aea16cde0c72da3c0334ea12dee",
+          "replayHash": "773e81689b9e0f3f6bd8fd7b2e4758e18fb51b154a593e6d5d40e8bacb1490f6",
+          "ticksExecuted": 160,
+          "simSecondsPerWallSecond": 28.807,
+          "tickStats": {
+            "tickCount": 160,
+            "totalMs": 1348.336,
+            "averageMs": 8.427,
+            "p95Ms": 12.491,
+            "maxMs": 56.785
+          }
+        },
+        {
+          "seed": 2469,
+          "wallMs": 1187.349,
+          "outcome": {
+            "winner": null,
+            "victoryReason": null,
+            "elapsedMs": 40000,
+            "livingByActor": {
+              "actor_1": 6,
+              "actor_2": 6
+            },
+            "vpByActor": {
+              "actor_1": 0,
+              "actor_2": 0
+            },
+            "objectiveControl": {
+              "3,4": null,
+              "5,5": null,
+              "1,6": null
+            },
+            "eventCount": 25,
+            "commandCount": 13,
+            "aiDecisionCount": 80
+          },
+          "stateHash": "96f3b45c8715884c2eae935899013aca37466a6b84caecd6dcadba1b434e5aa5",
+          "replayHash": "bac8496560774fde6cfe10adcdce05c88270bb6af3fe4c93588da175ecb06c80",
+          "ticksExecuted": 160,
+          "simSecondsPerWallSecond": 33.688,
+          "tickStats": {
+            "tickCount": 160,
+            "totalMs": 1154.554,
+            "averageMs": 7.216,
+            "p95Ms": 9.696,
+            "maxMs": 25.967
+          }
+        },
+        {
+          "seed": 2470,
+          "wallMs": 1582.738,
+          "outcome": {
+            "winner": null,
+            "victoryReason": null,
+            "elapsedMs": 40000,
+            "livingByActor": {
+              "actor_1": 6,
+              "actor_2": 6
+            },
+            "vpByActor": {
+              "actor_1": 0,
+              "actor_2": 0
+            },
+            "objectiveControl": {
+              "3,4": null,
+              "5,5": null,
+              "1,6": null
+            },
+            "eventCount": 25,
+            "commandCount": 13,
+            "aiDecisionCount": 80
+          },
+          "stateHash": "e35c68367829d568db60a1316902311885cd515b24492e716c5a397e8f7a470e",
+          "replayHash": "6760100256f07dde2380f65024573c3149d28def7c52efa863041f012d8d1b28",
+          "ticksExecuted": 160,
+          "simSecondsPerWallSecond": 25.273,
+          "tickStats": {
+            "tickCount": 160,
+            "totalMs": 1541.152,
+            "averageMs": 9.632,
+            "p95Ms": 13.503,
+            "maxMs": 17.416
+          }
+        }
+      ]
+    },
+    {
+      "id": "helo-corridor",
+      "label": "Helo Corridor",
+      "totalTicks": 72,
+      "iterations": 3,
+      "stopOnWinner": false,
+      "note": null,
+      "averageTickMs": 5.742,
+      "averageWallMs": 428.936,
+      "averageTicksExecuted": 72,
+      "averageSimSpeed": 34.973,
+      "peakTickMs": 12.867,
+      "runs": [
+        {
+          "seed": 1357,
+          "wallMs": 429.132,
+          "outcome": {
+            "winner": "actor_2",
+            "victoryReason": "vp_goal",
+            "elapsedMs": 15000,
+            "livingByActor": {
+              "actor_1": 4,
+              "actor_2": 4
+            },
+            "vpByActor": {
+              "actor_1": 0,
+              "actor_2": 40
+            },
+            "objectiveControl": {
+              "8,5": "actor_2",
+              "7,4": "actor_2",
+              "5,6": "actor_2"
+            },
+            "eventCount": 14,
+            "commandCount": 4,
+            "aiDecisionCount": 6
+          },
+          "stateHash": "ae48a21aeddbf8b3975f7971f90a047d6f703db1c81afa4e6fb61b647d556472",
+          "replayHash": "07c5675efb6b8422f9326370ff58ea5d41cf87cd863184c90bb3a9cb87c7dc47",
+          "ticksExecuted": 72,
+          "simSecondsPerWallSecond": 34.954,
+          "tickStats": {
+            "tickCount": 72,
+            "totalMs": 414.224,
+            "averageMs": 5.753,
+            "p95Ms": 8.213,
+            "maxMs": 12.867
+          }
+        },
+        {
+          "seed": 1358,
+          "wallMs": 424.356,
+          "outcome": {
+            "winner": "actor_2",
+            "victoryReason": "vp_goal",
+            "elapsedMs": 15000,
+            "livingByActor": {
+              "actor_1": 4,
+              "actor_2": 4
+            },
+            "vpByActor": {
+              "actor_1": 0,
+              "actor_2": 40
+            },
+            "objectiveControl": {
+              "8,5": "actor_2",
+              "7,4": "actor_2",
+              "5,6": "actor_2"
+            },
+            "eventCount": 14,
+            "commandCount": 4,
+            "aiDecisionCount": 6
+          },
+          "stateHash": "a62b134c0435324ccf5019df4612a852f169fa5839d7eb98e6c9190b6807a594",
+          "replayHash": "d2817c1d156c782cae6b9e877518fcd05838c9906abb1cdf62d1b4966cb63abd",
+          "ticksExecuted": 72,
+          "simSecondsPerWallSecond": 35.348,
+          "tickStats": {
+            "tickCount": 72,
+            "totalMs": 408.28,
+            "averageMs": 5.671,
+            "p95Ms": 7.585,
+            "maxMs": 8.984
+          }
+        },
+        {
+          "seed": 1359,
+          "wallMs": 433.319,
+          "outcome": {
+            "winner": "actor_2",
+            "victoryReason": "vp_goal",
+            "elapsedMs": 15000,
+            "livingByActor": {
+              "actor_1": 4,
+              "actor_2": 4
+            },
+            "vpByActor": {
+              "actor_1": 0,
+              "actor_2": 40
+            },
+            "objectiveControl": {
+              "8,5": "actor_2",
+              "7,4": "actor_2",
+              "5,6": "actor_2"
+            },
+            "eventCount": 14,
+            "commandCount": 4,
+            "aiDecisionCount": 6
+          },
+          "stateHash": "eb8b884c82c7c78d1f48c675248441627cb53fa447b0d25532f28616bc4938b4",
+          "replayHash": "fbb2e3b54849ab425b8437a58d4669c5209abb89dd4cfd7439f14f7fba3677bf",
+          "ticksExecuted": 72,
+          "simSecondsPerWallSecond": 34.617,
+          "tickStats": {
+            "tickCount": 72,
+            "totalMs": 417.788,
+            "averageMs": 5.803,
+            "p95Ms": 8.13,
+            "maxMs": 10.012
+          }
+        }
+      ]
+    },
+    {
+      "id": "ai-duel-terminal",
+      "label": "AI Duel Terminal",
+      "totalTicks": 2400,
+      "iterations": 3,
+      "stopOnWinner": true,
+      "note": "Runs until a real terminal state with a 10-minute cap, 20-second objective hold, and a 45 VP threshold.",
+      "averageTickMs": 21.703,
+      "averageWallMs": 52289.393,
+      "averageTicksExecuted": 2400,
+      "averageSimSpeed": 11.477,
+      "peakTickMs": 65.163,
+      "runs": [
+        {
+          "seed": 8642,
+          "wallMs": 53372.489,
+          "outcome": {
+            "winner": "draw",
+            "victoryReason": "time_limit",
+            "elapsedMs": 600000,
+            "livingByActor": {
+              "actor_1": 6,
+              "actor_2": 6
+            },
+            "vpByActor": {
+              "actor_1": 0,
+              "actor_2": 0
+            },
+            "objectiveControl": {
+              "3,4": null,
+              "5,5": null,
+              "1,6": null
+            },
+            "eventCount": 200,
+            "commandCount": 66,
+            "aiDecisionCount": 200
+          },
+          "stateHash": "a30c69bbc8170288712caacd30ef68c61ded81bff52a6a40ff212ed9236bc6b2",
+          "replayHash": "160f7615f7e12ae0e49d73e1af9cc0f384a01eb37f0ebd8a8459275198e8b0d1",
+          "ticksExecuted": 2400,
+          "simSecondsPerWallSecond": 11.242,
+          "tickStats": {
+            "tickCount": 2400,
+            "totalMs": 53155.98,
+            "averageMs": 22.148,
+            "p95Ms": 29.524,
+            "maxMs": 63.835
+          }
+        },
+        {
+          "seed": 8643,
+          "wallMs": 52065.345,
+          "outcome": {
+            "winner": "draw",
+            "victoryReason": "time_limit",
+            "elapsedMs": 600000,
+            "livingByActor": {
+              "actor_1": 5,
+              "actor_2": 6
+            },
+            "vpByActor": {
+              "actor_1": 0,
+              "actor_2": 0
+            },
+            "objectiveControl": {
+              "3,4": null,
+              "5,5": null,
+              "1,6": null
+            },
+            "eventCount": 200,
+            "commandCount": 70,
+            "aiDecisionCount": 200
+          },
+          "stateHash": "0cfb3e370b459804382a4400e819249eb13a5626ee067a72e2e0538bb3131153",
+          "replayHash": "4eb4893cbf965f7e97a5af35b22dbc7829a60c10f72816168c5d253e9ca952b4",
+          "ticksExecuted": 2400,
+          "simSecondsPerWallSecond": 11.524,
+          "tickStats": {
+            "tickCount": 2400,
+            "totalMs": 51871.833,
+            "averageMs": 21.613,
+            "p95Ms": 27.561,
+            "maxMs": 59.973
+          }
+        },
+        {
+          "seed": 8644,
+          "wallMs": 51430.344,
+          "outcome": {
+            "winner": "draw",
+            "victoryReason": "time_limit",
+            "elapsedMs": 600000,
+            "livingByActor": {
+              "actor_1": 6,
+              "actor_2": 6
+            },
+            "vpByActor": {
+              "actor_1": 0,
+              "actor_2": 0
+            },
+            "objectiveControl": {
+              "3,4": null,
+              "5,5": null,
+              "1,6": null
+            },
+            "eventCount": 200,
+            "commandCount": 64,
+            "aiDecisionCount": 200
+          },
+          "stateHash": "c1e59a7e2759882d2f76884169ba7d4a532ae0db50bc096c807328ada79cf550",
+          "replayHash": "cbe79768fd6b126a6738ba3ec27b52f53aebe2b8f3441ab895277d08e2715473",
+          "ticksExecuted": 2400,
+          "simSecondsPerWallSecond": 11.666,
+          "tickStats": {
+            "tickCount": 2400,
+            "totalMs": 51234.341,
+            "averageMs": 21.348,
+            "p95Ms": 28.955,
+            "maxMs": 65.163
+          }
+        }
+      ]
+    }
+  ]
+}
