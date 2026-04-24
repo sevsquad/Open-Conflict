@@ -42,6 +42,7 @@ const PRESET_REGISTRY = [
     description: "Cold War 1985. US 3rd MID attacks north to secure the Stonebrook Bridge and coastal port. Soviet 47th MRD (understrength) + 11th Air Assault Brigade defends.",
     era: "cold_war",
     scale: "grand_tactical",
+    rtsReady: true,
     mapType: "built-in",
     requiredMap: "river_crossing_v2",
     getPreset: () => getRiverCrossingV2Preset(),
@@ -93,6 +94,7 @@ const PRESET_REGISTRY = [
     description: "Soviet motor rifle regiment attacks through the Fulda corridor. US armored brigade defends in depth using AirLand Battle doctrine. Tests supply, C2, and combined arms.",
     era: "cold_war",
     scale: "grand_tactical",
+    rtsReady: true,
     mapType: "built-in",
     requiredMap: "fulda_gap",
     getPreset: () => getFuldaGapPreset(),
@@ -151,11 +153,23 @@ const PRESET_REGISTRY = [
     getPreset: () => getAIReferencePreset(),
   },
   {
+    id: "helo_insertion",
+    name: "Helicopter Insertion Under Fire",
+    description: "Cold War 1987. Blue force inserts infantry by helicopter past layered AD to seize a contested objective before red reserves can consolidate.",
+    era: "cold_war",
+    scale: "tactical",
+    rtsReady: true,
+    mapType: "test-fixture",
+    requiredMap: "test-fixture",
+    getPreset: () => getHeloInsertionPreset(),
+  },
+  {
     id: "server_ai_duel",
     name: "AI Opponent Test (AI vs AI)",
     description: "Algorithmic server AI on both sides over the VP river-crossing test map. Used for long-run soak testing, profile divergence, and reasoning artifact capture.",
     era: "cold_war",
     scale: "grand_tactical",
+    rtsReady: true,
     mapType: "test-fixture",
     requiredMap: "test-fixture",
     getPreset: () => getServerAiDuelPreset(),
@@ -178,12 +192,29 @@ const PRESET_REGISTRY = [
  * @param {string} mapName - filename or "test-fixture"
  * @returns {Array<{ id, name, description, era }>}
  */
-export function getPresetsForMap(mapName) {
+function isRtsPreset(entry) {
+  return Boolean(entry?.rtsReady)
+    && entry.era === "cold_war"
+    && (entry.scale === "tactical" || entry.scale === "grand_tactical");
+}
+
+export function getPresetsForMap(mapName, opts = {}) {
+  const { modeVariant = "turn" } = opts;
   if (!mapName) return [];
   return PRESET_REGISTRY.filter(p => {
+    if (modeVariant === "rts" && !isRtsPreset(p)) return false;
     if (p.requiredMap === "test-fixture") return mapName === "test-fixture";
     return mapName.includes(p.requiredMap);
-  }).map(({ id, name, description, era }) => ({ id, name, description, era }));
+  }).map(({ id, name, description, era, scale, mapType, requiredMap, rtsReady }) => ({
+    id,
+    name,
+    description,
+    era,
+    scale,
+    mapType,
+    requiredMap,
+    rtsReady: Boolean(rtsReady),
+  }));
 }
 
 /**
@@ -200,10 +231,17 @@ export function getPresetById(id) {
  * Get all available presets (for quick-start menus).
  * @returns {Array<{ id, name, description, era, requiredMap }>}
  */
-export function getAllPresets() {
-  return PRESET_REGISTRY.map(({ id, name, description, era, scale, mapType, requiredMap }) => (
-    { id, name, description, era, scale, mapType, requiredMap }
+export function getAllPresets(opts = {}) {
+  const { modeVariant = "turn" } = opts;
+  return PRESET_REGISTRY
+    .filter(entry => modeVariant !== "rts" || isRtsPreset(entry))
+    .map(({ id, name, description, era, scale, mapType, requiredMap, rtsReady }) => (
+    { id, name, description, era, scale, mapType, requiredMap, rtsReady: Boolean(rtsReady) }
   ));
+}
+
+export function isRtsPresetId(id) {
+  return isRtsPreset(PRESET_REGISTRY.find(entry => entry.id === id));
 }
 
 /**
@@ -226,6 +264,12 @@ export function getQuickstartPreset() {
     specialRules: "The bridge can be destroyed by either side (artillery or demolition). If destroyed, only infantry can ford the river at reduced speed. Urban areas (Ashbury, Hexville) provide defensive bonuses.",
     turnDuration: "4 hours",
     startDate: "2024-06-15",
+
+    // RTS-mode options. objectiveHoldSeconds > 0 creates the hold-to-capture
+    // tension the AI commander's urgency/reserve-release signals respond to.
+    rtsOptions: {
+      objectiveHoldSeconds: 30,
+    },
 
     // Environment
     environment: {
@@ -331,6 +375,234 @@ function getAIReferencePreset() {
   base.description = "Human-controlled Blue Force vs AI-controlled Red Force. Red Force uses aggressive Soviet doctrine with armored counterattack bias.";
 
   return base;
+}
+
+export function getHeloInsertionPreset() {
+  presetCounter = 0;
+
+  return {
+    scale: "tactical",
+    title: "Helicopter Insertion Under Fire",
+    description: "Blue force inserts infantry toward a contested landing zone while red mechanized defenders and AD batteries contest the air corridor.",
+    initialConditions: "Blue force must land infantry near the objective before red reserves close the corridor.",
+    specialRules: "Helicopters are persistent on-map units. Red side starts with overlapping air-defense coverage. Objective ownership is based on uncontested control of marked VP hexes.",
+    turnDuration: "30 minutes",
+    startDate: "1987-06-14T06:00:00Z",
+    rtsOptions: {
+      objectiveHoldSeconds: 15,
+    },
+    actors: [
+      {
+        id: "actor_1",
+        name: "Blue Force",
+        controller: "player",
+        objectives: ["Insert infantry at the LZ and seize the relay station."],
+        constraints: ["Preserve transport helicopters if possible."],
+        cvpHexes: [],
+      },
+      {
+        id: "actor_2",
+        name: "Red Force",
+        controller: "ai",
+        objectives: ["Deny the landing zone and destroy exposed helicopters."],
+        constraints: ["Hold the relay station and road junction."],
+        cvpHexes: [],
+        aiConfig: {
+          engine: "algorithmic",
+          profile: "cautious_defender",
+          thinkBudget: "standard",
+        },
+      },
+    ],
+    environment: {
+      climate: "temperate",
+      weather: "clear",
+      visibility: "good",
+      groundCondition: "dry",
+      timeOfDay: "morning",
+      stability: "medium",
+      severity: "moderate",
+      groundTurnsInState: 0,
+    },
+    victoryConditions: {
+      vpGoal: 40,
+      hexVP: [
+        { hex: "8,5", name: "Relay Station", vp: 20 },
+        { hex: "7,4", name: "Landing Zone", vp: 10 },
+        { hex: "5,6", name: "Road Junction", vp: 10 },
+      ],
+    },
+    units: [
+      addAirFields({
+        id: uid(),
+        actor: "actor_1",
+        name: "Falcon Lift 1",
+        type: "transport",
+        echelon: "company",
+        posture: "moving",
+        position: "10,8",
+        strength: 100,
+        supply: 100,
+        ammo: 60,
+        morale: 90,
+        cohesion: 85,
+        fuel: 100,
+        readiness: 90,
+        munitions: 40,
+        status: "ready",
+        movementType: "helicopter",
+        transportCapacity: 1,
+        cargo: [],
+        specialCapabilities: ["air_transport"],
+        notes: "Primary insertion helicopter.",
+      }, { airProfile: { speed: "slow", maneuverability: 7, weaponsPackage: "door_guns", defensiveArmament: true, ecm: false, radarEquipped: false } }),
+      addAirFields({
+        id: uid(),
+        actor: "actor_1",
+        name: "Viper Gunship",
+        type: "attack_helicopter",
+        echelon: "company",
+        posture: "ready",
+        position: "11,8",
+        strength: 100,
+        supply: 100,
+        ammo: 90,
+        morale: 90,
+        cohesion: 85,
+        fuel: 100,
+        readiness: 85,
+        munitions: 100,
+        status: "ready",
+        movementType: "helicopter",
+        specialCapabilities: ["anti_armor", "standoff_attack"],
+        notes: "Escort gunship for the insertion corridor.",
+      }, { airProfile: { speed: "slow", maneuverability: 8, weaponsPackage: "atgm_mixed", defensiveArmament: true, ecm: false, radarEquipped: false } }),
+      {
+        id: uid(),
+        actor: "actor_1",
+        name: "Air Assault Infantry",
+        type: "infantry",
+        echelon: "company",
+        posture: "ready",
+        position: "10,8",
+        strength: 100,
+        supply: 100,
+        ammo: 100,
+        morale: 95,
+        cohesion: 90,
+        fatigue: 10,
+        entrenchment: 0,
+        status: "ready",
+        movementType: "foot",
+        parentHQ: "",
+        embarkedIn: null,
+        specialCapabilities: ["airmobile"],
+        notes: "Foot-mobile infantry intended for helicopter insertion.",
+      },
+      {
+        id: uid(),
+        actor: "actor_1",
+        name: "Blue HQ",
+        type: "headquarters",
+        echelon: "company",
+        posture: "ready",
+        position: "9,8",
+        strength: 100,
+        supply: 100,
+        ammo: 60,
+        morale: 90,
+        cohesion: 85,
+        entrenchment: 10,
+        status: "ready",
+        movementType: "wheeled",
+        parentHQ: "",
+        specialCapabilities: ["command_relay"],
+        notes: "Forward tactical HQ.",
+      },
+      {
+        id: uid(),
+        actor: "actor_2",
+        name: "Red Mechanized Screen",
+        type: "mechanized",
+        echelon: "company",
+        posture: "defending",
+        position: "6,5",
+        strength: 100,
+        supply: 100,
+        ammo: 100,
+        morale: 90,
+        cohesion: 90,
+        fatigue: 5,
+        entrenchment: 20,
+        status: "ready",
+        movementType: "tracked",
+        parentHQ: "",
+        specialCapabilities: ["ifv_support"],
+        notes: "Forward blocking force.",
+      },
+      {
+        id: uid(),
+        actor: "actor_2",
+        name: "Red Infantry Reserve",
+        type: "infantry",
+        echelon: "company",
+        posture: "reserve",
+        position: "5,7",
+        strength: 100,
+        supply: 100,
+        ammo: 90,
+        morale: 90,
+        cohesion: 85,
+        fatigue: 0,
+        entrenchment: 10,
+        status: "ready",
+        movementType: "foot",
+        parentHQ: "",
+        specialCapabilities: [],
+        notes: "Reserve element guarding the relay station.",
+      },
+      {
+        id: uid(),
+        actor: "actor_2",
+        name: "Shilka Section",
+        type: "air_defense",
+        echelon: "company",
+        posture: "defending",
+        position: "7,5",
+        strength: 100,
+        supply: 100,
+        ammo: 100,
+        morale: 90,
+        cohesion: 85,
+        entrenchment: 20,
+        status: "ready",
+        movementType: "tracked",
+        parentHQ: "",
+        specialCapabilities: ["gun_ad"],
+        notes: "Short-range gun AD near the landing zone.",
+      },
+      {
+        id: uid(),
+        actor: "actor_2",
+        name: "Strela Team",
+        type: "air_defense",
+        echelon: "platoon",
+        posture: "hidden",
+        position: "8,4",
+        strength: 100,
+        supply: 100,
+        ammo: 100,
+        morale: 85,
+        cohesion: 80,
+        entrenchment: 10,
+        status: "ready",
+        movementType: "foot",
+        parentHQ: "",
+        specialCapabilities: ["manpads"],
+        notes: "Portable AD threat near the relay station.",
+      },
+    ],
+  };
 }
 
 export function getServerAiDuelPreset() {
@@ -470,6 +742,10 @@ function getRiverCrossingV2Preset() {
     specialRules: "The Stonebrook Bridge at Ashbury is the only pre-existing crossing — capturing it intact saves critical time. Engineers can erect temporary bridges at any point along the river (requires ~4 hours uninterrupted work and local security). Infantry can ford the river at reduced speed but vehicles require a bridge. The coastal port at Ashbury is a strategic logistics objective. Urban areas provide +30% defensive bonus. Red air assault brigade can conduct helicopter insertion behind Blue lines. Both sides have limited attack helicopter sorties (fuel/maintenance). SAM umbrella restricts helicopter operations within 3km of AD units. The highland valley is dead ground from the plain — units in the valley cannot be observed from west of the ridge except through the river gap.",
     turnDuration: "4 hours",
     startDate: "1985-06-12",
+
+    rtsOptions: {
+      objectiveHoldSeconds: 30,
+    },
 
     environment: {
       weather: "overcast",
@@ -798,6 +1074,18 @@ function getRiverCrossingV2Preset() {
       }),
 
       // ── Blue Special Forces — infiltrated north of the eastern ford ──
+      blue("Raptor Scout Flight A", "attack_helicopter", "company", "8,19", {
+        posture: "moving", movementType: "helicopter", strength: 70,
+        notes: "AH-1 scout-killer detachment paired with Ghostrider to find and fix enemy screens",
+        parentHQ: "unit_preset_18",
+        specialCapabilities: ["attack_helicopter"],
+      }),
+      blue("Raptor Scout Flight B", "attack_helicopter", "company", "9,19", {
+        posture: "moving", movementType: "helicopter", strength: 70,
+        notes: "AH-1 scout-killer detachment paired with Ghostrider for bounded contact acquisition",
+        parentHQ: "unit_preset_18",
+        specialCapabilities: ["attack_helicopter"],
+      }),
       blue("ODA 312 (Pathfinder)", "special_forces", "company", "11,9", {
         posture: "ready", movementType: "foot", detected: false,
         strength: 100, morale: 95, supply: 80,
@@ -873,6 +1161,13 @@ function getBastognePreset() {
     specialRules: "US artillery is severely rationed — fire missions should be rare and decisive. Airborne troops have no organic heavy weapons beyond the 75mm pack howitzers. Weather prevents air support until Dec 23. The 115th Panzergrenadier KG arrives Dec 24 from the west as reinforcement. Terrain is rolling hills with dense forest (Bois Jacques) and scattered villages.",
     turnDuration: "4 hours",
     startDate: "1944-12-21",
+
+    // Set-piece defensive battle — long hold window rewards prepared positions
+    // and punishes probe-and-withdraw tactics. 60s is the heaviest hold cadence
+    // in the catalog, matching the Bastogne "hold at all costs" doctrine.
+    rtsOptions: {
+      objectiveHoldSeconds: 60,
+    },
 
     environment: {
       weather: "overcast",
@@ -1195,6 +1490,10 @@ function getEscarpmentPreset() {
     turnDuration: "2 hours",
     startDate: "1944-10-15",
 
+    rtsOptions: {
+      objectiveHoldSeconds: 45,
+    },
+
     environment: {
       weather: "overcast",
       visibility: "moderate",
@@ -1459,6 +1758,12 @@ function getSignalStationPreset() {
     turnDuration: "5 minutes",
     startDate: "2024-11-15",
 
+    // Sub-tactical raid — fast tempo; short hold window rewards momentum
+    // and surprise over prepared defense.
+    rtsOptions: {
+      objectiveHoldSeconds: 20,
+    },
+
     environment: {
       weather: "clear",
       visibility: "very_poor",
@@ -1646,6 +1951,10 @@ function getBocagePreset() {
     specialRules: "HEDGEROW TERRAIN: All bocage hexes provide EXCELLENT cover and severely restrict LOS to 1-2 hexes. Vehicles without Rhino cutters cannot cross hedgerow berms — they must use gaps, gates, or roads (which are pre-registered by German mortars). RHINO CUTTERS: 2 of 4 Shermans have Culin hedgerow cutters and can breach berms at half speed. TANK-INFANTRY COMMS: A field telephone is mounted on each tank's rear deck — infantry within the same hex as a tank get a combined arms bonus. GERMAN COUNTERATTACK: German doctrine mandates immediate local counterattack against any penetration — the reserve squad will be committed aggressively. PRE-REGISTERED FIRES: German mortars on the first fire mission against known approach routes get +50% accuracy.",
     turnDuration: "30 minutes",
     startDate: "1944-07-18",
+
+    rtsOptions: {
+      objectiveHoldSeconds: 30,
+    },
 
     environment: {
       weather: "overcast",
@@ -1872,6 +2181,10 @@ function getFuldaGapPreset() {
     specialRules: "ECHELONMENT: Soviet 2nd echelon battalion starts 18 hexes behind the 1st echelon and advances at march rate until committed. Commitment requires a regimental order (1 turn delay). SUPPLY: Soviet regiment carries 1.5 days of combat supply — operations degrade after 6 turns of heavy combat if cut off. NATO has limited TOW reloads (7 per Bradley). COMBINED ARMS: Units attacking with both armor and infantry in the same or adjacent hex receive a combined arms bonus. CAS: NATO may request 1 A-10 sortie per turn, but Soviet AD umbrella degrades effectiveness. If SA-8/SA-13 battery destroyed, CAS effectiveness doubles. C2 DEGRADATION: Destroying a HQ causes 2-turn paralysis (Soviet) or 1-turn coordination loss (NATO).",
     turnDuration: "4 hours",
     startDate: "1985-08-15",
+
+    rtsOptions: {
+      objectiveHoldSeconds: 30,
+    },
 
     environment: {
       weather: "overcast",
@@ -2158,6 +2471,12 @@ function getMosulCorridorPreset() {
     turnDuration: "1 hour",
     startDate: "2017-01-15",
 
+    // Urban clearing — 30s reflects the grinding room-to-room tempo where
+    // a pass-through is not a capture.
+    rtsOptions: {
+      objectiveHoldSeconds: 30,
+    },
+
     environment: {
       weather: "hazy",
       visibility: "moderate",
@@ -2382,6 +2701,10 @@ function getVolturnoPreset() {
     specialRules: "RIVER OBSTACLE: Infantry crosses by assault boat (1 turn) or wading at fords (1 turn, fatiguing). Vehicles cannot cross until bridge built. BRIDGING: Engineers begin construction after infantry secures far bank within 2 hexes. Light bridge: 2 turns. Heavy bridge: 4 turns. Construction halts under direct fire. NIGHT CROSSING: Turns 1-2 are night — reduced detection, slower movement. Turn 3 (dawn) restores normal visibility. PREPARATION: Turn 1 artillery suppresses all German units within 3 hexes of the river. RAIN: Wheeled movement -25%. Assault boats have 10% capsize risk per crossing.",
     turnDuration: "4 hours",
     startDate: "1943-10-12",
+
+    rtsOptions: {
+      objectiveHoldSeconds: 45,
+    },
 
     environment: {
       weather: "rain",
@@ -2609,6 +2932,12 @@ function getAirReferencePreset() {
     turnDuration: "4 hours",
     startDate: "2024-09-15",
 
+    // Air-strike tempo — short hold rewards the attacker's window before
+    // defender AD or CAS can react.
+    rtsOptions: {
+      objectiveHoldSeconds: 20,
+    },
+
     environment: {
       weather: "clear",
       visibility: "good",
@@ -2697,6 +3026,10 @@ function getAdValleyPreset() {
     specialRules: "All AD units are at full readiness with weapons free ROE. Aircraft are flying LOW altitude through the entire corridor. No SEAD or EW support. No escort. This is a worst-case scenario for the attacking aircraft.",
     turnDuration: "2 hours",
     startDate: "2024-09-15",
+
+    rtsOptions: {
+      objectiveHoldSeconds: 30,
+    },
 
     environment: {
       weather: "clear",

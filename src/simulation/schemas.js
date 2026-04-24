@@ -637,7 +637,7 @@ export function getAirUnitFields(tierNumber) {
 }
 
 // Movement type options
-export const MOVEMENT_TYPES = ["foot", "wheeled", "tracked", "air", "naval", "amphibious", "static"];
+export const MOVEMENT_TYPES = ["foot", "wheeled", "tracked", "air", "helicopter", "naval", "amphibious", "static"];
 
 // ── Diplomacy ────────────────────────────────────────────────
 
@@ -959,7 +959,7 @@ export function progressEnvironment(env, turnDurationMs) {
 /**
  * Create a fresh game state object.
  */
-export function createGameState({ scenario, terrainRef, terrainSummary, llmConfig, folder }) {
+export function createGameState({ scenario, terrainRef, terrainSummary, llmConfig, folder, mode = "turn" }) {
   const now = new Date().toISOString();
   const id = `game_${now.replace(/[-:T]/g, "").slice(0, 14)}`;
   const scaleTier = SCALE_TIERS[scenario.scale] || SCALE_TIERS.grand_tactical;
@@ -978,6 +978,7 @@ export function createGameState({ scenario, terrainRef, terrainSummary, llmConfi
     game: {
       id,
       name: scenario.title,
+      mode,
       folder: folder || null, // game folder name in games/ — null for legacy saves
       createdAt: now,
       turn: 1,

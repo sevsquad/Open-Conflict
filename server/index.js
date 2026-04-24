@@ -311,8 +311,15 @@ app.post("/api/game/save", (req, res) => {
         return res.status(400).json({ ok: false, error: "Invalid game folder" });
       }
 
-      const isAutosave = /_autosave_t\d+/.test(String(filename));
-      const saveName = isAutosave ? `autosave_t${data.game?.turn || 0}.json` : "state.json";
+      const mode = String(data?.game?.mode || "turn");
+      const autosaveToken = String(filename);
+      const isTurnAutosave = /_autosave_t\d+/.test(autosaveToken);
+      const isRtsAutosave = /autosave_rts_\d+/.test(autosaveToken);
+      const saveName = isTurnAutosave
+        ? `autosave_t${data.game?.turn || 0}.json`
+        : isRtsAutosave
+          ? autosaveToken.match(/autosave_rts_\d+/)?.[0] + ".json"
+          : "state.json";
       fs.writeFileSync(path.join(folderPath, saveName), JSON.stringify(data, null, 2));
       return res.json({ ok: true, path: `games/${safeFolder}/${saveName}` });
     }
@@ -330,6 +337,32 @@ app.post("/api/game/save", (req, res) => {
   }
 });
 
+function buildGameListEntry({ content, stat, file, folder, isAutosave }) {
+  const mode = content.game?.mode || "turn";
+  return {
+    file,
+    folder,
+    name: content.game?.name || file,
+    size: stat.size,
+    modified: stat.mtime.toISOString(),
+    mode,
+    turn: mode === "turn" ? (content.game?.turn || null) : null,
+    elapsedMs: mode === "rts" ? (content.game?.elapsedMs || 0) : null,
+    paused: mode === "rts" ? Boolean(content.game?.paused) : null,
+    speed: mode === "rts" ? (content.game?.speed || 1) : null,
+    winner: mode === "rts" ? (content.game?.winner || null) : null,
+    status: content.game?.status || null,
+    terrainRef: content.terrain?._ref || null,
+    actorCount: content.scenario?.actors?.length || 0,
+    unitCount: content.units?.length || 0,
+    isAutosave,
+    autosaveLabel: mode === "rts"
+      ? (String(file).match(/autosave_rts_(\d+)\.json$/)?.[1] || null)
+      : (String(file).match(/autosave_t(\d+)\.json$/)?.[1] || null),
+    gameId: content.game?.id || null,
+  };
+}
+
 app.get("/api/game/list", (_req, res) => {
   const results = [];
 
@@ -340,32 +373,26 @@ app.get("/api/game/list", (_req, res) => {
 
     const folderPath = path.join(gamesRoot(), entry.name);
     const statePath = path.join(folderPath, "state.json");
-    if (!fs.existsSync(statePath)) {
+    let autosaveFiles = [];
+    try {
+      autosaveFiles = fs.readdirSync(folderPath).filter((file) =>
+        (file.startsWith("autosave_t") || file.startsWith("autosave_rts_")) && file.endsWith(".json")
+      );
+    } catch {
+      autosaveFiles = [];
+    }
+    if (!fs.existsSync(statePath) && autosaveFiles.length === 0) {
       continue;
     }
 
     try {
-      const stat = fs.statSync(statePath);
-      const content = JSON.parse(fs.readFileSync(statePath, "utf8"));
-      results.push({
-        file: entry.name,
-        folder: entry.name,
-        name: content.game?.name || entry.name,
-        size: stat.size,
-        modified: stat.mtime.toISOString(),
-        turn: content.game?.turn || null,
-        status: content.game?.status || null,
-        terrainRef: content.terrain?._ref || null,
-        actorCount: content.scenario?.actors?.length || 0,
-        unitCount: content.units?.length || 0,
-        isAutosave: false,
-        gameId: content.game?.id || null,
-      });
+      if (fs.existsSync(statePath)) {
+        const stat = fs.statSync(statePath);
+        const content = JSON.parse(fs.readFileSync(statePath, "utf8"));
+        results.push(buildGameListEntry({ content, stat, file: entry.name, folder: entry.name, isAutosave: false }));
+      }
 
-      for (const file of fs.readdirSync(folderPath)) {
-        if (!file.startsWith("autosave_t") || !file.endsWith(".json")) {
-          continue;
-        }
+      for (const file of autosaveFiles) {
         const autoPath = path.join(folderPath, file);
         const autoStat = fs.statSync(autoPath);
         let autoContent;
@@ -374,20 +401,13 @@ app.get("/api/game/list", (_req, res) => {
         } catch {
           continue;
         }
-        results.push({
+        results.push(buildGameListEntry({
+          content: autoContent,
+          stat: autoStat,
           file: `${entry.name}/${file}`,
           folder: entry.name,
-          name: autoContent.game?.name || entry.name,
-          size: autoStat.size,
-          modified: autoStat.mtime.toISOString(),
-          turn: autoContent.game?.turn || null,
-          status: autoContent.game?.status || null,
-          terrainRef: autoContent.terrain?._ref || null,
-          actorCount: autoContent.scenario?.actors?.length || 0,
-          unitCount: autoContent.units?.length || 0,
           isAutosave: true,
-          gameId: autoContent.game?.id || null,
-        });
+        }));
       }
     } catch {
       // Skip unreadable folders.
@@ -405,20 +425,13 @@ app.get("/api/game/list", (_req, res) => {
       if (content.game?.folder) {
         continue;
       }
-      results.push({
+      results.push(buildGameListEntry({
+        content,
+        stat,
         file,
         folder: null,
-        name: content.game?.name || file,
-        size: stat.size,
-        modified: stat.mtime.toISOString(),
-        turn: content.game?.turn || null,
-        status: content.game?.status || null,
-        terrainRef: content.terrain?._ref || null,
-        actorCount: content.scenario?.actors?.length || 0,
-        unitCount: content.units?.length || 0,
-        isAutosave: /_autosave_t\d+\.json$/.test(file),
-        gameId: content.game?.id || null,
-      });
+        isAutosave: /(_autosave_t\d+|autosave_rts_\d+)\.json$/.test(file),
+      }));
     } catch {
       // Skip unreadable files.
     }
@@ -432,6 +445,7 @@ app.get("/api/game/load", (req, res) => {
   const folder = req.query.folder;
   const file = req.query.file;
   const autosaveTurn = req.query.autosave;
+  const autosaveFile = req.query.autosaveFile;
 
   if (folder) {
     const safeFolder = sanitizeFolderName(folder);
@@ -440,8 +454,24 @@ app.get("/api/game/load", (req, res) => {
       return res.status(404).send("Game folder not found");
     }
 
-    const filename = autosaveTurn ? `autosave_t${autosaveTurn}.json` : "state.json";
-    const filePath = path.join(folderPath, filename);
+    const filename = autosaveFile
+      ? sanitizeFilename(String(autosaveFile))
+      : autosaveTurn
+        ? `autosave_t${autosaveTurn}.json`
+        : "state.json";
+    let filePath = path.join(folderPath, filename);
+    if (!fs.existsSync(filePath) && filename === "state.json") {
+      const autosaves = fs.readdirSync(folderPath)
+        .filter((name) => (name.startsWith("autosave_t") || name.startsWith("autosave_rts_")) && name.endsWith(".json"))
+        .map((name) => ({
+          name,
+          modified: fs.statSync(path.join(folderPath, name)).mtimeMs,
+        }))
+        .sort((left, right) => right.modified - left.modified);
+      if (autosaves.length > 0) {
+        filePath = path.join(folderPath, autosaves[0].name);
+      }
+    }
     if (!fs.existsSync(filePath)) {
       return res.status(404).send("State file not found");
     }
@@ -569,16 +599,18 @@ app.delete("/api/game/delete", (req, res) => {
   try {
     const folder = req.query.folder;
     const autosaveTurn = req.query.autosave;
+    const autosaveFile = req.query.autosaveFile;
     const file = req.query.file;
 
-    if (folder && autosaveTurn != null) {
-      const turn = Number.parseInt(String(autosaveTurn), 10);
-      if (!Number.isFinite(turn)) {
-        return res.status(400).json({ ok: false, error: "Invalid autosave turn" });
-      }
-
+    if (folder && (autosaveTurn != null || autosaveFile)) {
       const safeFolder = sanitizeFolderName(folder);
-      const filePath = path.join(gamesRoot(), safeFolder, `autosave_t${turn}.json`);
+      const targetFile = autosaveFile
+        ? sanitizeFilename(String(autosaveFile))
+        : `autosave_t${Number.parseInt(String(autosaveTurn), 10)}.json`;
+      if (!/^autosave_(t\d+|rts_\d+)\.json$/.test(targetFile)) {
+        return res.status(400).json({ ok: false, error: "Invalid autosave filename" });
+      }
+      const filePath = path.join(gamesRoot(), safeFolder, targetFile);
       if (!isInsideDir(gamesRoot(), filePath)) {
         return res.status(400).json({ ok: false, error: "Invalid path" });
       }
@@ -590,7 +622,7 @@ app.delete("/api/game/delete", (req, res) => {
 
     if (file) {
       const safeFile = sanitizeFilename(file);
-      if (!/_autosave_t\d+\.json$/.test(safeFile)) {
+      if (!/(_autosave_t\d+|autosave_rts_\d+)\.json$/.test(safeFile)) {
         return res.status(403).json({ ok: false, error: "Only autosave files can be deleted" });
       }
 

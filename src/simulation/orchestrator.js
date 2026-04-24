@@ -1603,6 +1603,9 @@ function migrateGameState(gs) {
   if (!gs?.units) return gs;
   // Deep-clone so we don't mutate the caller's object (e.g. cached server responses)
   gs = JSON.parse(JSON.stringify(gs));
+  if (!gs.game?.mode) {
+    gs.game = { ...(gs.game || {}), mode: "turn" };
+  }
   for (const unit of gs.units) {
     if (unit.weaponRangeKm) continue;
     // Try template-specific range first (searches all eras since saves don't store eraId)
@@ -1628,7 +1631,7 @@ function migrateGameState(gs) {
 export async function loadGameState(fileOrFolder, opts = {}) {
   const isFolder = opts.folder || false;
   const url = isFolder
-    ? `/api/game/load?folder=${encodeURIComponent(fileOrFolder)}`
+    ? `/api/game/load?folder=${encodeURIComponent(fileOrFolder)}${opts.autosaveFile ? `&autosaveFile=${encodeURIComponent(opts.autosaveFile)}` : ""}`
     : `/api/game/load?file=${encodeURIComponent(fileOrFolder)}`;
   const resp = await fetch(url);
   if (!resp.ok) throw new Error(`Failed to load game: ${resp.statusText}`);
@@ -1660,7 +1663,9 @@ export async function listSavedGames() {
  */
 export async function deleteGameSave(fileOrFolder, opts = {}) {
   let url;
-  if (opts.folder && opts.autosaveTurn != null) {
+  if (opts.folder && opts.autosaveFile) {
+    url = `/api/game/delete?folder=${encodeURIComponent(opts.folder)}&autosaveFile=${encodeURIComponent(opts.autosaveFile)}`;
+  } else if (opts.folder && opts.autosaveTurn != null) {
     url = `/api/game/delete?folder=${encodeURIComponent(opts.folder)}&autosave=${opts.autosaveTurn}`;
   } else {
     url = `/api/game/delete?file=${encodeURIComponent(fileOrFolder)}`;
@@ -1678,9 +1683,15 @@ export async function autosave(gameState) {
   const gameId = gameState.game.id;
   const turn = gameState.game.turn;
   const folder = gameState.game.folder;
+  const mode = gameState.game.mode || "turn";
 
   // The filename signals autosave to the server; server routes to correct location
-  const filename = `${gameId}_autosave_t${turn}.json`;
+  const autosaveSeq = mode === "rts"
+    ? String(gameState.game.autosaveSeq || 0).padStart(6, "0")
+    : String(turn);
+  const filename = mode === "rts"
+    ? `autosave_rts_${autosaveSeq}.json`
+    : `${gameId}_autosave_t${turn}.json`;
   await fetch("/api/game/save", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1689,30 +1700,35 @@ export async function autosave(gameState) {
 
   // Prune old autosaves beyond the 5-turn window
   try {
-    const AUTOSAVE_WINDOW = 5;
+    const AUTOSAVE_WINDOW = mode === "rts" ? 10 : 5;
     const list = await listSavedGames();
 
     if (folder) {
       // Folder-based: find autosaves in this game's folder
       const autosaves = list
-        .filter(g => g.folder === folder && g.isAutosave)
+        .filter(g => g.folder === folder && g.isAutosave && (g.mode || "turn") === mode)
         .sort((a, b) => {
-          const tA = parseInt(a.file.match(/autosave_t(\d+)/)?.[1] || "0");
-          const tB = parseInt(b.file.match(/autosave_t(\d+)/)?.[1] || "0");
+          const tA = parseInt(a.autosaveLabel || "0", 10);
+          const tB = parseInt(b.autosaveLabel || "0", 10);
           return tB - tA;
         });
       for (const old of autosaves.slice(AUTOSAVE_WINDOW)) {
-        const oldTurn = parseInt(old.file.match(/autosave_t(\d+)/)?.[1] || "0");
-        await deleteGameSave(null, { folder, autosaveTurn: oldTurn }).catch(() => {});
+        if (mode === "rts") {
+          const fileName = old.file.split("/").pop();
+          await deleteGameSave(null, { folder, autosaveFile: fileName }).catch(() => {});
+        } else {
+          const oldTurn = parseInt(old.file.match(/autosave_t(\d+)/)?.[1] || "0");
+          await deleteGameSave(null, { folder, autosaveTurn: oldTurn }).catch(() => {});
+        }
       }
     } else {
       // Legacy flat-file pruning
-      const prefix = `${gameId}_autosave_t`;
+      const prefix = mode === "rts" ? "autosave_rts_" : `${gameId}_autosave_t`;
       const autosaves = list
-        .filter(g => g.file.startsWith(prefix))
+        .filter(g => g.file.startsWith(prefix) && (g.mode || "turn") === mode)
         .sort((a, b) => {
-          const tA = parseInt(a.file.match(/_t(\d+)\.json$/)?.[1] || "0");
-          const tB = parseInt(b.file.match(/_t(\d+)\.json$/)?.[1] || "0");
+          const tA = parseInt(a.autosaveLabel || "0", 10);
+          const tB = parseInt(b.autosaveLabel || "0", 10);
           return tB - tA;
         });
       for (const old of autosaves.slice(AUTOSAVE_WINDOW)) {

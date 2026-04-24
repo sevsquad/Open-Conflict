@@ -11,7 +11,7 @@ import SimSetupConfigure from "./SimSetupConfigure.jsx";
 // Phase 1: Select map → Phase 2: Map-centric configuration
 // ═══════════════════════════════════════════════════════════════
 
-export default function SimSetup({ onBack, onStart, initialTerrainData, preset }) {
+export default function SimSetup({ onBack, onStart, initialTerrainData, preset, modeVariant = "turn" }) {
   const [setupPhase, setSetupPhase] = useState(initialTerrainData ? "configure" : "select-map"); // "select-map" | "configure"
   const [maps, setMaps] = useState([]);
   // Use _sourceName if available (e.g. from ?test=wales), otherwise default to "test-fixture"
@@ -25,6 +25,7 @@ export default function SimSetup({ onBack, onStart, initialTerrainData, preset }
   // Auto-start with preset if requested (?preset=quickstart)
   const presetFired = useRef(false);
   useEffect(() => {
+    if (modeVariant !== "turn") return;
     if (preset !== "quickstart" || !initialTerrainData || presetFired.current) return;
     presetFired.current = true;
 
@@ -57,7 +58,7 @@ export default function SimSetup({ onBack, onStart, initialTerrainData, preset }
       });
       onStart(gs, initialTerrainData);
     }).catch(err => console.error("[preset] Failed to load providers:", err));
-  }, [preset, initialTerrainData, onStart]);
+  }, [preset, initialTerrainData, onStart, modeVariant]);
 
   // Load available maps on mount
   useEffect(() => {
@@ -87,16 +88,24 @@ export default function SimSetup({ onBack, onStart, initialTerrainData, preset }
   }, []);
 
   // Load a saved game directly — supports folder-based and legacy
-  const handleLoadGame = useCallback(async (file, folder) => {
+  const handleLoadGame = useCallback(async (gameEntry) => {
     try {
-      const gs = folder
-        ? await loadGameState(folder, { folder: true })
-        : await loadGameState(file);
+      const autosaveFile = gameEntry?.folder && gameEntry?.isAutosave
+        ? gameEntry.file?.split("/").pop() || null
+        : null;
+      const gs = gameEntry?.folder
+        ? await loadGameState(gameEntry.folder, { folder: true, autosaveFile })
+        : await loadGameState(gameEntry.file);
+      const loadedMode = gs?.game?.mode || "turn";
+      if (loadedMode !== modeVariant) {
+        alert(`This save belongs to ${loadedMode.toUpperCase()} mode and cannot be opened from the ${modeVariant.toUpperCase()} launcher.`);
+        return;
+      }
       onStart(gs, null);
     } catch (e) {
       alert("Failed to load game: " + e.message);
     }
-  }, [onStart]);
+  }, [onStart, modeVariant]);
 
   // Quick-start: load a map by preset requirement, then auto-apply the preset in configure
   // mapType: "test-fixture" = built-in test grid, "saves" = from saves/ dir, "built-in" = generated from preset-maps/
@@ -172,6 +181,7 @@ export default function SimSetup({ onBack, onStart, initialTerrainData, preset }
         onBack={handleBackToSelect}
         onStart={onStart}
         initialPresetId={pendingPresetId}
+        modeVariant={modeVariant}
       />
     );
   }
@@ -188,6 +198,7 @@ export default function SimSetup({ onBack, onStart, initialTerrainData, preset }
       onLoadGame={handleLoadGame}
       onLoadTestFixture={handleLoadTestFixture}
       onLoadPreset={handleLoadPreset}
+      modeVariant={modeVariant}
     />
   );
 }

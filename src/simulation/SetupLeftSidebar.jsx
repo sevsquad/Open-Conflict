@@ -13,15 +13,16 @@ import { listAiProfiles, listThinkBudgets } from "./aiProfiles.js";
 const HIDE_SPIN_CSS = `input[type="number"]::-webkit-inner-spin-button,
 input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }`;
 
-export default function SetupLeftSidebar({ state, dispatch, providers, open, onToggle, cellSizeKm }) {
+export default function SetupLeftSidebar({ state, dispatch, providers, open, onToggle, cellSizeKm, modeVariant = "turn" }) {
   const aiProfiles = listAiProfiles();
   const thinkBudgets = listThinkBudgets();
+  const isRtsMode = modeVariant === "rts";
   const {
     scale, title, description, initialConditions, specialRules,
     actors, turnDuration, startDate, environment,
     provider, model, temperature,
     strategicEnabled, strategicHexSizeKm,
-    victoryConditions, interactionMode,
+    victoryConditions, interactionMode, rtsOptions,
   } = state;
 
   const selectedProvider = providers.find(p => p.id === provider);
@@ -67,7 +68,7 @@ export default function SetupLeftSidebar({ state, dispatch, providers, open, onT
                   color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily,
                 }}
               >
-                {SCALE_KEYS.map(key => {
+                {(isRtsMode ? ["tactical", "grand_tactical"] : SCALE_KEYS).map(key => {
                   const t = SCALE_TIERS[key];
                   return <option key={key} value={key}>{t.label} ({t.hexRange}/hex)</option>;
                 })}
@@ -130,7 +131,13 @@ export default function SetupLeftSidebar({ state, dispatch, providers, open, onT
             <Input label="Title" value={title} onChange={v => dispatch({ type: "SET_FIELD", field: "title", value: v })} placeholder="e.g., Chosin Reservoir, December 1950" />
             <Input label="Description" value={description} onChange={v => dispatch({ type: "SET_FIELD", field: "description", value: v })} placeholder="Brief scenario description..." multiline />
             <Input label="Initial Conditions" value={initialConditions} onChange={v => dispatch({ type: "SET_FIELD", field: "initialConditions", value: v })} placeholder="Overall starting situation..." multiline />
-            <Input label="Special Rules" value={specialRules} onChange={v => dispatch({ type: "SET_FIELD", field: "specialRules", value: v })} placeholder="Scenario-specific adjudication guidance..." multiline />
+            <Input
+              label="Special Rules"
+              value={specialRules}
+              onChange={v => dispatch({ type: "SET_FIELD", field: "specialRules", value: v })}
+              placeholder={isRtsMode ? "Runtime guidance, time limits, and special restrictions..." : "Scenario-specific adjudication guidance..."}
+              multiline
+            />
           </CollapsibleSection>
 
           {/* Victory Points */}
@@ -174,18 +181,40 @@ export default function SetupLeftSidebar({ state, dispatch, providers, open, onT
                     placeholder="Name"
                     style={{ flex: 1, minWidth: 0, padding: "2px 4px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: 10, fontFamily: typography.fontFamily, outline: "none" }}
                   />
-                  <input
-                    type="number"
-                    value={vp.vp}
-                    onChange={e => dispatch({ type: "UPDATE_VP_HEX", idx: vi, field: "vp", value: parseInt(e.target.value) || 0 })}
-                    title="Victory Points"
-                    style={{ width: 44, padding: "2px 4px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.accent.amber, fontSize: 10, fontFamily: typography.monoFamily, outline: "none", textAlign: "center" }}
-                  />
-                  <span style={{ fontSize: 8, color: colors.text.muted }}>VP</span>
-                  <button
-                    onClick={() => dispatch({ type: "REMOVE_VP_HEX", idx: vi })}
-                    style={{ background: "none", border: "none", color: colors.text.muted, cursor: "pointer", fontSize: 11, padding: 0 }}
-                  >&times;</button>
+	                  <input
+	                    type="number"
+	                    value={vp.vp}
+	                    onChange={e => dispatch({ type: "UPDATE_VP_HEX", idx: vi, field: "vp", value: parseInt(e.target.value) || 0 })}
+	                    title="Victory Points"
+	                    style={{ width: 44, padding: "2px 4px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.accent.amber, fontSize: 10, fontFamily: typography.monoFamily, outline: "none", textAlign: "center" }}
+	                  />
+	                  <span style={{ fontSize: 8, color: colors.text.muted }}>VP</span>
+	                  {isRtsMode && (
+	                    <select
+	                      value={vp.initialController || ""}
+	                      onChange={e => dispatch({ type: "UPDATE_VP_HEX", idx: vi, field: "initialController", value: e.target.value || null })}
+	                      title="Initial controller"
+	                      style={{
+	                        minWidth: 76,
+	                        padding: "2px 4px",
+	                        background: colors.bg.input,
+	                        border: `1px solid ${colors.border.subtle}`,
+	                        borderRadius: radius.sm,
+	                        color: colors.text.secondary,
+	                        fontSize: 10,
+	                        fontFamily: typography.fontFamily,
+	                      }}
+	                    >
+	                      <option value="">Neutral</option>
+	                      {actors.map(actor => (
+	                        <option key={actor.id} value={actor.id}>{actor.name}</option>
+	                      ))}
+	                    </select>
+	                  )}
+	                  <button
+	                    onClick={() => dispatch({ type: "REMOVE_VP_HEX", idx: vi })}
+	                    style={{ background: "none", border: "none", color: colors.text.muted, cursor: "pointer", fontSize: 11, padding: 0 }}
+	                  >&times;</button>
                 </div>
               );
             })}
@@ -242,6 +271,9 @@ export default function SetupLeftSidebar({ state, dispatch, providers, open, onT
                         dispatch({ type: "UPDATE_ACTOR_AI_CONFIG", idx: ai, field: "engine", value: "algorithmic" });
                         dispatch({ type: "UPDATE_ACTOR_AI_CONFIG", idx: ai, field: "profile", value: "balanced" });
                         dispatch({ type: "UPDATE_ACTOR_AI_CONFIG", idx: ai, field: "thinkBudget", value: "standard" });
+                        dispatch({ type: "UPDATE_ACTOR_AI_CONFIG", idx: ai, field: "reservePolicy", value: "balanced" });
+                        dispatch({ type: "UPDATE_ACTOR_AI_CONFIG", idx: ai, field: "directorEnabled", value: true });
+                        dispatch({ type: "UPDATE_ACTOR_AI_CONFIG", idx: ai, field: "releasePolicy", value: "staged" });
                         dispatch({ type: "UPDATE_ACTOR_AI_CONFIG", idx: ai, field: "provider", value: defaultProvider });
                         dispatch({ type: "UPDATE_ACTOR_AI_CONFIG", idx: ai, field: "model", value: defaultModel });
                         dispatch({ type: "UPDATE_ACTOR_AI_CONFIG", idx: ai, field: "personality", value: "" });
@@ -265,12 +297,13 @@ export default function SetupLeftSidebar({ state, dispatch, providers, open, onT
                         <div style={{ marginBottom: space[1] }}>
                           <div style={{ fontSize: 9, color: colors.text.muted, marginBottom: 1 }}>Engine</div>
                           <select
-                            value={actor.aiConfig?.engine || "algorithmic"}
+                            value={isRtsMode ? "algorithmic" : (actor.aiConfig?.engine || "algorithmic")}
                             onChange={e => dispatch({ type: "UPDATE_ACTOR_AI_CONFIG", idx: ai, field: "engine", value: e.target.value })}
+                            disabled={isRtsMode}
                             style={{ width: "100%", padding: "3px 6px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.xs, fontFamily: typography.fontFamily }}
                           >
                             <option value="algorithmic">Algorithmic Opponent</option>
-                            <option value="llm">LLM Commander</option>
+                            {!isRtsMode && <option value="llm">LLM Commander</option>}
                           </select>
                         </div>
                         <div style={{ marginBottom: space[1] }}>
@@ -293,12 +326,40 @@ export default function SetupLeftSidebar({ state, dispatch, providers, open, onT
                             {thinkBudgets.map(budget => <option key={budget.id} value={budget.id}>{budget.label}</option>)}
                           </select>
                         </div>
-                        {actor.aiConfig?.engine === "llm" && providers.length === 0 && (
+                        {isRtsMode && (
+                          <>
+                            <div style={{ marginBottom: space[1] }}>
+                              <div style={{ fontSize: 9, color: colors.text.muted, marginBottom: 1 }}>Reserve Policy</div>
+                              <select
+                                value={actor.aiConfig?.reservePolicy || "balanced"}
+                                onChange={e => dispatch({ type: "UPDATE_ACTOR_AI_CONFIG", idx: ai, field: "reservePolicy", value: e.target.value })}
+                                style={{ width: "100%", padding: "3px 6px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.sm, color: colors.text.primary, fontSize: typography.body.xs, fontFamily: typography.fontFamily }}
+                              >
+                                <option value="aggressive">Aggressive</option>
+                                <option value="balanced">Balanced</option>
+                                <option value="conservative">Conservative</option>
+                              </select>
+                            </div>
+                            <label style={{
+                              display: "flex", alignItems: "center", gap: space[1],
+                              fontSize: typography.body.xs, color: colors.text.secondary, cursor: "pointer",
+                            }}>
+                              <input
+                                type="checkbox"
+                                checked={actor.aiConfig?.directorEnabled ?? true}
+                                onChange={e => dispatch({ type: "UPDATE_ACTOR_AI_CONFIG", idx: ai, field: "directorEnabled", value: e.target.checked })}
+                                style={{ accentColor: colors.accent.purple }}
+                              />
+                              Allow Director Hints
+                            </label>
+                          </>
+                        )}
+                        {!isRtsMode && actor.aiConfig?.engine === "llm" && providers.length === 0 && (
                           <div style={{ fontSize: typography.body.xs, color: colors.accent.red, lineHeight: 1.4, marginBottom: space[1] }}>
                             No LLM providers configured. Add API keys to .env.
                           </div>
                         )}
-                        {actor.aiConfig?.engine === "llm" && providers.length > 0 && (
+                        {!isRtsMode && actor.aiConfig?.engine === "llm" && providers.length > 0 && (
                           <>
                         <div style={{ marginBottom: space[1] }}>
                           <div style={{ fontSize: 9, color: colors.text.muted, marginBottom: 1 }}>Provider</div>
@@ -406,61 +467,131 @@ export default function SetupLeftSidebar({ state, dispatch, providers, open, onT
             <Button variant="ghost" onClick={() => dispatch({ type: "ADD_ACTOR" })} size="sm" style={{ width: "100%" }}>+ Add Actor</Button>
           </CollapsibleSection>
 
-          {/* LLM Configuration */}
-          <CollapsibleSection title="LLM Configuration" accent={colors.accent.cyan}>
-            {providers.length === 0 ? (
-              <div style={{ fontSize: typography.body.sm, color: colors.accent.red, lineHeight: 1.5, padding: space[2], background: colors.glow.red, borderRadius: radius.md }}>
-                No LLM providers configured. Add API keys to your .env file.
-              </div>
-            ) : (
-              <>
-                <div style={{ marginBottom: space[2] }}>
-                  <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Provider</div>
-                  <select value={provider} onChange={e => {
-                    dispatch({ type: "SET_FIELD", field: "provider", value: e.target.value });
-                    const p = providers.find(p => p.id === e.target.value);
-                    const firstModel = p?.models?.[0];
-                    dispatch({ type: "SET_FIELD", field: "model", value: firstModel?.id || "" });
-                    dispatch({ type: "SET_FIELD", field: "temperature", value: firstModel?.temperature ?? 0.4 });
-                  }}
-                    style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.md, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}>
-                    {providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </select>
+          {!isRtsMode && (
+            <CollapsibleSection title="LLM Configuration" accent={colors.accent.cyan}>
+              {providers.length === 0 ? (
+                <div style={{ fontSize: typography.body.sm, color: colors.accent.red, lineHeight: 1.5, padding: space[2], background: colors.glow.red, borderRadius: radius.md }}>
+                  No LLM providers configured. Add API keys to your .env file.
                 </div>
-                <div style={{ marginBottom: space[2] }}>
-                  <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Model</div>
-                  <select value={model} onChange={e => {
-                    dispatch({ type: "SET_FIELD", field: "model", value: e.target.value });
-                    const modelObj = selectedProvider?.models?.find(m => m.id === e.target.value);
-                    dispatch({ type: "SET_FIELD", field: "temperature", value: modelObj?.temperature ?? 0.4 });
-                  }}
-                    style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.md, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}>
-                    {selectedProvider?.models?.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
-                  </select>
-                </div>
-                <div>
-                  {(() => {
-                    const selectedModel = selectedProvider?.models?.find(m => m.id === model);
-                    const tempLocked = selectedModel?.temperature != null;
-                    return (<>
-                      <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2, display: "flex", justifyContent: "space-between" }}>
-                        <span>Temperature{tempLocked ? " (locked)" : ""}</span>
-                        <span style={{ color: colors.accent.amber, fontWeight: typography.weight.semibold, fontFamily: typography.monoFamily }}>{temperature}</span>
-                      </div>
-                      <input type="range" min="0" max="1" step="0.1" value={temperature} disabled={tempLocked} onChange={e => dispatch({ type: "SET_FIELD", field: "temperature", value: parseFloat(e.target.value) })}
-                    style={{ width: "100%", accentColor: colors.accent.amber, opacity: tempLocked ? 0.5 : 1 }} />
-                    </>);
-                  })()}
-                </div>
-              </>
-            )}
-          </CollapsibleSection>
+              ) : (
+                <>
+                  <div style={{ marginBottom: space[2] }}>
+                    <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Provider</div>
+                    <select value={provider} onChange={e => {
+                      dispatch({ type: "SET_FIELD", field: "provider", value: e.target.value });
+                      const p = providers.find(p => p.id === e.target.value);
+                      const firstModel = p?.models?.[0];
+                      dispatch({ type: "SET_FIELD", field: "model", value: firstModel?.id || "" });
+                      dispatch({ type: "SET_FIELD", field: "temperature", value: firstModel?.temperature ?? 0.4 });
+                    }}
+                      style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.md, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}>
+                      {providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                  <div style={{ marginBottom: space[2] }}>
+                    <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Model</div>
+                    <select value={model} onChange={e => {
+                      dispatch({ type: "SET_FIELD", field: "model", value: e.target.value });
+                      const modelObj = selectedProvider?.models?.find(m => m.id === e.target.value);
+                      dispatch({ type: "SET_FIELD", field: "temperature", value: modelObj?.temperature ?? 0.4 });
+                    }}
+                      style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.md, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}>
+                      {selectedProvider?.models?.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    {(() => {
+                      const selectedModel = selectedProvider?.models?.find(m => m.id === model);
+                      const tempLocked = selectedModel?.temperature != null;
+                      return (<>
+                        <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2, display: "flex", justifyContent: "space-between" }}>
+                          <span>Temperature{tempLocked ? " (locked)" : ""}</span>
+                          <span style={{ color: colors.accent.amber, fontWeight: typography.weight.semibold, fontFamily: typography.monoFamily }}>{temperature}</span>
+                        </div>
+                        <input type="range" min="0" max="1" step="0.1" value={temperature} disabled={tempLocked} onChange={e => dispatch({ type: "SET_FIELD", field: "temperature", value: parseFloat(e.target.value) })}
+                      style={{ width: "100%", accentColor: colors.accent.amber, opacity: tempLocked ? 0.5 : 1 }} />
+                      </>);
+                    })()}
+                  </div>
+                </>
+              )}
+            </CollapsibleSection>
+          )}
 
-          {/* Turn Settings */}
-          <CollapsibleSection title="Turn Settings">
-            <Input label="Turn Duration" value={turnDuration} onChange={v => dispatch({ type: "SET_FIELD", field: "turnDuration", value: v })} placeholder="e.g., 12 hours, 1 day" />
-            <Input label="Start Date" value={startDate} onChange={v => dispatch({ type: "SET_FIELD", field: "startDate", value: v })} placeholder="e.g., 1950-12-01" />
-          </CollapsibleSection>
+          {isRtsMode ? (
+            <CollapsibleSection title="RTS Match" accent={colors.accent.red}>
+              <label style={{ display: "flex", alignItems: "center", gap: space[2], fontSize: typography.body.sm, color: colors.text.primary, marginBottom: space[2] }}>
+                <input
+                  type="checkbox"
+                  checked={rtsOptions?.startPaused ?? true}
+                  onChange={e => dispatch({ type: "UPDATE_RTS_OPTION", field: "startPaused", value: e.target.checked })}
+                  style={{ accentColor: colors.accent.red }}
+                />
+                Start Paused
+              </label>
+              <div style={{ marginBottom: space[2] }}>
+                <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Starting Speed</div>
+                <select
+                  value={String(rtsOptions?.startingSpeed || 1)}
+                  onChange={e => dispatch({ type: "UPDATE_RTS_OPTION", field: "startingSpeed", value: Number(e.target.value) })}
+                  style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.md, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}
+                >
+                  <option value="1">1×</option>
+                  <option value="2">2×</option>
+                  <option value="4">4×</option>
+                </select>
+              </div>
+              <Input label="Seed" value={String(rtsOptions?.seed || "")} onChange={v => dispatch({ type: "UPDATE_RTS_OPTION", field: "seed", value: v })} placeholder="Deterministic random seed" />
+              <Input label="Duration Limit (minutes)" value={String(rtsOptions?.durationLimitMinutes || "")} onChange={v => dispatch({ type: "UPDATE_RTS_OPTION", field: "durationLimitMinutes", value: v })} placeholder="Optional match timer" />
+              <Input label="Objective Hold Seconds" value={String(rtsOptions?.objectiveHoldSeconds || 0)} onChange={v => dispatch({ type: "UPDATE_RTS_OPTION", field: "objectiveHoldSeconds", value: v })} placeholder="0 for instant uncontested capture" />
+              <div style={{ marginBottom: space[2] }}>
+                <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>Debug Visibility</div>
+                <select
+                  value={rtsOptions?.debugVisibility || "player"}
+                  onChange={e => dispatch({ type: "UPDATE_RTS_OPTION", field: "debugVisibility", value: e.target.value })}
+                  style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.md, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}
+                >
+                  <option value="player">Player FOW</option>
+                  <option value="spectator">Spectator</option>
+                </select>
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: space[2], fontSize: typography.body.sm, color: colors.text.primary, marginBottom: space[2] }}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(rtsOptions?.aiVsAi)}
+                  onChange={e => dispatch({ type: "UPDATE_RTS_OPTION", field: "aiVsAi", value: e.target.checked })}
+                  style={{ accentColor: colors.accent.red }}
+                />
+                AI vs AI
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: space[2], fontSize: typography.body.sm, color: colors.text.primary }}>
+                <input
+                  type="checkbox"
+                  checked={rtsOptions?.directorEnabled ?? true}
+                  onChange={e => dispatch({ type: "UPDATE_RTS_OPTION", field: "directorEnabled", value: e.target.checked })}
+                  style={{ accentColor: colors.accent.red }}
+                />
+                Enable Director Hints
+              </label>
+              <div style={{ marginTop: space[2] }}>
+                <div style={{ fontSize: typography.body.xs, color: colors.text.muted, marginBottom: 2 }}>AI Log Mode</div>
+                <select
+                  value={rtsOptions?.aiLogMode || "standard"}
+                  onChange={e => dispatch({ type: "UPDATE_RTS_OPTION", field: "aiLogMode", value: e.target.value })}
+                  style={{ width: "100%", padding: "6px 8px", background: colors.bg.input, border: `1px solid ${colors.border.subtle}`, borderRadius: radius.md, color: colors.text.primary, fontSize: typography.body.sm, fontFamily: typography.fontFamily }}
+                >
+                  <option value="standard">Standard (current)</option>
+                  <option value="llm_summary">LLM Summary</option>
+                  <option value="full_diary">Full Diary</option>
+                </select>
+              </div>
+            </CollapsibleSection>
+          ) : (
+            <CollapsibleSection title="Turn Settings">
+              <Input label="Turn Duration" value={turnDuration} onChange={v => dispatch({ type: "SET_FIELD", field: "turnDuration", value: v })} placeholder="e.g., 12 hours, 1 day" />
+              <Input label="Start Date" value={startDate} onChange={v => dispatch({ type: "SET_FIELD", field: "startDate", value: v })} placeholder="e.g., 1950-12-01" />
+            </CollapsibleSection>
+          )}
 
           {/* Environment Conditions */}
           <CollapsibleSection title="Environment" accent={colors.accent.green}>

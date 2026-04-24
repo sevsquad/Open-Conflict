@@ -1,0 +1,490 @@
+{
+  "ok": true,
+  "status": "passed",
+  "runId": "2026-03-12T00-40-31-609Z-02563c",
+  "timestamp": "2026-03-12T00:40:32.734Z",
+  "dbPath": "C:\\Users\\Ryan\\Documents\\open-conflict-v0.10\\open-conflict\\Tests\\ai-opponent\\runs\\2026-03-12T00-40-31-609Z-02563c\\ai-opponent-smoke.db",
+  "requestedTurns": 8,
+  "completedTurns": 8,
+  "scenario": {
+    "title": "AI Opponent Test",
+    "actors": [
+      {
+        "id": "actor_1",
+        "name": "Blue Force",
+        "aiConfig": {
+          "engine": "algorithmic",
+          "profile": "rough_terrain_flanker",
+          "thinkBudget": "deliberate"
+        }
+      },
+      {
+        "id": "actor_2",
+        "name": "Red Force",
+        "aiConfig": {
+          "engine": "algorithmic",
+          "profile": "urban_grinder",
+          "thinkBudget": "deliberate"
+        }
+      }
+    ],
+    "vpGoal": 50
+  },
+  "finalTurn": 9,
+  "finalVp": {
+    "actor_1": 0,
+    "actor_2": 30
+  },
+  "totalCombatZones": 8,
+  "totalCaptures": 8,
+  "missingReasoning": [],
+  "warnings": [],
+  "turnRecords": [
+    {
+      "turn": 1,
+      "selectedHypotheses": {
+        "actor_1": "set-conditions",
+        "actor_2": "set-conditions"
+      },
+      "reasoningCoverage": {
+        "actor_1": {
+          "hasReasoning": true,
+          "unitDecisions": 6
+        },
+        "actor_2": {
+          "hasReasoning": true,
+          "unitDecisions": 6
+        }
+      },
+      "movementByActor": {
+        "actor_1": 4,
+        "actor_2": 3
+      },
+      "controlChanges": [
+        {
+          "hex": "3,4",
+          "label": "D5",
+          "controller": "actor_2"
+        }
+      ],
+      "captureEvents": [
+        {
+          "hex": "3,4",
+          "label": "D5",
+          "actorId": "actor_2",
+          "fromActorId": "actor_1"
+        }
+      ],
+      "combatLogs": [
+        {
+          "zoneHex": "3,4",
+          "summary": "actor_2 won the fight at D5 (1.68:1).",
+          "winningActor": "actor_2",
+          "losingActor": "actor_1",
+          "strengthShift": {
+            "actor_2": -9,
+            "actor_1": -29
+          }
+        }
+      ],
+      "stateUpdateCount": 38,
+      "vpAfter": {
+        "actor_1": 0,
+        "actor_2": 30
+      },
+      "orderSignatures": {
+        "actor_1": "{\"unit_preset_1\":{\"movementOrder\":{\"id\":\"MOVE\",\"target\":\"4,6\",\"waypoints\":[\"6,4\",\"5,4\",\"5,5\"]},\"actionOrder\":{\"id\":\"RECON\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Screen the approach to Stonebrook Bridge and sharpen the picture.\"},\"unit_preset_2\":{\"movementOrder\":{\"id\":\"MOVE\",\"target\":\"5,4\"},\"actionOrder\":{\"id\":\"SUPPORT_FIRE\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Support the assault on Stonebrook Bridge from covered terrain.\"},\"unit_preset_3\":{\"movementOrder\":{\"id\":\"MOVE\",\"target\":\"6,4\",\"waypoints\":[\"8,4\"]},\"actionOrder\":{\"id\":\"SUPPORT_FIRE\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Support the assault on Stonebrook Bridge from covered terrain.\"},\"unit_preset_4\":{\"movementOrder\":{\"id\":\"MOVE\",\"target\":\"4,4\",\"waypoints\":[\"8,4\"]},\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_5\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"FIRE_MISSION\",\"target\":\"3,4\",\"subtype\":\"SMOKE\"},\"intent\":\"Screen the main effort at Stonebrook Bridge.\"},\"unit_preset_6\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"DIG_IN\",\"target\":null,\"subtype\":null},\"intent\":\"Hold current ground and maintain local cohesion.\"}}",
+        "actor_2": "{\"unit_preset_7\":{\"movementOrder\":{\"id\":\"MOVE\",\"target\":\"2,4\",\"waypoints\":[\"3,4\"]},\"actionOrder\":{\"id\":\"RECON\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Screen the approach to Stonebrook Bridge and sharpen the picture.\"},\"unit_preset_8\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_9\":{\"movementOrder\":{\"id\":\"MOVE\",\"target\":\"2,4\"},\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_10\":{\"movementOrder\":{\"id\":\"MOVE\",\"target\":\"2,4\",\"waypoints\":[\"1,4\"]},\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_11\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"FIRE_MISSION\",\"target\":\"3,4\",\"subtype\":\"SMOKE\"},\"intent\":\"Screen the main effort at Stonebrook Bridge.\"},\"unit_preset_12\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"DIG_IN\",\"target\":null,\"subtype\":null},\"intent\":\"Hold current ground and maintain local cohesion.\"}}"
+      },
+      "unitOrderCount": {
+        "actor_1": 6,
+        "actor_2": 6
+      }
+    },
+    {
+      "turn": 2,
+      "selectedHypotheses": {
+        "actor_1": "set-conditions",
+        "actor_2": "alternate-axis"
+      },
+      "reasoningCoverage": {
+        "actor_1": {
+          "hasReasoning": true,
+          "unitDecisions": 6
+        },
+        "actor_2": {
+          "hasReasoning": true,
+          "unitDecisions": 6
+        }
+      },
+      "movementByActor": {
+        "actor_1": 2,
+        "actor_2": 2
+      },
+      "controlChanges": [],
+      "captureEvents": [
+        {
+          "hex": "3,4",
+          "label": "D5",
+          "actorId": "actor_2",
+          "fromActorId": "actor_1"
+        }
+      ],
+      "combatLogs": [
+        {
+          "zoneHex": "3,4",
+          "summary": "actor_2 won the fight at D5 (1.55:1).",
+          "winningActor": "actor_2",
+          "losingActor": "actor_1",
+          "strengthShift": {
+            "actor_2": -9,
+            "actor_1": -28
+          }
+        }
+      ],
+      "stateUpdateCount": 27,
+      "vpAfter": {
+        "actor_1": 0,
+        "actor_2": 30
+      },
+      "orderSignatures": {
+        "actor_1": "{\"unit_preset_1\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"RECON\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Screen the approach to Stonebrook Bridge and sharpen the picture.\"},\"unit_preset_2\":{\"movementOrder\":{\"id\":\"MOVE\",\"target\":\"4,4\"},\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_3\":{\"movementOrder\":{\"id\":\"MOVE\",\"target\":\"5,4\"},\"actionOrder\":{\"id\":\"SUPPORT_FIRE\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Support the assault on Stonebrook Bridge from covered terrain.\"},\"unit_preset_4\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_5\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"FIRE_MISSION\",\"target\":\"3,4\",\"subtype\":\"HE\"},\"intent\":\"Disrupt defenders at Stonebrook Bridge.\"},\"unit_preset_6\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"DIG_IN\",\"target\":null,\"subtype\":null},\"intent\":\"Hold current ground and maintain local cohesion.\"}}",
+        "actor_2": "{\"unit_preset_7\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"RECON\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Screen the approach to Stonebrook Bridge and sharpen the picture.\"},\"unit_preset_8\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_9\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_10\":{\"movementOrder\":{\"id\":\"MOVE\",\"target\":\"2,4\"},\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_11\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"FIRE_MISSION\",\"target\":\"3,4\",\"subtype\":\"HE\"},\"intent\":\"Disrupt defenders at Stonebrook Bridge.\"},\"unit_preset_12\":{\"movementOrder\":{\"id\":\"MOVE\",\"target\":\"2,6\"},\"actionOrder\":{\"id\":\"DEFEND\",\"target\":null,\"subtype\":null},\"intent\":\"Maintain command and support coverage for nearby maneuver elements.\"}}"
+      },
+      "unitOrderCount": {
+        "actor_1": 6,
+        "actor_2": 6
+      }
+    },
+    {
+      "turn": 3,
+      "selectedHypotheses": {
+        "actor_1": "set-conditions",
+        "actor_2": "alternate-axis"
+      },
+      "reasoningCoverage": {
+        "actor_1": {
+          "hasReasoning": true,
+          "unitDecisions": 6
+        },
+        "actor_2": {
+          "hasReasoning": true,
+          "unitDecisions": 6
+        }
+      },
+      "movementByActor": {
+        "actor_1": 1,
+        "actor_2": 1
+      },
+      "controlChanges": [],
+      "captureEvents": [
+        {
+          "hex": "3,4",
+          "label": "D5",
+          "actorId": "actor_2",
+          "fromActorId": "actor_1"
+        }
+      ],
+      "combatLogs": [
+        {
+          "zoneHex": "3,4",
+          "summary": "actor_2 won the fight at D5 (1.32:1).",
+          "winningActor": "actor_2",
+          "losingActor": "actor_1",
+          "strengthShift": {
+            "actor_2": -11,
+            "actor_1": -27
+          }
+        }
+      ],
+      "stateUpdateCount": 28,
+      "vpAfter": {
+        "actor_1": 0,
+        "actor_2": 30
+      },
+      "orderSignatures": {
+        "actor_1": "{\"unit_preset_1\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"RECON\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Screen the approach to Stonebrook Bridge and sharpen the picture.\"},\"unit_preset_2\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_3\":{\"movementOrder\":{\"id\":\"MOVE\",\"target\":\"4,4\"},\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_4\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_5\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"FIRE_MISSION\",\"target\":\"3,4\",\"subtype\":\"HE\"},\"intent\":\"Disrupt defenders at Stonebrook Bridge.\"},\"unit_preset_6\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"DIG_IN\",\"target\":null,\"subtype\":null},\"intent\":\"Hold current ground and maintain local cohesion.\"}}",
+        "actor_2": "{\"unit_preset_7\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"RECON\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Screen the approach to Stonebrook Bridge and sharpen the picture.\"},\"unit_preset_8\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_9\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_10\":{\"movementOrder\":{\"id\":\"MOVE\",\"target\":\"2,4\"},\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_11\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"FIRE_MISSION\",\"target\":\"3,4\",\"subtype\":\"HE\"},\"intent\":\"Disrupt defenders at Stonebrook Bridge.\"},\"unit_preset_12\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"DIG_IN\",\"target\":null,\"subtype\":null},\"intent\":\"Hold current ground and maintain local cohesion.\"}}"
+      },
+      "unitOrderCount": {
+        "actor_1": 6,
+        "actor_2": 6
+      }
+    },
+    {
+      "turn": 4,
+      "selectedHypotheses": {
+        "actor_1": "set-conditions",
+        "actor_2": "alternate-axis"
+      },
+      "reasoningCoverage": {
+        "actor_1": {
+          "hasReasoning": true,
+          "unitDecisions": 6
+        },
+        "actor_2": {
+          "hasReasoning": true,
+          "unitDecisions": 6
+        }
+      },
+      "movementByActor": {
+        "actor_1": 0,
+        "actor_2": 1
+      },
+      "controlChanges": [],
+      "captureEvents": [
+        {
+          "hex": "3,4",
+          "label": "D5",
+          "actorId": "actor_2",
+          "fromActorId": "actor_1"
+        }
+      ],
+      "combatLogs": [
+        {
+          "zoneHex": "3,4",
+          "summary": "actor_2 won the fight at D5 (1.49:1).",
+          "winningActor": "actor_2",
+          "losingActor": "actor_1",
+          "strengthShift": {
+            "actor_2": -10,
+            "actor_1": -28
+          }
+        }
+      ],
+      "stateUpdateCount": 26,
+      "vpAfter": {
+        "actor_1": 0,
+        "actor_2": 30
+      },
+      "orderSignatures": {
+        "actor_1": "{\"unit_preset_1\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"RECON\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Screen the approach to Stonebrook Bridge and sharpen the picture.\"},\"unit_preset_2\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_3\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_4\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_5\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"FIRE_MISSION\",\"target\":\"3,4\",\"subtype\":\"HE\"},\"intent\":\"Disrupt defenders at Stonebrook Bridge.\"},\"unit_preset_6\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"DIG_IN\",\"target\":null,\"subtype\":null},\"intent\":\"Hold current ground and maintain local cohesion.\"}}",
+        "actor_2": "{\"unit_preset_7\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"RECON\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Screen the approach to Stonebrook Bridge and sharpen the picture.\"},\"unit_preset_8\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_9\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_10\":{\"movementOrder\":{\"id\":\"MOVE\",\"target\":\"2,4\"},\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_11\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"FIRE_MISSION\",\"target\":\"3,4\",\"subtype\":\"HE\"},\"intent\":\"Disrupt defenders at Stonebrook Bridge.\"},\"unit_preset_12\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"DIG_IN\",\"target\":null,\"subtype\":null},\"intent\":\"Hold current ground and maintain local cohesion.\"}}"
+      },
+      "unitOrderCount": {
+        "actor_1": 6,
+        "actor_2": 6
+      }
+    },
+    {
+      "turn": 5,
+      "selectedHypotheses": {
+        "actor_1": "set-conditions",
+        "actor_2": "alternate-axis"
+      },
+      "reasoningCoverage": {
+        "actor_1": {
+          "hasReasoning": true,
+          "unitDecisions": 6
+        },
+        "actor_2": {
+          "hasReasoning": true,
+          "unitDecisions": 6
+        }
+      },
+      "movementByActor": {
+        "actor_1": 0,
+        "actor_2": 1
+      },
+      "controlChanges": [],
+      "captureEvents": [
+        {
+          "hex": "3,4",
+          "label": "D5",
+          "actorId": "actor_2",
+          "fromActorId": "actor_1"
+        }
+      ],
+      "combatLogs": [
+        {
+          "zoneHex": "3,4",
+          "summary": "actor_2 won the fight at D5 (1.76:1).",
+          "winningActor": "actor_2",
+          "losingActor": "actor_1",
+          "strengthShift": {
+            "actor_2": -9,
+            "actor_1": -30
+          }
+        }
+      ],
+      "stateUpdateCount": 26,
+      "vpAfter": {
+        "actor_1": 0,
+        "actor_2": 30
+      },
+      "orderSignatures": {
+        "actor_1": "{\"unit_preset_1\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"RECON\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Screen the approach to Stonebrook Bridge and sharpen the picture.\"},\"unit_preset_2\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_3\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_4\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_5\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"FIRE_MISSION\",\"target\":\"3,4\",\"subtype\":\"HE\"},\"intent\":\"Disrupt defenders at Stonebrook Bridge.\"},\"unit_preset_6\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"DIG_IN\",\"target\":null,\"subtype\":null},\"intent\":\"Hold current ground and maintain local cohesion.\"}}",
+        "actor_2": "{\"unit_preset_7\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"RECON\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Screen the approach to Stonebrook Bridge and sharpen the picture.\"},\"unit_preset_8\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_9\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_10\":{\"movementOrder\":{\"id\":\"MOVE\",\"target\":\"2,4\"},\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_11\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"FIRE_MISSION\",\"target\":\"3,4\",\"subtype\":\"HE\"},\"intent\":\"Disrupt defenders at Stonebrook Bridge.\"},\"unit_preset_12\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"DIG_IN\",\"target\":null,\"subtype\":null},\"intent\":\"Hold current ground and maintain local cohesion.\"}}"
+      },
+      "unitOrderCount": {
+        "actor_1": 6,
+        "actor_2": 6
+      }
+    },
+    {
+      "turn": 6,
+      "selectedHypotheses": {
+        "actor_1": "set-conditions",
+        "actor_2": "alternate-axis"
+      },
+      "reasoningCoverage": {
+        "actor_1": {
+          "hasReasoning": true,
+          "unitDecisions": 6
+        },
+        "actor_2": {
+          "hasReasoning": true,
+          "unitDecisions": 6
+        }
+      },
+      "movementByActor": {
+        "actor_1": 0,
+        "actor_2": 1
+      },
+      "controlChanges": [],
+      "captureEvents": [
+        {
+          "hex": "3,4",
+          "label": "D5",
+          "actorId": "actor_2",
+          "fromActorId": "actor_1"
+        }
+      ],
+      "combatLogs": [
+        {
+          "zoneHex": "3,4",
+          "summary": "actor_2 won the fight at D5 (1.79:1).",
+          "winningActor": "actor_2",
+          "losingActor": "actor_1",
+          "strengthShift": {
+            "actor_2": -9,
+            "actor_1": -30
+          }
+        }
+      ],
+      "stateUpdateCount": 27,
+      "vpAfter": {
+        "actor_1": 0,
+        "actor_2": 30
+      },
+      "orderSignatures": {
+        "actor_1": "{\"unit_preset_1\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"RECON\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Screen the approach to Stonebrook Bridge and sharpen the picture.\"},\"unit_preset_2\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_3\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_4\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_5\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"FIRE_MISSION\",\"target\":\"3,4\",\"subtype\":\"HE\"},\"intent\":\"Disrupt defenders at Stonebrook Bridge.\"},\"unit_preset_6\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"DEFEND\",\"target\":null,\"subtype\":null},\"intent\":\"Hold current ground and maintain local cohesion.\"}}",
+        "actor_2": "{\"unit_preset_7\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"RECON\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Screen the approach to Stonebrook Bridge and sharpen the picture.\"},\"unit_preset_8\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_9\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_10\":{\"movementOrder\":{\"id\":\"MOVE\",\"target\":\"2,4\"},\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_11\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"FIRE_MISSION\",\"target\":\"3,4\",\"subtype\":\"HE\"},\"intent\":\"Disrupt defenders at Stonebrook Bridge.\"},\"unit_preset_12\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"DIG_IN\",\"target\":null,\"subtype\":null},\"intent\":\"Hold current ground and maintain local cohesion.\"}}"
+      },
+      "unitOrderCount": {
+        "actor_1": 6,
+        "actor_2": 6
+      }
+    },
+    {
+      "turn": 7,
+      "selectedHypotheses": {
+        "actor_1": "set-conditions",
+        "actor_2": "alternate-axis"
+      },
+      "reasoningCoverage": {
+        "actor_1": {
+          "hasReasoning": true,
+          "unitDecisions": 6
+        },
+        "actor_2": {
+          "hasReasoning": true,
+          "unitDecisions": 6
+        }
+      },
+      "movementByActor": {
+        "actor_1": 0,
+        "actor_2": 1
+      },
+      "controlChanges": [],
+      "captureEvents": [
+        {
+          "hex": "3,4",
+          "label": "D5",
+          "actorId": "actor_2",
+          "fromActorId": "actor_1"
+        }
+      ],
+      "combatLogs": [
+        {
+          "zoneHex": "3,4",
+          "summary": "actor_2 won the fight at D5 (2.10:1).",
+          "winningActor": "actor_2",
+          "losingActor": "actor_1",
+          "strengthShift": {
+            "actor_2": -8,
+            "actor_1": -33
+          }
+        }
+      ],
+      "stateUpdateCount": 27,
+      "vpAfter": {
+        "actor_1": 0,
+        "actor_2": 30
+      },
+      "orderSignatures": {
+        "actor_1": "{\"unit_preset_1\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"RECON\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Screen the approach to Stonebrook Bridge and sharpen the picture.\"},\"unit_preset_2\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_3\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_4\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_5\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"FIRE_MISSION\",\"target\":\"3,4\",\"subtype\":\"HE\"},\"intent\":\"Disrupt defenders at Stonebrook Bridge.\"},\"unit_preset_6\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"DEFEND\",\"target\":null,\"subtype\":null},\"intent\":\"Hold current ground and maintain local cohesion.\"}}",
+        "actor_2": "{\"unit_preset_7\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"RECON\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Screen the approach to Stonebrook Bridge and sharpen the picture.\"},\"unit_preset_8\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_9\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_10\":{\"movementOrder\":{\"id\":\"MOVE\",\"target\":\"2,4\"},\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_11\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"FIRE_MISSION\",\"target\":\"3,4\",\"subtype\":\"HE\"},\"intent\":\"Disrupt defenders at Stonebrook Bridge.\"},\"unit_preset_12\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"DEFEND\",\"target\":null,\"subtype\":null},\"intent\":\"Hold current ground and maintain local cohesion.\"}}"
+      },
+      "unitOrderCount": {
+        "actor_1": 6,
+        "actor_2": 6
+      }
+    },
+    {
+      "turn": 8,
+      "selectedHypotheses": {
+        "actor_1": "set-conditions",
+        "actor_2": "alternate-axis"
+      },
+      "reasoningCoverage": {
+        "actor_1": {
+          "hasReasoning": true,
+          "unitDecisions": 6
+        },
+        "actor_2": {
+          "hasReasoning": true,
+          "unitDecisions": 6
+        }
+      },
+      "movementByActor": {
+        "actor_1": 0,
+        "actor_2": 1
+      },
+      "controlChanges": [],
+      "captureEvents": [
+        {
+          "hex": "3,4",
+          "label": "D5",
+          "actorId": "actor_2",
+          "fromActorId": "actor_1"
+        }
+      ],
+      "combatLogs": [
+        {
+          "zoneHex": "3,4",
+          "summary": "actor_2 won the fight at D5 (2.60:1).",
+          "winningActor": "actor_2",
+          "losingActor": "actor_1",
+          "strengthShift": {
+            "actor_2": -7,
+            "actor_1": -37
+          }
+        }
+      ],
+      "stateUpdateCount": 26,
+      "vpAfter": {
+        "actor_1": 0,
+        "actor_2": 30
+      },
+      "orderSignatures": {
+        "actor_1": "{\"unit_preset_1\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"RECON\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Screen the approach to Stonebrook Bridge and sharpen the picture.\"},\"unit_preset_2\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_3\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_4\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_5\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"FIRE_MISSION\",\"target\":\"3,4\",\"subtype\":\"HE\"},\"intent\":\"Disrupt defenders at Stonebrook Bridge.\"},\"unit_preset_6\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"DEFEND\",\"target\":null,\"subtype\":null},\"intent\":\"Hold current ground and maintain local cohesion.\"}}",
+        "actor_2": "{\"unit_preset_7\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"RECON\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Screen the approach to Stonebrook Bridge and sharpen the picture.\"},\"unit_preset_8\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_9\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_10\":{\"movementOrder\":{\"id\":\"MOVE\",\"target\":\"2,4\"},\"actionOrder\":{\"id\":\"ATTACK\",\"target\":\"3,4\",\"subtype\":null},\"intent\":\"Join the main effort against Stonebrook Bridge.\"},\"unit_preset_11\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"FIRE_MISSION\",\"target\":\"3,4\",\"subtype\":\"HE\"},\"intent\":\"Disrupt defenders at Stonebrook Bridge.\"},\"unit_preset_12\":{\"movementOrder\":null,\"actionOrder\":{\"id\":\"DEFEND\",\"target\":null,\"subtype\":null},\"intent\":\"Hold current ground and maintain local cohesion.\"}}"
+      },
+      "unitOrderCount": {
+        "actor_1": 6,
+        "actor_2": 6
+      }
+    }
+  ]
+}

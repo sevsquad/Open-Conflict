@@ -8,14 +8,15 @@ import { useRef, useEffect, useLayoutEffect, useCallback, useState, useImperativ
 import HexGLRenderer from "./gl/HexGLRenderer.js";
 import LineRenderer from "./gl/LineRenderer.js";
 import { buildLinearNetworks } from "./RoadNetwork.js";
+import { LINE_CONFIG } from "./RoadNetwork.js";
 import { buildNameGroups, drawNameLabels, drawCoordLabels } from "./overlays/LabelOverlay.js";
-import { drawUnits, drawFowOverlay, parseUnitPosition } from "./overlays/UnitOverlay.js";
+import { drawUnits, drawFowOverlay, getUnitFogHitPayload, parseUnitPosition } from "./overlays/UnitOverlay.js";
 import { drawHoverHighlight, drawSelectionHighlight } from "./overlays/SelectionOverlay.js";
 import {
   createViewport, screenToCell, zoomAtPoint, panViewport,
   clampCellPixels, ZOOM_FACTOR, getVisibleRange,
 } from "./ViewportState.js";
-import { cellPixelsToHexSize, hexDistance, hexToScreen, SQRT3 } from "./HexMath.js";
+import { cellPixelsToHexSize, hexDistance, hexToScreen, SQRT3, traceHexPath } from "./HexMath.js";
 import { computeElevationRange } from "./gl/HexGPUData.js";
 import { buildContourLabelData, drawContourLabels } from "./overlays/ContourLabels.js";
 import { generateStrategicAtlas } from "./gl/StrategicAtlas.js";
@@ -25,6 +26,7 @@ import { drawADCoverage, drawFlightPaths, drawCASSectors } from "./overlays/AirO
 import { drawOrderOverlay } from "./overlays/OrderOverlay.js";
 import { drawTerrainMods } from "./overlays/TerrainModOverlay.js";
 import { drawVPHexes } from "./overlays/VPOverlay.js";
+import { TC } from "../terrainColors.js";
 
 const CLICK_THRESHOLD = 5;
 // Sub-tactical overlay threshold: if fine-to-strategic ratio is below this,
@@ -32,6 +34,34 @@ const CLICK_THRESHOLD = 5;
 // Above this ratio, use the atlas-based strategic renderer.
 const SUB_TACTICAL_RATIO_LIMIT = 20;
 const BG_COLOR = "#1A2535";
+const USE_CANVAS_TERRAIN = true;
+const CANVAS_LINEAR_ORDER = [
+  "river",
+  "highway",
+  "major_road",
+  "road",
+  "minor_road",
+  "railway",
+  "light_rail",
+  "pipeline",
+  "footpath",
+  "trail",
+];
+
+function getCanvasLineWidth(cfg, cellPixels) {
+  if (!cfg?.width) return 0;
+  if (cellPixels < 3) return cfg.width[0] || 0;
+  if (cellPixels < 12) {
+    const t = (cellPixels - 3) / 9;
+    return (cfg.width[0] || 0) * (1 - t) + (cfg.width[1] || 0) * t;
+  }
+  if (cellPixels < 32) {
+    const t = (cellPixels - 12) / 20;
+    return (cfg.width[1] || 0) * (1 - t) + (cfg.width[2] || 0) * t;
+  }
+  const t = Math.min(1, (cellPixels - 32) / 32);
+  return (cfg.width[2] || 0) * (1 - t) + (cfg.width[3] || 0) * t;
+}
 
 const MapView = forwardRef(function MapView({
   mapData,
@@ -40,9 +70,13 @@ const MapView = forwardRef(function MapView({
   units = null,              // array of unit objects (SimMap mode)
   actorColorMap = {},        // { actorId: "#color" }
   onCellClick = null,
+  onCellContextMenu = null,
+  onSelectionBox = null,
+  onOverlayUnitClick = null,
   onCellHover = null,
   interactionMode = "navigate",
   selectedUnitId = null,
+  selectedUnitIds = null,
   ghostUnit = null,
   isSetupMode = false,
   unitOverlayOptions = null,    // { showFrontLines: bool, fowMode: {...} } passed to drawUnits
@@ -59,10 +93,12 @@ const MapView = forwardRef(function MapView({
   // Terrain modifications overlay — smoke, fortifications, obstacles, bridge status
   terrainModsData = null,
   // Victory Point hex markers
-  vpOverlayData = null,        // { hexVP: [...], vpControl: {...} }
+  vpOverlayData = null,        // { hexVP: [...], vpControl: {...}, vpZoneOutlines?: [...] }
+  rtsDisplayState = null,
   style = {},
 }, ref) {
   const glCanvasRef = useRef(null);
+  const terrainCanvasRef = useRef(null);
   const overlayCanvasRef = useRef(null);
   const containerRef = useRef(null);
   const viewportRef = useRef({ centerCol: 0, centerRow: 0, cellPixels: 10 });
@@ -72,6 +108,7 @@ const MapView = forwardRef(function MapView({
   const lineRendererRef = useRef(null);
   const preprocessedRef = useRef({ roadNetworks: null, nameGroups: null });
   const containerSizeRef = useRef({ w: 600, h: 400 });
+  const autoFitViewportRef = useRef(true);
   const elevRangeRef = useRef(null);
   const smoothedElevRef = useRef(null);
   const contourLabelRef = useRef(null);
@@ -80,6 +117,7 @@ const MapView = forwardRef(function MapView({
   const [hovCell, setHovCell] = useState(null);
   const [redrawTick, setRedrawTick] = useState(0);
   const rafRef = useRef(null);
+  const [selectionRect, setSelectionRect] = useState(null);
 
   // Ruler measurement state (interactionMode === "measure")
   const [measureStart, setMeasureStart] = useState(null);
@@ -88,6 +126,20 @@ const MapView = forwardRef(function MapView({
   const D = mapData;
   const cols = D?.cols || 0;
   const rows = D?.rows || 0;
+
+  const fitViewportToContainer = useCallback((w, h, { force = false } = {}) => {
+    if (!cols || !rows || w <= 0 || h <= 0) return false;
+    if (!force && !autoFitViewportRef.current) return false;
+    containerSizeRef.current = { w, h };
+    viewportRef.current = createViewport(cols, rows, w, h);
+    autoFitViewportRef.current = true;
+    setRedrawTick(t => t + 1);
+    return true;
+  }, [cols, rows]);
+
+  const disableAutoFitViewport = useCallback(() => {
+    autoFitViewportRef.current = false;
+  }, []);
 
   // Resolve selected unit to cell
   const selCell = (() => {
@@ -102,6 +154,30 @@ const MapView = forwardRef(function MapView({
     if (!ghostUnit || !hovCell) return null;
     return { ...ghostUnit, cell: hovCell };
   })();
+
+  const hitTestUnit = useCallback((screenX, screenY) => {
+    if (!units || units.length === 0) return null;
+    const { w, h } = containerSizeRef.current;
+    const radius = Math.max(10, viewportRef.current.cellPixels * 0.45);
+    const fowMode = unitOverlayOptions?.fowMode;
+    let best = null;
+    let bestDistance = Infinity;
+
+    for (const unit of units) {
+      if (unit.status === "destroyed") continue;
+      const hitPayload = getUnitFogHitPayload(unit, fowMode);
+      if (!hitPayload) continue;
+      const pos = rtsDisplayState?.unitPositions?.[unit.id] || parseUnitPosition(unit.position);
+      if (!pos) continue;
+      const point = hexToScreen(pos.c ?? pos.col, pos.r ?? pos.row, viewportRef.current, w, h);
+      const distance = Math.hypot(screenX - point.x, screenY - point.y);
+      if (distance <= radius && distance < bestDistance) {
+        best = hitPayload;
+        bestDistance = distance;
+      }
+    }
+    return best;
+  }, [units, rtsDisplayState, unitOverlayOptions?.fowMode]);
 
   // ── Initialize WebGL on mount ──
   useEffect(() => {
@@ -194,16 +270,23 @@ const MapView = forwardRef(function MapView({
     if (!el) return;
     const ro = new ResizeObserver(entries => {
       for (const entry of entries) {
-        containerSizeRef.current = {
+        const nextSize = {
           w: Math.round(entry.contentRect.width),
           h: Math.round(entry.contentRect.height),
         };
+        const prevSize = containerSizeRef.current;
+        containerSizeRef.current = nextSize;
+        const sizeChanged = prevSize.w !== nextSize.w || prevSize.h !== nextSize.h;
+        if (!sizeChanged) continue;
+        if (autoFitViewportRef.current && cols && rows && nextSize.w > 0 && nextSize.h > 0) {
+          viewportRef.current = createViewport(cols, rows, nextSize.w, nextSize.h);
+        }
         setRedrawTick(t => t + 1);
       }
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [cols, rows]);
 
   // ── Auto-fit viewport on data load ──
   // useLayoutEffect fires synchronously after DOM mutations, so getBoundingClientRect()
@@ -214,12 +297,9 @@ const MapView = forwardRef(function MapView({
     if (!el) return;
     const rect = el.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return;
-    const w = Math.round(rect.width);
-    const h = Math.round(rect.height);
-    containerSizeRef.current = { w, h };
-    viewportRef.current = createViewport(cols, rows, w, h);
-    setRedrawTick(t => t + 1);
-  }, [cols, rows]);
+    autoFitViewportRef.current = true;
+    fitViewportToContainer(Math.round(rect.width), Math.round(rect.height), { force: true });
+  }, [cols, rows, fitViewportToContainer]);
 
   // ── WebGL render — terrain + lines (does NOT depend on hovCell) ──
   useEffect(() => {
@@ -294,6 +374,121 @@ const MapView = forwardRef(function MapView({
 
   // ── Canvas 2D overlay — labels, units, selection, hover ──
   useEffect(() => {
+    if (!USE_CANVAS_TERRAIN || !D) return;
+    const { w, h } = containerSizeRef.current;
+    if (w <= 0 || h <= 0) return;
+
+    const terrainCanvas = terrainCanvasRef.current;
+    if (!terrainCanvas) return;
+    if (terrainCanvas.width !== w || terrainCanvas.height !== h) {
+      terrainCanvas.width = w;
+      terrainCanvas.height = h;
+    }
+
+    const ctx = terrainCanvas.getContext("2d");
+    if (!ctx) return;
+
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = BG_COLOR;
+    ctx.fillRect(0, 0, w, h);
+
+    const viewport = viewportRef.current;
+    const cp = viewport.cellPixels;
+    const size = cellPixelsToHexSize(cp);
+    const visible = getVisibleRange(viewport, w, h, cols, rows);
+    const rowMin = Math.max(0, visible.rowMin - 2);
+    const rowMax = Math.min(rows, visible.rowMax + 2);
+    const colMin = Math.max(0, visible.colMin - 2);
+    const colMax = Math.min(cols, visible.colMax + 2);
+
+    for (let r = rowMin; r < rowMax; r++) {
+      for (let c = colMin; c < colMax; c++) {
+        const cell = D.cells?.[`${c},${r}`];
+        const terrain = cell?.terrain || "open_ground";
+        const point = hexToScreen(c, r, viewport, w, h);
+        ctx.beginPath();
+        traceHexPath(ctx, point.x, point.y, size);
+        ctx.fillStyle = TC[terrain] || "#556045";
+        ctx.fill();
+      }
+    }
+
+    const drawPath = (cells, cfg) => {
+      if (!cells || cells.length < 2) return;
+      const lineWidth = getCanvasLineWidth(cfg, cp);
+      if (lineWidth <= 0.1) return;
+      ctx.save();
+      ctx.beginPath();
+      for (let i = 0; i < cells.length; i++) {
+        const [c, r] = cells[i];
+        const point = hexToScreen(c, r, viewport, w, h);
+        if (i === 0) ctx.moveTo(point.x, point.y);
+        else ctx.lineTo(point.x, point.y);
+      }
+      ctx.strokeStyle = cfg.color;
+      ctx.lineWidth = lineWidth;
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      if (cfg.dash) {
+        const dashScale = Math.max(0.5, cp / 16);
+        ctx.setLineDash([
+          cfg.dash[0] * dashScale,
+          (cfg.dash[1] || cfg.dash[0]) * dashScale,
+        ]);
+      } else {
+        ctx.setLineDash([]);
+      }
+      ctx.stroke();
+      ctx.restore();
+    };
+
+    const pathBuckets = new Map();
+    if (Array.isArray(D.linearPaths) && D.linearPaths.length > 0) {
+      for (const path of D.linearPaths) {
+        if (!LINE_CONFIG[path.type]) continue;
+        if (activeFeatures && !activeFeatures.has(path.type)) continue;
+        if (!pathBuckets.has(path.type)) pathBuckets.set(path.type, []);
+        pathBuckets.get(path.type).push(path.cells);
+      }
+    } else {
+      const networks = preprocessedRef.current.roadNetworks || {};
+      for (const [type, segments] of Object.entries(networks)) {
+        if (!LINE_CONFIG[type]) continue;
+        if (activeFeatures && !activeFeatures.has(type)) continue;
+        if (!pathBuckets.has(type)) pathBuckets.set(type, []);
+        for (const segment of segments || []) {
+          pathBuckets.get(type).push([
+            [segment.from.c, segment.from.r],
+            [segment.to.c, segment.to.r],
+          ]);
+        }
+      }
+    }
+
+    for (const type of CANVAS_LINEAR_ORDER) {
+      const cfg = LINE_CONFIG[type];
+      const paths = pathBuckets.get(type);
+      if (!cfg || !paths?.length) continue;
+      for (const cells of paths) {
+        drawPath(cells, cfg);
+      }
+    }
+
+    if (cp >= 3) {
+      ctx.strokeStyle = cp >= 8 ? "rgba(10, 15, 25, 0.28)" : "rgba(10, 15, 25, 0.18)";
+      ctx.lineWidth = cp >= 12 ? 1 : 0.5;
+      for (let r = rowMin; r < rowMax; r++) {
+        for (let c = colMin; c < colMax; c++) {
+          const point = hexToScreen(c, r, viewport, w, h);
+          ctx.beginPath();
+          traceHexPath(ctx, point.x, point.y, size);
+          ctx.stroke();
+        }
+      }
+    }
+  }, [D, redrawTick, cols, rows, activeFeatures]);
+
+  useEffect(() => {
     if (!D) return;
     const { w, h } = containerSizeRef.current;
     if (w <= 0 || h <= 0) return;
@@ -340,7 +535,20 @@ const MapView = forwardRef(function MapView({
     }
     // Victory Point + Critical VP hex markers
     if (vpOverlayData) {
-      drawVPHexes(ctx, vpOverlayData.hexVP, vpOverlayData.vpControl, actorColorMap, viewport, w, h, cols, rows, vpOverlayData.cvpHexes);
+      drawVPHexes(
+        ctx,
+        vpOverlayData.hexVP,
+        vpOverlayData.vpControl,
+        actorColorMap,
+        viewport,
+        w,
+        h,
+        cols,
+        rows,
+        vpOverlayData.cvpHexes,
+        vpOverlayData.holdProgress,
+        vpOverlayData.vpZoneOutlines
+      );
     }
 
     // Air overlays (AD coverage, flight paths, CAS sectors) — drawn under units
@@ -364,8 +572,8 @@ const MapView = forwardRef(function MapView({
     // Units
     if (units || activeGhostUnit) {
       const drawOpts = isSetupMode
-        ? { ghostUnit: activeGhostUnit, isSetupMode: true }
-        : unitOverlayOptions || null;
+        ? { ghostUnit: activeGhostUnit, isSetupMode: true, rtsDisplayState, selectedUnitIds }
+        : { ...(unitOverlayOptions || {}), rtsDisplayState, selectedUnitIds, ghostUnit: activeGhostUnit };
       drawUnits(ctx, units, actorColorMap, viewport, w, h, cols, rows, drawOpts);
     }
     // Hover highlight
@@ -407,7 +615,7 @@ const MapView = forwardRef(function MapView({
         drawHoverDistance(ctx, viewport, w, h, selCell, hovCell, `${dist} hex · ${km} km`);
       }
     }
-  }, [D, units, hovCell, selCell, activeGhostUnit, redrawTick, cols, rows, actorColorMap, isSetupMode, activeFeatures, showElevBands, cellSizeKm, measureStart, measureEnd, interactionMode, unitOverlayOptions, movePath, proposedMoves, airOverlayData, orderOverlayData, terrainModsData, vpOverlayData]);
+  }, [D, units, hovCell, selCell, activeGhostUnit, redrawTick, cols, rows, actorColorMap, isSetupMode, activeFeatures, showElevBands, cellSizeKm, measureStart, measureEnd, interactionMode, unitOverlayOptions, movePath, proposedMoves, airOverlayData, orderOverlayData, terrainModsData, vpOverlayData, rtsDisplayState, selectedUnitIds]);
 
   // ── Mouse handlers ──
   const getCellFromEvent = useCallback((e) => {
@@ -422,12 +630,28 @@ const MapView = forwardRef(function MapView({
 
   const handleMouseDown = useCallback((e) => {
     if (e.button !== 0) return;
+    const container = containerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
     const cell = getCellFromEvent(e);
-    mouseDownRef.current = { x: e.clientX, y: e.clientY, cell };
-  }, [getCellFromEvent]);
+    mouseDownRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      localX: e.clientX - rect.left,
+      localY: e.clientY - rect.top,
+      cell,
+      mode: onSelectionBox && e.shiftKey ? "selectBox" : "pan",
+      append: Boolean(e.shiftKey),
+    };
+    if (onSelectionBox && e.shiftKey) {
+      setSelectionRect({ x: e.clientX - rect.left, y: e.clientY - rect.top, width: 0, height: 0 });
+    }
+  }, [getCellFromEvent, onSelectionBox]);
 
   const handleMouseMove = useCallback((e) => {
     const down = mouseDownRef.current;
+    const container = containerRef.current;
+    const rect = container?.getBoundingClientRect();
 
     if (down && !dragRef.current) {
       const dist = Math.hypot(e.clientX - down.x, e.clientY - down.y);
@@ -437,22 +661,45 @@ const MapView = forwardRef(function MapView({
     }
 
     if (dragRef.current) {
-      const dx = e.movementX;
-      const dy = e.movementY;
-      viewportRef.current = panViewport(viewportRef.current, dx, dy);
-      setRedrawTick(t => t + 1);
+      if (down?.mode === "selectBox" && rect) {
+        const localX = e.clientX - rect.left;
+        const localY = e.clientY - rect.top;
+        setSelectionRect({
+          x: Math.min(down.localX, localX),
+          y: Math.min(down.localY, localY),
+          width: Math.abs(localX - down.localX),
+          height: Math.abs(localY - down.localY),
+        });
+      } else {
+        const dx = e.movementX;
+        const dy = e.movementY;
+        disableAutoFitViewport();
+        viewportRef.current = panViewport(viewportRef.current, dx, dy);
+        setRedrawTick(t => t + 1);
+      }
     } else {
       const cell = getCellFromEvent(e);
       setHovCell(cell);
       onCellHover?.(cell);
     }
-  }, [getCellFromEvent, onCellHover]);
+  }, [disableAutoFitViewport, getCellFromEvent, onCellHover]);
 
   const handleMouseUp = useCallback((e) => {
     const down = mouseDownRef.current;
     mouseDownRef.current = null;
 
     if (dragRef.current) {
+      if (down?.mode === "selectBox") {
+        const cell = getCellFromEvent(e);
+        if (down.cell && cell) {
+          onSelectionBox?.({
+            startCell: down.cell,
+            endCell: cell,
+            append: down.append,
+          });
+        }
+        setSelectionRect(null);
+      }
       dragRef.current = false;
       return;
     }
@@ -472,16 +719,39 @@ const MapView = forwardRef(function MapView({
         }
         return;
       }
-      onCellClick?.(down.cell, e);
+      const container = containerRef.current;
+      const rect = container?.getBoundingClientRect();
+      const localX = rect ? e.clientX - rect.left : 0;
+      const localY = rect ? e.clientY - rect.top : 0;
+      const hitUnit = hitTestUnit(localX, localY);
+      if (hitUnit) {
+        onOverlayUnitClick?.(hitUnit, e, down.cell);
+      } else {
+        onCellClick?.(down.cell, e);
+      }
     }
-  }, [onCellClick, interactionMode, measureStart, measureEnd]);
+    setSelectionRect(null);
+  }, [getCellFromEvent, hitTestUnit, interactionMode, measureEnd, measureStart, onCellClick, onOverlayUnitClick, onSelectionBox]);
 
   const handleMouseLeave = useCallback(() => {
     dragRef.current = false;
     mouseDownRef.current = null;
+    setSelectionRect(null);
     setHovCell(null);
     onCellHover?.(null);
   }, [onCellHover]);
+
+  const handleContextMenu = useCallback((e) => {
+    if (!onCellContextMenu) return;
+    e.preventDefault();
+    const container = containerRef.current;
+    const rect = container?.getBoundingClientRect();
+    const cell = getCellFromEvent(e);
+    const localX = rect ? e.clientX - rect.left : 0;
+    const localY = rect ? e.clientY - rect.top : 0;
+    const hitUnit = hitTestUnit(localX, localY);
+    onCellContextMenu(cell, e, hitUnit);
+  }, [getCellFromEvent, hitTestUnit, onCellContextMenu]);
 
   const handleWheel = useCallback((e) => {
     e.preventDefault();
@@ -492,9 +762,10 @@ const MapView = forwardRef(function MapView({
     const my = e.clientY - rect.top;
     const { w, h } = containerSizeRef.current;
     const factor = e.deltaY < 0 ? ZOOM_FACTOR : 1 / ZOOM_FACTOR;
+    disableAutoFitViewport();
     viewportRef.current = zoomAtPoint(viewportRef.current, mx, my, w, h, factor);
     setRedrawTick(t => t + 1);
-  }, []);
+  }, [disableAutoFitViewport]);
 
   // Wheel listener (passive: false)
   useEffect(() => {
@@ -508,24 +779,30 @@ const MapView = forwardRef(function MapView({
   // ── Expose imperative API ──
   useImperativeHandle(ref, () => ({
     getViewport: () => viewportRef.current,
-    setViewport: (vp) => { viewportRef.current = vp; setRedrawTick(t => t + 1); },
+    setViewport: (vp) => {
+      disableAutoFitViewport();
+      viewportRef.current = vp;
+      setRedrawTick(t => t + 1);
+    },
     fitMap: () => {
       if (!cols || !rows) return;
       const { w, h } = containerSizeRef.current;
-      viewportRef.current = createViewport(cols, rows, w, h);
-      setRedrawTick(t => t + 1);
+      fitViewportToContainer(w, h, { force: true });
     },
     zoomIn: () => {
       const { w, h } = containerSizeRef.current;
+      disableAutoFitViewport();
       viewportRef.current = zoomAtPoint(viewportRef.current, w / 2, h / 2, w, h, ZOOM_FACTOR);
       setRedrawTick(t => t + 1);
     },
     zoomOut: () => {
       const { w, h } = containerSizeRef.current;
+      disableAutoFitViewport();
       viewportRef.current = zoomAtPoint(viewportRef.current, w / 2, h / 2, w, h, 1 / ZOOM_FACTOR);
       setRedrawTick(t => t + 1);
     },
     panTo: (col, row) => {
+      disableAutoFitViewport();
       viewportRef.current = { ...viewportRef.current, centerCol: col, centerRow: row };
       setRedrawTick(t => t + 1);
     },
@@ -636,7 +913,7 @@ const MapView = forwardRef(function MapView({
       composite.height = 0;
       return dataUrl;
     },
-  }), [D, cols, rows, activeFeatures, showElevBands, strategicMode, strategicGrid]);
+  }), [D, cols, rows, activeFeatures, strategicMode, strategicGrid, disableAutoFitViewport, fitViewportToContainer]);
 
   // Cursor
   const getCursor = () => {
@@ -660,12 +937,27 @@ const MapView = forwardRef(function MapView({
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseLeave}
       onMouseMove={handleMouseMove}
+      onContextMenu={handleContextMenu}
     >
       {/* WebGL canvas — terrain + lines */}
+      {USE_CANVAS_TERRAIN && (
+        <canvas
+          ref={terrainCanvasRef}
+          style={{
+            display: "block",
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: "100%",
+            pointerEvents: "none",
+          }}
+        />
+      )}
       <canvas
         ref={glCanvasRef}
         style={{
-          display: "block",
+          display: USE_CANVAS_TERRAIN ? "none" : "block",
           position: "absolute",
           top: 0, left: 0,
           width: "100%",
@@ -674,19 +966,33 @@ const MapView = forwardRef(function MapView({
         }}
       />
       {/* Canvas 2D overlay — labels, units, selection */}
-      <canvas
-        ref={overlayCanvasRef}
-        style={{
-          display: "block",
+        <canvas
+          ref={overlayCanvasRef}
+          style={{
+            display: "block",
           position: "absolute",
           top: 0, left: 0,
           width: "100%",
           height: "100%",
-          pointerEvents: "none",
-        }}
-      />
-    </div>
-  );
+            pointerEvents: "none",
+          }}
+        />
+        {selectionRect && (
+          <div
+            style={{
+              position: "absolute",
+              left: selectionRect.x,
+              top: selectionRect.y,
+              width: selectionRect.width,
+              height: selectionRect.height,
+              border: "1px dashed rgba(96, 165, 250, 0.95)",
+              background: "rgba(96, 165, 250, 0.12)",
+              pointerEvents: "none",
+            }}
+          />
+        )}
+      </div>
+    );
 });
 
 // ── Measurement drawing helpers ──────────────────────────────

@@ -65,6 +65,9 @@ export default class HexGLRenderer {
     this._strategicCount = 0;
     this._atlasTexture = null;
     this._atlasInfo = null;  // { atlasGridCols, atlasSize, tileSize, tilePad, tileStride }
+    // Atlas texturing is currently unreliable on some live map screens, so
+    // the runtime renderer falls back to direct terrain colors for now.
+    this._atlasRenderingEnabled = false;
   }
 
   // Initialize WebGL context on a canvas element
@@ -300,24 +303,29 @@ export default class HexGLRenderer {
     else gridOpacity = Math.min(0.5, 0.15 + (cp - 8) / 48 * 0.35);
     gl.uniform1f(this.uniforms.u_gridOpacity, gridOpacity);
 
-    // Enable atlas
-    gl.uniform1i(this.uniforms.u_useAtlas, 1);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this._atlasTexture);
-    gl.uniform1i(this.uniforms.u_atlas, 0);
-    gl.uniform1f(this.uniforms.u_atlasGridCols, this._atlasInfo.atlasGridCols);
-    gl.uniform2f(this.uniforms.u_atlasSize, this._atlasInfo.atlasSize.w, this._atlasInfo.atlasSize.h);
-    gl.uniform1f(this.uniforms.u_atlasTileSize, this._atlasInfo.tileSize);
-    gl.uniform1f(this.uniforms.u_atlasStride, this._atlasInfo.tileStride);
+    const useAtlas = this._atlasRenderingEnabled && this._atlasTexture && this._atlasInfo;
+    if (useAtlas) {
+      gl.uniform1i(this.uniforms.u_useAtlas, 1);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this._atlasTexture);
+      gl.uniform1i(this.uniforms.u_atlas, 0);
+      gl.uniform1f(this.uniforms.u_atlasGridCols, this._atlasInfo.atlasGridCols);
+      gl.uniform2f(this.uniforms.u_atlasSize, this._atlasInfo.atlasSize.w, this._atlasInfo.atlasSize.h);
+      gl.uniform1f(this.uniforms.u_atlasTileSize, this._atlasInfo.tileSize);
+      gl.uniform1f(this.uniforms.u_atlasStride, this._atlasInfo.tileStride);
+    } else {
+      gl.uniform1i(this.uniforms.u_useAtlas, 0);
+    }
 
     // Draw all strategic hexes (no tiling needed — typically < 2500 hexes)
     gl.bindVertexArray(this._strategicVAO);
     gl.drawArraysInstanced(gl.TRIANGLES, 0, HEX_VERTEX_COUNT, this._strategicCount);
     gl.bindVertexArray(null);
 
-    // Disable atlas for next frame
-    gl.uniform1i(this.uniforms.u_useAtlas, 0);
-    gl.bindTexture(gl.TEXTURE_2D, null);
+    if (useAtlas) {
+      gl.uniform1i(this.uniforms.u_useAtlas, 0);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+    }
   }
 
   _destroyStrategic() {
@@ -361,8 +369,9 @@ export default class HexGLRenderer {
     // Use hex program
     gl.useProgram(this.program);
 
-    // Enable tile atlas for illustrated hex rendering if available
-    if (this._tileAtlasTexture && this._tileAtlasInfo) {
+    // Enable tile atlas for illustrated hex rendering only when the runtime
+    // atlas path is explicitly enabled.
+    if (this._atlasRenderingEnabled && this._tileAtlasTexture && this._tileAtlasInfo) {
       gl.uniform1i(this.uniforms.u_useAtlas, 1);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, this._tileAtlasTexture);

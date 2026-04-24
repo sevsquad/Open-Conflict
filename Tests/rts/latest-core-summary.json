@@ -1,0 +1,1735 @@
+{
+  "ok": true,
+  "status": "passed",
+  "runId": "rts-core-2026-04-23T19-43-19-901Z-3e04ab",
+  "timestamp": "2026-04-23T19:43:25.376Z",
+  "scenarios": {
+    "conflict": {
+      "stateHash": "70fbc8dc932909a27e2f670d2369c0b282e61d9efcf90dbad4de4d04f558a797",
+      "replayHash": "32b39fa338f2f7889e635d8fa13f60bf644c266e926ddab1d1acd114a8889471",
+      "outcome": {
+        "winner": null,
+        "victoryReason": null,
+        "elapsedMs": 45000,
+        "livingByActor": {
+          "actor_1": 6,
+          "actor_2": 6
+        },
+        "vpByActor": {
+          "actor_1": 0,
+          "actor_2": 0
+        },
+        "objectiveControl": {
+          "3,4": null,
+          "5,5": null,
+          "1,6": null
+        },
+        "eventCount": 14,
+        "commandCount": 2,
+        "aiDecisionCount": 0
+      },
+      "tickStats": {
+        "tickCount": 180,
+        "totalMs": 722.104,
+        "averageMs": 4.012,
+        "p95Ms": 4.874,
+        "maxMs": 9.224
+      },
+      "issuedCommands": [
+        {
+          "tick": 0,
+          "kind": "move",
+          "unitIds": [
+            "unit_preset_1"
+          ],
+          "targetHex": "8,3",
+          "targetUnitId": null
+        },
+        {
+          "tick": 0,
+          "kind": "move",
+          "unitIds": [
+            "unit_preset_4"
+          ],
+          "targetHex": "8,3",
+          "targetUnitId": null
+        }
+      ],
+      "perceptionSnapshots": [
+        {
+          "atMs": 2000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 4000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 6000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 8000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 10000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 135,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 12000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 135,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 14000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 135,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 16000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 135,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 18000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 135,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 20000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 135,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 22000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 135,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 24000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 135,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 26000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 135,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 28000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 135,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 30000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 135,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 32000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 135,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 34000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 135,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 36000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 135,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 38000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 135,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 40000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 135,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 42000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 135,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 44000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 135,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        }
+      ]
+    },
+    "timed": {
+      "stateHash": "cc929f38191af488e03ba33ecd6ffe672a87518443666989231d428d5db567d8",
+      "replayHash": "660f0686f387025bbfca04c05845c6f297406cf72564f8e9f1e361662f02dd79",
+      "outcome": {
+        "winner": "draw",
+        "victoryReason": "time_limit",
+        "elapsedMs": 60000,
+        "livingByActor": {
+          "actor_1": 6,
+          "actor_2": 6
+        },
+        "vpByActor": {
+          "actor_1": 0,
+          "actor_2": 0
+        },
+        "objectiveControl": {},
+        "eventCount": 13,
+        "commandCount": 0,
+        "aiDecisionCount": 0
+      },
+      "tickStats": {
+        "tickCount": 241,
+        "totalMs": 181.238,
+        "averageMs": 0.752,
+        "p95Ms": 1.265,
+        "maxMs": 2.017
+      },
+      "issuedCommands": [],
+      "perceptionSnapshots": [
+        {
+          "atMs": 2000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 4000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 6000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 8000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 10000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 12000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 14000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 16000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 18000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 20000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 22000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 24000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 26000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 28000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 30000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 32000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 34000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 36000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 38000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 40000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 42000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 44000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 46000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 48000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 50000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 52000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 54000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 56000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 58000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        },
+        {
+          "atMs": 60000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 1,
+              "contactUnits": 0,
+              "lastKnownUnits": 1
+            },
+            "actor_2": {
+              "visibleCells": 151,
+              "detectedUnits": 3,
+              "contactUnits": 1,
+              "lastKnownUnits": 4
+            }
+          }
+        }
+      ]
+    },
+    "helicopter": {
+      "stateHash": "44ee403d096b6b57cbeb484c41a8907f0c70f9fadaf75bcbdd7f2732253e35e5",
+      "replayHash": "726e8c2a3495c59a7e4bf4540b31dd0d626289517145256ba4b180e96426b550",
+      "outcome": {
+        "winner": null,
+        "victoryReason": null,
+        "elapsedMs": 65000,
+        "livingByActor": {
+          "actor_1": 3,
+          "actor_2": 4
+        },
+        "vpByActor": {
+          "actor_1": 0,
+          "actor_2": 40
+        },
+        "objectiveControl": {
+          "8,5": "actor_2",
+          "7,4": "actor_2",
+          "5,6": "actor_2"
+        },
+        "eventCount": 96,
+        "commandCount": 4,
+        "aiDecisionCount": 0
+      },
+      "tickStats": {
+        "tickCount": 260,
+        "totalMs": 980.23,
+        "averageMs": 3.77,
+        "p95Ms": 4.396,
+        "maxMs": 7.805
+      },
+      "issuedCommands": [
+        {
+          "tick": 0,
+          "kind": "embark_helo",
+          "unitIds": [
+            "unit_preset_3"
+          ],
+          "targetHex": "10,8",
+          "targetUnitId": "unit_preset_1"
+        },
+        {
+          "tick": 1,
+          "kind": "move",
+          "unitIds": [
+            "unit_preset_1"
+          ],
+          "targetHex": "7,4",
+          "targetUnitId": null
+        },
+        {
+          "tick": 1,
+          "kind": "attack_move",
+          "unitIds": [
+            "unit_preset_2"
+          ],
+          "targetHex": "7,5",
+          "targetUnitId": "unit_preset_7"
+        },
+        {
+          "tick": 200,
+          "kind": "disembark_helo",
+          "unitIds": [
+            "unit_preset_1"
+          ],
+          "targetHex": "8,5",
+          "targetUnitId": null
+        }
+      ],
+      "perceptionSnapshots": [
+        {
+          "atMs": 2000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 0,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 0,
+              "contactUnits": 0,
+              "lastKnownUnits": 0
+            }
+          }
+        },
+        {
+          "atMs": 4000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 0,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 0,
+              "contactUnits": 0,
+              "lastKnownUnits": 0
+            }
+          }
+        },
+        {
+          "atMs": 6000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 0,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 0,
+              "contactUnits": 0,
+              "lastKnownUnits": 0
+            }
+          }
+        },
+        {
+          "atMs": 8000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 0,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 0,
+              "contactUnits": 0,
+              "lastKnownUnits": 0
+            }
+          }
+        },
+        {
+          "atMs": 10000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 0,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 0,
+              "contactUnits": 0,
+              "lastKnownUnits": 0
+            }
+          }
+        },
+        {
+          "atMs": 12000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 153,
+              "detectedUnits": 0,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 0,
+              "contactUnits": 0,
+              "lastKnownUnits": 0
+            }
+          }
+        },
+        {
+          "atMs": 14000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 152,
+              "detectedUnits": 2,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 1,
+              "contactUnits": 1,
+              "lastKnownUnits": 1
+            }
+          }
+        },
+        {
+          "atMs": 16000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 152,
+              "detectedUnits": 2,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 1,
+              "contactUnits": 1,
+              "lastKnownUnits": 1
+            }
+          }
+        },
+        {
+          "atMs": 18000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 152,
+              "detectedUnits": 2,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 2,
+              "contactUnits": 2,
+              "lastKnownUnits": 2
+            }
+          }
+        },
+        {
+          "atMs": 20000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 152,
+              "detectedUnits": 2,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 1,
+              "contactUnits": 1,
+              "lastKnownUnits": 2
+            }
+          }
+        },
+        {
+          "atMs": 22000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 152,
+              "detectedUnits": 2,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 1,
+              "contactUnits": 1,
+              "lastKnownUnits": 2
+            }
+          }
+        },
+        {
+          "atMs": 24000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 152,
+              "detectedUnits": 3,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 1,
+              "contactUnits": 1,
+              "lastKnownUnits": 2
+            }
+          }
+        },
+        {
+          "atMs": 26000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 2,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 1,
+              "contactUnits": 1,
+              "lastKnownUnits": 2
+            }
+          }
+        },
+        {
+          "atMs": 28000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 2,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 1,
+              "contactUnits": 1,
+              "lastKnownUnits": 2
+            }
+          }
+        },
+        {
+          "atMs": 30000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 2,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 1,
+              "contactUnits": 1,
+              "lastKnownUnits": 2
+            }
+          }
+        },
+        {
+          "atMs": 32000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 2,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 1,
+              "contactUnits": 1,
+              "lastKnownUnits": 2
+            }
+          }
+        },
+        {
+          "atMs": 34000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 2,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 1,
+              "contactUnits": 1,
+              "lastKnownUnits": 2
+            }
+          }
+        },
+        {
+          "atMs": 36000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 2,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 1,
+              "contactUnits": 1,
+              "lastKnownUnits": 2
+            }
+          }
+        },
+        {
+          "atMs": 38000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 2,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 1,
+              "contactUnits": 1,
+              "lastKnownUnits": 2
+            }
+          }
+        },
+        {
+          "atMs": 40000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 2,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 1,
+              "contactUnits": 1,
+              "lastKnownUnits": 2
+            }
+          }
+        },
+        {
+          "atMs": 42000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 3,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 2,
+              "contactUnits": 2,
+              "lastKnownUnits": 2
+            }
+          }
+        },
+        {
+          "atMs": 44000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 153,
+              "detectedUnits": 3,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 2,
+              "contactUnits": 2,
+              "lastKnownUnits": 2
+            }
+          }
+        },
+        {
+          "atMs": 46000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 153,
+              "detectedUnits": 3,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 1,
+              "contactUnits": 2,
+              "lastKnownUnits": 2
+            }
+          }
+        },
+        {
+          "atMs": 48000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 3,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 2,
+              "contactUnits": 2,
+              "lastKnownUnits": 2
+            }
+          }
+        },
+        {
+          "atMs": 50000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 3,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 2,
+              "contactUnits": 2,
+              "lastKnownUnits": 2
+            }
+          }
+        },
+        {
+          "atMs": 52000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 140,
+              "detectedUnits": 3,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 2,
+              "contactUnits": 2,
+              "lastKnownUnits": 3
+            }
+          }
+        },
+        {
+          "atMs": 54000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 127,
+              "detectedUnits": 3,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 1,
+              "contactUnits": 1,
+              "lastKnownUnits": 3
+            }
+          }
+        },
+        {
+          "atMs": 56000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 127,
+              "detectedUnits": 3,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 1,
+              "contactUnits": 1,
+              "lastKnownUnits": 3
+            }
+          }
+        },
+        {
+          "atMs": 58000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 127,
+              "detectedUnits": 3,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 1,
+              "contactUnits": 1,
+              "lastKnownUnits": 3
+            }
+          }
+        },
+        {
+          "atMs": 60000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 127,
+              "detectedUnits": 3,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 1,
+              "contactUnits": 1,
+              "lastKnownUnits": 3
+            }
+          }
+        },
+        {
+          "atMs": 62000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 127,
+              "detectedUnits": 3,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 1,
+              "contactUnits": 1,
+              "lastKnownUnits": 3
+            }
+          }
+        },
+        {
+          "atMs": 64000,
+          "actors": {
+            "actor_1": {
+              "visibleCells": 127,
+              "detectedUnits": 3,
+              "contactUnits": 3,
+              "lastKnownUnits": 3
+            },
+            "actor_2": {
+              "visibleCells": 145,
+              "detectedUnits": 1,
+              "contactUnits": 1,
+              "lastKnownUnits": 3
+            }
+          }
+        }
+      ]
+    }
+  },
+  "smokeLosRegression": {
+    "pair": {
+      "sourceHex": "0,0",
+      "targetHex": "3,0",
+      "distance": 3,
+      "line": [
+        "0,0",
+        "1,0",
+        "2,0",
+        "3,0"
+      ],
+      "centerHex": "2,0"
+    },
+    "baselineDetected": true,
+    "blockedDetected": false,
+    "expiredDetected": true
+  },
+  "illuminationRegression": {
+    "pair": {
+      "sourceHex": "0,0",
+      "targetHex": "8,0",
+      "distance": 8,
+      "line": [
+        "0,0",
+        "1,0",
+        "2,0",
+        "3,0",
+        "4,0",
+        "5,0",
+        "6,0",
+        "7,0",
+        "8,0"
+      ],
+      "centerHex": "4,0"
+    },
+    "baselineDetected": false,
+    "boostedDetected": true
+  },
+  "counterBatteryRegression": {
+    "queued": true,
+    "targetHex": "0,1",
+    "missionAmmoType": "counter_battery",
+    "missionTargetHex": "0,1"
+  },
+  "checks": [
+    {
+      "name": "Base RTS movement now stays in transit after 12 ticks instead of finishing the first hex hop",
+      "pass": true
+    },
+    {
+      "name": "Same-seed conflict run produced identical normalized state hash",
+      "pass": true
+    },
+    {
+      "name": "Same-seed conflict run produced identical replay hash",
+      "pass": true
+    },
+    {
+      "name": "Simultaneous arrival allowed two friendlies to share hex 8,3",
+      "pass": true
+    },
+    {
+      "name": "A third friendly was denied once hex 8,3 reached the two-unit stack cap",
+      "pass": true
+    },
+    {
+      "name": "Duration limit ended an otherwise idle match on time",
+      "pass": true
+    },
+    {
+      "name": "Delayed-release units ignored commands before their timer elapsed",
+      "pass": true
+    },
+    {
+      "name": "Initial objective controllers seed RTS ownership before the first tick",
+      "pass": true
+    },
+    {
+      "name": "Suppression interrupts transit and logs the halt",
+      "pass": true
+    },
+    {
+      "name": "Stale parent HQ references were normalized to a live headquarters unit",
+      "pass": true
+    },
+    {
+      "name": "All six VP clustering fixtures produced the expected source-zone merges",
+      "pass": true
+    },
+    {
+      "name": "Equidistant cells became explicit boundary hexes and did not count toward any zone interior",
+      "pass": true
+    },
+    {
+      "name": "Shared boundary hexes still produced the expected inter-zone edge",
+      "pass": true
+    },
+    {
+      "name": "Every generated lane resolved to the correct ingress and egress zone in both directions",
+      "pass": true
+    },
+    {
+      "name": "Same-seed helicopter run produced identical normalized state hash",
+      "pass": true
+    },
+    {
+      "name": "Replay from the 130-tick snapshot matched the uninterrupted helicopter run",
+      "pass": true
+    },
+    {
+      "name": "Helicopter insertion logged embark and disembark events",
+      "pass": true
+    },
+    {
+      "name": "Infantry ended the run disembarked on the map",
+      "pass": true
+    },
+    {
+      "name": "Air and airmobile units did not consume ground hex occupancy slots",
+      "pass": true
+    },
+    {
+      "name": "Air-only or airmobile-only presence did not capture RTS objectives",
+      "pass": true
+    },
+    {
+      "name": "Transport helicopter took resource or combat stress while crossing the AD threat area",
+      "pass": true
+    },
+    {
+      "name": "Smoke area effects blocked LOS while active and released it after expiry",
+      "pass": true
+    },
+    {
+      "name": "Illumination area effects increased friendly detection inside the lit ring",
+      "pass": true
+    },
+    {
+      "name": "Enemy artillery fire created a counter-battery queue entry and the next friendly fires owner received a counter-battery mission",
+      "pass": true
+    }
+  ]
+}

@@ -34,6 +34,29 @@ export function cellToDisplayString(c, r) {
   return `${letters}${r + 1}`;
 }
 
+export function getUnitFogTier(unit, fowMode) {
+  if (!unit) return "hidden";
+  if (!fowMode) return "visible";
+  if (unit.actor === fowMode.activeActorId) return "own";
+  if (fowMode.detectedUnits?.has(unit.id)) return "detected";
+  if (fowMode.contactUnits?.has(unit.id)) return "contact";
+  return "hidden";
+}
+
+export function getUnitFogHitPayload(unit, fowMode) {
+  const fogTier = getUnitFogTier(unit, fowMode);
+  if (fogTier === "hidden") return null;
+  if (fogTier === "contact") {
+    return {
+      id: unit.id,
+      actor: unit.actor,
+      position: unit.position,
+      __fogTier: fogTier,
+    };
+  }
+  return { ...unit, __fogTier: fogTier };
+}
+
 // NATO echelon marks drawn above the unit box
 const ECHELON_MARKS = {
   fireteam: "dot1", squad: "dot2", weapons_team: "dot1", sniper_team: "dot1",
@@ -252,9 +275,16 @@ function smoothstep(a, b, t) {
 }
 
 // Draw a single unit with continuous scaling based on cellPixels
-function drawUnit(ctx, unit, actorColorMap, viewport, canvasWidth, canvasHeight, cols, rows) {
-  if (!unit.position) return;
-  const pos = parseUnitPosition(unit.position);
+function getRenderablePosition(unit, options = null) {
+  if (options?.rtsDisplayState?.unitPositions?.[unit.id]) {
+    return options.rtsDisplayState.unitPositions[unit.id];
+  }
+  if (!unit.position) return null;
+  return parseUnitPosition(unit.position);
+}
+
+function drawUnit(ctx, unit, actorColorMap, viewport, canvasWidth, canvasHeight, cols, rows, options = null) {
+  const pos = getRenderablePosition(unit, options);
   if (!pos || pos.c < 0 || pos.c >= cols || pos.r < 0 || pos.r >= rows) return;
   const { x, y } = gridToScreen(pos.c, pos.r, viewport, canvasWidth, canvasHeight);
   const color = actorColorMap[unit.actor] || "#FFF";
@@ -564,6 +594,44 @@ function drawFrontLines(ctx, units, actorColorMap, viewport, canvasWidth, canvas
   }
 }
 
+function drawSelectedUnits(ctx, units, selectedUnitIds, viewport, canvasWidth, canvasHeight, options = null) {
+  const selected = new Set(selectedUnitIds || []);
+  if (selected.size === 0) return;
+  ctx.save();
+  ctx.strokeStyle = "#60A5FA";
+  ctx.lineWidth = 2;
+  ctx.globalAlpha = 0.9;
+  for (const unit of units) {
+    if (!selected.has(unit.id)) continue;
+    const pos = getRenderablePosition(unit, options);
+    if (!pos) continue;
+    const { x, y } = gridToScreen(pos.c, pos.r, viewport, canvasWidth, canvasHeight);
+    const radius = Math.max(6, viewport.cellPixels * 0.42);
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawUnderFireMarkers(ctx, units, underFireUnitIds, viewport, canvasWidth, canvasHeight, options = null) {
+  ctx.save();
+  ctx.fillStyle = "#EF4444";
+  for (const unit of units) {
+    if (!underFireUnitIds.has(unit.id)) continue;
+    const fogTier = getUnitFogTier(unit, options?.fowMode);
+    if (options?.fowMode && !["own", "detected", "visible"].includes(fogTier)) continue;
+    const pos = getRenderablePosition(unit, options);
+    if (!pos) continue;
+    const { x, y } = gridToScreen(pos.c, pos.r, viewport, canvasWidth, canvasHeight);
+    const radius = Math.max(3, viewport.cellPixels * 0.12);
+    ctx.beginPath();
+    ctx.arc(x + radius * 2, y - radius * 2, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
 // Main entry point: draw all units with continuous scaling
 // fowMode: { activeActorId, detectedUnits: Set, lastKnown: { unitId: { position, turn, type, strength, stale } } }
 export function drawUnits(ctx, units, actorColorMap, viewport, canvasWidth, canvasHeight, cols, rows, setupOptions = null) {
@@ -581,9 +649,10 @@ export function drawUnits(ctx, units, actorColorMap, viewport, canvasWidth, canv
 
     // FOW filtering: decide how to render each unit based on detection tier
     if (fowMode) {
-      const isOwnUnit = unit.actor === fowMode.activeActorId;
-      const isIdentified = fowMode.detectedUnits?.has(unit.id);
-      const isContact = fowMode.contactUnits?.has(unit.id);
+      const fogTier = getUnitFogTier(unit, fowMode);
+      const isOwnUnit = fogTier === "own";
+      const isIdentified = fogTier === "detected";
+      const isContact = fogTier === "contact";
 
       if (!isOwnUnit && !isIdentified && !isContact) {
         // Undetected — skip drawing (invisible to active actor)
@@ -592,19 +661,19 @@ export function drawUnits(ctx, units, actorColorMap, viewport, canvasWidth, canv
 
       if (!isOwnUnit && isIdentified) {
         // Identified enemy — draw with full details but distinct styling
-        drawDetectedEnemyUnit(ctx, unit, actorColorMap, viewport, canvasWidth, canvasHeight, cols, rows);
+        drawDetectedEnemyUnit(ctx, unit, actorColorMap, viewport, canvasWidth, canvasHeight, cols, rows, setupOptions);
         continue;
       }
 
       if (!isOwnUnit && isContact) {
         // Contact-tier — draw generic "?" token, no unit details
-        drawContactMarker(ctx, unit, viewport, canvasWidth, canvasHeight, cols, rows);
+        drawContactMarker(ctx, unit, viewport, canvasWidth, canvasHeight, cols, rows, setupOptions);
         continue;
       }
     }
 
     // Normal rendering: own units or FOW disabled
-    drawUnit(ctx, unit, actorColorMap, viewport, canvasWidth, canvasHeight, cols, rows);
+    drawUnit(ctx, unit, actorColorMap, viewport, canvasWidth, canvasHeight, cols, rows, setupOptions);
   }
 
   // Draw last-known ghost markers for enemies that went dark
@@ -633,6 +702,14 @@ export function drawUnits(ctx, units, actorColorMap, viewport, canvasWidth, canv
     drawFrontLines(ctx, visibleUnits, actorColorMap, viewport, canvasWidth, canvasHeight);
   }
 
+  if (setupOptions?.selectedUnitIds?.length) {
+    drawSelectedUnits(ctx, units, setupOptions.selectedUnitIds, viewport, canvasWidth, canvasHeight, setupOptions);
+  }
+
+  if (setupOptions?.rtsDisplayState?.underFireUnitIds?.size) {
+    drawUnderFireMarkers(ctx, units, setupOptions.rtsDisplayState.underFireUnitIds, viewport, canvasWidth, canvasHeight, setupOptions);
+  }
+
   if (setupOptions?.ghostUnit) {
     drawGhostUnit(ctx, setupOptions.ghostUnit, actorColorMap, viewport, canvasWidth, canvasHeight);
   }
@@ -646,9 +723,8 @@ export function drawUnits(ctx, units, actorColorMap, viewport, canvasWidth, canv
  * Visually distinct from own units — the player knows this info is
  * from spotting, not perfect intel.
  */
-function drawDetectedEnemyUnit(ctx, unit, actorColorMap, viewport, canvasWidth, canvasHeight, cols, rows) {
-  if (!unit.position) return;
-  const pos = parseUnitPosition(unit.position);
+function drawDetectedEnemyUnit(ctx, unit, actorColorMap, viewport, canvasWidth, canvasHeight, cols, rows, options = null) {
+  const pos = getRenderablePosition(unit, options);
   if (!pos || pos.c < 0 || pos.c >= cols || pos.r < 0 || pos.r >= rows) return;
   const { x, y } = gridToScreen(pos.c, pos.r, viewport, canvasWidth, canvasHeight);
   const color = actorColorMap[unit.actor] || "#FFF";
@@ -778,9 +854,8 @@ function drawLastKnownGhost(ctx, unitId, info, actorColorMap, viewport, canvasWi
  * "something is here but we don't know what".
  * No unit type, name, or strength shown.
  */
-function drawContactMarker(ctx, unit, viewport, canvasWidth, canvasHeight, cols, rows) {
-  if (!unit.position) return;
-  const pos = parseUnitPosition(unit.position);
+function drawContactMarker(ctx, unit, viewport, canvasWidth, canvasHeight, cols, rows, options = null) {
+  const pos = getRenderablePosition(unit, options);
   if (!pos || pos.c < 0 || pos.c >= cols || pos.r < 0 || pos.r >= rows) return;
   const { x, y } = gridToScreen(pos.c, pos.r, viewport, canvasWidth, canvasHeight);
   const cp = viewport.cellPixels;
